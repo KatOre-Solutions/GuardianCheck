@@ -1,0 +1,162 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, role (admin, volunteer, parent), name, photoURL
+    //
+    // Collection: children
+    // Fields: name, age, allergies, notes, parentId, qrCode, pickupPin
+    //
+    // Collection: rooms
+    // Fields: name, capacity, ageRange
+    //
+    // Collection: guardians
+    // Fields: name, phone, relationship, childId, qrToken, parentId
+    //
+    // Collection: checkins
+    // Fields: childId, childName, roomId, roomName, checkInTime, checkOutTime, volunteerId, volunteerName, checkOutVolunteerId, checkOutVolunteerName, status, qrCode, guardianId, guardianName, checkedInBy, overrideReason
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isNotDeactivated() {
+      return isAuthenticated() && 
+        (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('deactivated', false) == false);
+    }
+
+    function isOwner(userId) {
+      return isNotDeactivated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isNotDeactivated() && 
+        (
+          (request.auth.token.email == "oreutlwilediutlwileng@gmail.com" && request.auth.token.email_verified == true) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
+    function isVolunteer() {
+      return isNotDeactivated() && (isAdmin() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'volunteer'));
+    }
+
+    function isParent() {
+      return isNotDeactivated() && (isVolunteer() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'parent'));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'firstName', 'surname', 'createdAt', 'updatedAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && data.email.size() > 0 &&
+             data.firstName is string && data.firstName.size() > 0 &&
+             data.surname is string &&
+             data.role in ['admin', 'volunteer', 'parent'] &&
+             data.createdAt is string && data.updatedAt is string &&
+             (!('gender' in data) || data.gender in ['male', 'female', 'other', 'Male', 'Female', 'Other']) &&
+             (!('deactivated' in data) || data.deactivated is bool);
+    }
+
+    function isValidChild(data) {
+      return data.keys().hasAll(['firstName', 'surname', 'age', 'parentId', 'createdAt', 'updatedAt']) &&
+             data.firstName is string && data.firstName.size() > 0 &&
+             data.surname is string &&
+             data.age is number && data.age >= 0 &&
+             data.parentId is string && data.parentId.size() > 0 &&
+             data.createdAt is string && data.updatedAt is string &&
+             (!('gender' in data) || data.gender in ['male', 'female', 'other', 'Male', 'Female', 'Other']);
+    }
+
+    function isValidGuardian(data) {
+      return data.keys().hasAll(['firstName', 'surname', 'phone', 'relationship', 'childIds', 'qrToken', 'parentId', 'createdAt', 'updatedAt', 'active']) &&
+             data.firstName is string && data.firstName.size() > 0 &&
+             data.surname is string &&
+             data.phone is string &&
+             data.relationship is string &&
+             data.childIds is list &&
+             data.qrToken is string &&
+             data.parentId is string &&
+             data.active is bool &&
+             data.createdAt is string && data.updatedAt is string &&
+             (!('gender' in data) || data.gender in ['male', 'female', 'other', 'Male', 'Female', 'Other']);
+    }
+
+    function isValidRoom(data) {
+      return data.keys().hasAll(['name', 'capacity']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.capacity is number && data.capacity >= 0;
+    }
+
+    function isValidCheckIn(data) {
+      return data.keys().hasAll(['childId', 'roomId', 'checkInTime', 'status', 'createdAt', 'updatedAt']) &&
+             data.childId is string && data.roomId is string &&
+             data.status in ['checked-in', 'checked-out'] &&
+             data.createdAt is string && data.updatedAt is string &&
+             (!('volunteerName' in data) || data.volunteerName is string) &&
+             (!('checkOutVolunteerName' in data) || data.checkOutVolunteerName is string) &&
+             (!('guardianName' in data) || data.guardianName is string) &&
+             (!('checkedInBy' in data) || data.checkedInBy is string);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isNotDeactivated();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+        (request.resource.data.role == 'parent' || 
+         (request.auth.token.email == "oreutlwilediutlwileng@gmail.com" && request.auth.token.email_verified == true && request.resource.data.role == 'admin'));
+      allow update: if isNotDeactivated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
+    }
+
+    match /children/{childId} {
+      allow read: if isNotDeactivated() && (isVolunteer() || resource.data.parentId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidChild(request.resource.data) && request.resource.data.parentId == request.auth.uid;
+      allow update: if isNotDeactivated() && isValidChild(request.resource.data) && 
+        (isVolunteer() || (resource.data.parentId == request.auth.uid && request.resource.data.parentId == resource.data.parentId));
+      allow delete: if isAdmin() || (isNotDeactivated() && resource.data.parentId == request.auth.uid);
+    }
+
+    match /guardians/{guardianId} {
+      allow read: if isNotDeactivated() && (isVolunteer() || resource.data.parentId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidGuardian(request.resource.data) && request.resource.data.parentId == request.auth.uid;
+      allow update: if isNotDeactivated() && isValidGuardian(request.resource.data) && 
+        (isAdmin() || (resource.data.parentId == request.auth.uid && request.resource.data.parentId == resource.data.parentId));
+      allow delete: if isAdmin() || (isNotDeactivated() && resource.data.parentId == request.auth.uid);
+    }
+
+    match /rooms/{roomId} {
+      allow read: if isNotDeactivated();
+      allow write: if isAdmin();
+    }
+
+    match /checkins/{checkinId} {
+      allow read: if isNotDeactivated() && (isVolunteer() || get(/databases/$(database)/documents/children/$(resource.data.childId)).data.parentId == request.auth.uid);
+      allow create: if isVolunteer() && isValidCheckIn(request.resource.data);
+      allow update: if isVolunteer() && isValidCheckIn(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "church": {
+      "title": "Church",
+      "description": "Church organization details",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "adminEmail": { "type": "string" }
+      },
+      "required": ["name", "adminEmail"]
+    },
+    "room": {
+      "title": "Room",
+      "description": "A room or group for children",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "capacity": { "type": "number" },
+        "minAge": { "type": "number" },
+        "maxAge": { "type": "number" }
+      },
+      "required": ["name", "capacity", "minAge", "maxAge"]
+    },
+    "child": {
+      "title": "Child",
+      "description": "Child information",
+      "type": "object",
+      "properties": {
+        "firstName": { "type": "string" },
+        "surname": { "type": "string" },
+        "age": { "type": "number" },
+        "allergies": { "type": "string" },
+        "notes": { "type": "string" },
+        "parentId": { "type": "string" },
+        "qrCode": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] }
+      },
+      "required": ["firstName", "surname", "age", "parentId"]
+    },
+    "guardian": {
+      "title": "Guardian",
+      "description": "Authorized guardian for a child",
+      "type": "object",
+      "properties": {
+        "firstName": { "type": "string" },
+        "surname": { "type": "string" },
+        "phone": { "type": "string" },
+        "relationship": { "type": "string" },
+        "idNumber": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "childIds": { 
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "qrToken": { "type": "string" },
+        "active": { "type": "boolean" },
+        "parentId": { "type": "string" }
+      },
+      "required": ["firstName", "surname", "phone", "relationship", "childIds", "qrToken", "active", "parentId"]
+    },
+    "parent": {
+      "title": "Parent",
+      "description": "Parent information",
+      "type": "object",
+      "properties": {
+        "firstName": { "type": "string" },
+        "surname": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "uid": { "type": "string" }
+      },
+      "required": ["firstName", "surname", "phone", "email", "uid"]
+    },
+    "checkIn": {
+      "title": "CheckIn",
+      "description": "Check-in and check-out records",
+      "type": "object",
+      "properties": {
+        "childId": { "type": "string" },
+        "childName": { "type": "string", "description": "Full name for display" },
+        "roomId": { "type": "string" },
+        "roomName": { "type": "string" },
+        "checkInTime": { "type": "string", "format": "date-time" },
+        "checkOutTime": { "type": "string", "format": "date-time" },
+        "volunteerId": { "type": "string" },
+        "volunteerName": { "type": "string" },
+        "checkOutVolunteerId": { "type": "string" },
+        "checkOutVolunteerName": { "type": "string" },
+        "guardianId": { "type": "string" },
+        "guardianName": { "type": "string" },
+        "checkedInBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["checked-in", "checked-out"] },
+        "overrideReason": { "type": "string" }
+      },
+      "required": ["childId", "roomId", "checkInTime", "status"]
+    },
+    "user": {
+      "title": "User",
+      "description": "App user roles and profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "firstName": { "type": "string" },
+        "surname": { "type": "string" },
+        "idNumber": { "type": "string" },
+        "homeAddress": { "type": "string" },
+        "cellNumber": { "type": "string" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "photoUrl": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "volunteer", "parent"] },
+        "deactivated": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
+        "darkMode": { "type": "boolean" }
+      },
+      "required": ["uid", "email", "role", "firstName", "surname"]
+    }
+  },
+  "firestore": {
+    "/users": { "schema": "user", "description": "User roles and permissions" },
+    "/children": { "schema": "child", "description": "Children registered in the system" },
+    "/guardians": { "schema": "guardian", "description": "Authorized guardians for children" },
+    "/rooms": { "schema": "room", "description": "Rooms or groups for children" },
+    "/checkins": { "schema": "checkIn", "description": "Check-in and check-out records" }
+  }
+}
