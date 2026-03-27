@@ -1,5 +1,22 @@
 {
   "entities": {
+    "invitation": {
+      "title": "Invitation",
+      "description": "Secure invitation for new users",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "volunteer", "parent"] },
+        "churchId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "expired"] },
+        "token": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "invitedBy": { "type": "string" }
+      },
+      "required": ["email", "role", "churchId", "status", "token", "expiresAt"]
+    },
     "church": {
       "title": "Church",
       "description": "Church organization details",
@@ -7,9 +24,26 @@
       "properties": {
         "name": { "type": "string" },
         "address": { "type": "string" },
-        "adminEmail": { "type": "string" }
+        "adminEmail": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "adminEmail"]
+    },
+    "membershipRequest": {
+      "title": "MembershipRequest",
+      "description": "Request to join a church",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "churchId": { "type": "string" },
+        "churchName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "churchId", "status"]
     },
     "room": {
       "title": "Room",
@@ -19,9 +53,10 @@
         "name": { "type": "string" },
         "capacity": { "type": "number" },
         "minAge": { "type": "number" },
-        "maxAge": { "type": "number" }
+        "maxAge": { "type": "number" },
+        "churchId": { "type": "string" }
       },
-      "required": ["name", "capacity", "minAge", "maxAge"]
+      "required": ["name", "capacity", "minAge", "maxAge", "churchId"]
     },
     "child": {
       "title": "Child",
@@ -29,16 +64,17 @@
       "type": "object",
       "properties": {
         "firstName": { "type": "string" },
-        "surname": { "type": "string" },
+        "lastName": { "type": "string" },
         "age": { "type": "number" },
         "allergies": { "type": "string" },
         "notes": { "type": "string" },
         "parentId": { "type": "string" },
         "qrCode": { "type": "string" },
         "photoUrl": { "type": "string" },
-        "gender": { "type": "string", "enum": ["male", "female", "other"] }
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "churchId": { "type": "string" }
       },
-      "required": ["firstName", "surname", "age", "parentId"]
+      "required": ["firstName", "lastName", "age", "parentId", "churchId"]
     },
     "guardian": {
       "title": "Guardian",
@@ -46,7 +82,7 @@
       "type": "object",
       "properties": {
         "firstName": { "type": "string" },
-        "surname": { "type": "string" },
+        "lastName": { "type": "string" },
         "phone": { "type": "string" },
         "relationship": { "type": "string" },
         "idNumber": { "type": "string" },
@@ -58,9 +94,10 @@
         },
         "qrToken": { "type": "string" },
         "active": { "type": "boolean" },
-        "parentId": { "type": "string" }
+        "parentId": { "type": "string" },
+        "churchId": { "type": "string" }
       },
-      "required": ["firstName", "surname", "phone", "relationship", "childIds", "qrToken", "active", "parentId"]
+      "required": ["firstName", "lastName", "phone", "relationship", "childIds", "qrToken", "active", "parentId", "churchId"]
     },
     "parent": {
       "title": "Parent",
@@ -68,12 +105,13 @@
       "type": "object",
       "properties": {
         "firstName": { "type": "string" },
-        "surname": { "type": "string" },
+        "lastName": { "type": "string" },
         "phone": { "type": "string" },
         "email": { "type": "string" },
-        "uid": { "type": "string" }
+        "uid": { "type": "string" },
+        "churchId": { "type": "string" }
       },
-      "required": ["firstName", "surname", "phone", "email", "uid"]
+      "required": ["firstName", "lastName", "phone", "email", "uid", "churchId"]
     },
     "checkIn": {
       "title": "CheckIn",
@@ -94,9 +132,10 @@
         "guardianName": { "type": "string" },
         "checkedInBy": { "type": "string" },
         "status": { "type": "string", "enum": ["checked-in", "checked-out"] },
-        "overrideReason": { "type": "string" }
+        "overrideReason": { "type": "string" },
+        "churchId": { "type": "string" }
       },
-      "required": ["childId", "roomId", "checkInTime", "status"]
+      "required": ["childId", "roomId", "checkInTime", "status", "churchId"]
     },
     "user": {
       "title": "User",
@@ -106,25 +145,26 @@
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "firstName": { "type": "string" },
-        "surname": { "type": "string" },
-        "idNumber": { "type": "string" },
-        "homeAddress": { "type": "string" },
-        "cellNumber": { "type": "string" },
-        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "lastName": { "type": "string" },
+        "role": { "type": "string", "enum": ["master_admin", "admin", "volunteer", "parent"] },
+        "churchId": { "type": "string" },
+        "status": { "type": "string", "enum": ["incomplete_profile", "pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
         "photoUrl": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "volunteer", "parent"] },
-        "deactivated": { "type": "boolean" },
-        "mustChangePassword": { "type": "boolean" },
         "darkMode": { "type": "boolean" }
       },
-      "required": ["uid", "email", "role", "firstName", "surname"]
+      "required": ["uid", "email", "status"]
     }
   },
   "firestore": {
     "/users": { "schema": "user", "description": "User roles and permissions" },
+    "/churches": { "schema": "church", "description": "Church organizations" },
+    "/membershipRequests": { "schema": "membershipRequest", "description": "Requests to join a church" },
     "/children": { "schema": "child", "description": "Children registered in the system" },
     "/guardians": { "schema": "guardian", "description": "Authorized guardians for children" },
     "/rooms": { "schema": "room", "description": "Rooms or groups for children" },
-    "/checkins": { "schema": "checkIn", "description": "Check-in and check-out records" }
+    "/checkins": { "schema": "checkIn", "description": "Check-in and check-out records" },
+    "/invitations": { "schema": "invitation", "description": "Secure invitations for new users" }
   }
 }

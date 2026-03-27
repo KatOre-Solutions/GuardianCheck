@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection } from "../lib/firestore";
+import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument } from "../lib/firestore";
+import { where } from "firebase/firestore";
 import { 
   LayoutDashboard, 
   Users, 
@@ -15,8 +16,16 @@ import {
   Shield,
   UserPlus,
   CheckCircle2,
-  Search
+  Search,
+  X,
+  AlertCircle,
+  Key,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Lock
 } from "lucide-react";
+import { hashPin, generatePin, obfuscatePin, deobfuscatePin } from "../lib/security";
 import { 
   BarChart, 
   Bar, 
@@ -34,12 +43,13 @@ import { format, subDays, startOfDay, endOfDay } from "date-fns";
 import { toast } from "sonner";
 
 export default function AdminDashboard() {
-  const { user, role } = useAuth();
+  const { user, role, userData } = useAuth();
   const [rooms, setRooms] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
   const [children, setChildren] = useState<any[]>([]);
   const [guardians, setGuardians] = useState<any[]>([]);
+  const [membershipRequests, setMembershipRequests] = useState<any[]>([]);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [newRoom, setNewRoom] = useState({ name: "", capacity: "", minAge: "", maxAge: "" });
   const [loading, setLoading] = useState(false);
@@ -49,14 +59,31 @@ export default function AdminDashboard() {
   const [showEditUserModal, setShowEditUserModal] = useState(false);
   const [editingRoom, setEditingRoom] = useState<any>(null);
   const [showEditRoomModal, setShowEditRoomModal] = useState(false);
+  const [roomToDelete, setRoomToDelete] = useState<any>(null);
+  const [showDeleteRoomModal, setShowDeleteRoomModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<any>(null);
+  const [showDeleteUserModal, setShowDeleteUserModal] = useState(false);
+  const [churchData, setChurchData] = useState<any>(null);
+  const [showPin, setShowPin] = useState(false);
+  const [regeneratingPin, setRegeneratingPin] = useState(false);
 
   useEffect(() => {
-    if (role === "admin") {
-      const unsubRooms = subscribeToCollection("rooms", [], setRooms);
-      const unsubUsers = subscribeToCollection("users", [], setUsers);
-      const unsubCheckins = subscribeToCollection("checkins", [], setCheckins);
-      const unsubChildren = subscribeToCollection("children", [], setChildren);
-      const unsubGuardians = subscribeToCollection("guardians", [], setGuardians);
+    if (role === "admin" && userData?.churchId) {
+      const unsubChurch = subscribeToDocument("churches", userData.churchId, setChurchData);
+      return () => unsubChurch();
+    }
+  }, [role, userData?.churchId]);
+
+  useEffect(() => {
+    if (role === "admin" && userData?.churchId) {
+      const constraints = [where("churchId", "==", userData.churchId)];
+      const unsubRooms = subscribeToCollection("rooms", constraints, setRooms);
+      const unsubUsers = subscribeToCollection("users", constraints, setUsers);
+      const unsubCheckins = subscribeToCollection("checkins", constraints, setCheckins);
+      const unsubChildren = subscribeToCollection("children", constraints, setChildren);
+      const unsubGuardians = subscribeToCollection("guardians", constraints, setGuardians);
+      const unsubInvitations = subscribeToCollection("invitations", constraints, setInvitations);
+      const unsubRequests = subscribeToCollection("membershipRequests", constraints, setMembershipRequests);
 
       return () => {
         unsubRooms();
@@ -64,9 +91,46 @@ export default function AdminDashboard() {
         unsubCheckins();
         unsubChildren();
         unsubGuardians();
+        unsubInvitations();
+        unsubRequests();
       };
     }
-  }, [role]);
+  }, [role, userData?.churchId]);
+
+  const handleApproveRequest = async (request: any, role: string = "parent") => {
+    try {
+      const roles = [role];
+      if (role === "admin") roles.push("volunteer");
+      if (role === "master_admin") {
+        if (!roles.includes("admin")) roles.push("admin");
+        if (!roles.includes("volunteer")) roles.push("volunteer");
+      }
+
+      await updateDocument("membershipRequests", request.id, { status: "approved", updatedAt: new Date().toISOString() });
+      await updateDocument("users", request.userId, { 
+        churchId: userData.churchId, 
+        role, 
+        roles,
+        status: "approved",
+        updatedAt: new Date().toISOString()
+      });
+      toast.success(`Approved ${request.userName} as ${role}`);
+    } catch (error) {
+      console.error("Approve Request Error:", error);
+      toast.error("Failed to approve request");
+    }
+  };
+
+  const handleRejectRequest = async (request: any) => {
+    try {
+      await updateDocument("membershipRequests", request.id, { status: "rejected", updatedAt: new Date().toISOString() });
+      await updateDocument("users", request.userId, { status: "rejected", updatedAt: new Date().toISOString() });
+      toast.success(`Rejected ${request.userName}`);
+    } catch (error) {
+      console.error("Reject Request Error:", error);
+      toast.error("Failed to reject request");
+    }
+  };
 
   const handleAddRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,9 +138,12 @@ export default function AdminDashboard() {
     try {
       await addDocument("rooms", {
         ...newRoom,
+        churchId: userData.churchId,
         capacity: Number(newRoom.capacity),
         minAge: Number(newRoom.minAge),
-        maxAge: Number(newRoom.maxAge)
+        maxAge: Number(newRoom.maxAge),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       });
       toast.success("Room created successfully!");
       setShowRoomModal(false);
@@ -88,31 +155,52 @@ export default function AdminDashboard() {
     }
   };
 
+  const [invitations, setInvitations] = useState<any[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
-  const [newUser, setNewUser] = useState({ firstName: "", surname: "", email: "", role: "parent", gender: "", cellNumber: "" });
+  const [newUser, setNewUser] = useState({ firstName: "", lastName: "", email: "", role: "parent", gender: "", cellNumber: "" });
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!userData?.churchId) {
+      toast.error("Church ID missing. Please contact support.");
+      return;
+    }
     setLoading(true);
     try {
-      // In a real app, this would call a backend function to create the Auth user
-      // For this demo, we'll create the Firestore document
-      // The user would then need to use "Forgot Password" or the admin would provide a temp pass
-      const tempPassword = Math.random().toString(36).slice(-8);
-      
-      await addDocument("users", {
-        ...newUser,
-        createdAt: new Date().toISOString(),
-        deactivated: false,
-        mustChangePassword: true,
-        // We store the email so they can sign up/in
+      const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
+
+      const roles = [newUser.role];
+      if (newUser.role === "admin") roles.push("volunteer");
+      if (newUser.role === "master_admin") {
+        if (!roles.includes("admin")) roles.push("admin");
+        if (!roles.includes("volunteer")) roles.push("volunteer");
+      }
+
+      await addDocument("invitations", {
+        email: newUser.email.toLowerCase().trim(),
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        role: newUser.role,
+        roles,
+        churchId: userData.churchId,
+        status: "pending",
+        token,
+        expiresAt: expiresAt.toISOString(),
+        invitedBy: user?.uid
       });
       
-      toast.success(`User created! Temporary password: ${tempPassword}`);
+      const inviteLink = `${window.location.origin}/accept-invite?token=${token}`;
+      console.log("Invitation Link:", inviteLink);
+      
+      toast.success(`Invitation created! Link: ${inviteLink}`, {
+        duration: 10000,
+      });
       setShowUserModal(false);
-      setNewUser({ firstName: "", surname: "", email: "", role: "parent", gender: "", cellNumber: "" });
+      setNewUser({ firstName: "", lastName: "", email: "", role: "parent", gender: "", cellNumber: "" });
     } catch (err) {
-      toast.error("Failed to create user");
+      toast.error("Failed to create invitation");
       console.error(err);
     } finally {
       setLoading(false);
@@ -128,15 +216,24 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteRoom = async (roomId: string) => {
-    if (window.confirm("Are you sure you want to delete this room?")) {
-      try {
-        await removeDocument("rooms", roomId);
-        toast.success("Room deleted successfully!");
-      } catch (err) {
-        console.error(err);
-        toast.error("Failed to delete room");
-      }
+  const handleDeleteRoom = (room: any) => {
+    setRoomToDelete(room);
+    setShowDeleteRoomModal(true);
+  };
+
+  const confirmDeleteRoom = async () => {
+    if (!roomToDelete) return;
+    setLoading(true);
+    try {
+      await removeDocument("rooms", roomToDelete.id);
+      toast.success("Room deleted successfully!");
+      setShowDeleteRoomModal(false);
+      setRoomToDelete(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete room");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -147,9 +244,11 @@ export default function AdminDashboard() {
     try {
       await updateDocument("rooms", editingRoom.id, {
         ...editingRoom,
+        churchId: userData.churchId,
         capacity: Number(editingRoom.capacity),
         minAge: Number(editingRoom.minAge),
-        maxAge: Number(editingRoom.maxAge)
+        maxAge: Number(editingRoom.maxAge),
+        updatedAt: new Date().toISOString()
       });
       toast.success("Room updated successfully!");
       setShowEditRoomModal(false);
@@ -162,15 +261,24 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
-    if (window.confirm("Are you sure you want to permanently delete this user? This action cannot be undone.")) {
-      try {
-        await removeDocument("users", userId);
-        toast.success("User deleted successfully!");
-      } catch (err) {
-        console.error(err);
-        toast.error("Failed to delete user");
-      }
+  const handleDeleteUser = (user: any) => {
+    setUserToDelete(user);
+    setShowDeleteUserModal(true);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    setLoading(true);
+    try {
+      await removeDocument("users", userToDelete.id);
+      toast.success("User deleted successfully!");
+      setShowDeleteUserModal(false);
+      setUserToDelete(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete user");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -179,8 +287,18 @@ export default function AdminDashboard() {
     if (!editingUser) return;
     setLoading(true);
     try {
+      // Ensure roles array is consistent with the primary role
+      const roles = [editingUser.role];
+      if (editingUser.role === "admin") roles.push("volunteer");
+      if (editingUser.role === "master_admin") {
+        if (!roles.includes("admin")) roles.push("admin");
+        if (!roles.includes("volunteer")) roles.push("volunteer");
+      }
+
       await updateDocument("users", editingUser.id, {
-        ...editingUser
+        ...editingUser,
+        roles,
+        updatedAt: new Date().toISOString()
       });
       toast.success("User updated successfully!");
       setShowEditUserModal(false);
@@ -190,6 +308,30 @@ export default function AdminDashboard() {
       toast.error("Failed to update user");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRegeneratePin = async () => {
+    if (!userData?.churchId) return;
+    setRegeneratingPin(true);
+    try {
+      const newPin = generatePin();
+      const hash = await hashPin(newPin);
+      const obfuscated = obfuscatePin(newPin);
+      
+      await updateDocument("churches", userData.churchId, {
+        adminOverridePinHash: hash,
+        adminOverridePin: obfuscated, // Obfuscated for "Show PIN"
+        pinLastUpdatedAt: new Date().toISOString()
+      });
+      
+      toast.success("New Admin Override PIN generated!");
+      setShowPin(true); // Show it once generated
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to generate new PIN");
+    } finally {
+      setRegeneratingPin(false);
     }
   };
 
@@ -270,6 +412,61 @@ export default function AdminDashboard() {
           </div>
         </div>
       </header>
+
+      {/* Membership Requests Section */}
+      {membershipRequests.filter(r => r.status === "pending").length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100 dark:border-amber-900/30 overflow-hidden">
+          <div className="p-6 bg-amber-50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-900/30 flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Pending Membership Requests</h3>
+            </div>
+            <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-full text-xs font-bold">
+              {membershipRequests.filter(r => r.status === "pending").length} New
+            </span>
+          </div>
+          <div className="divide-y divide-gray-50 dark:divide-gray-800">
+            {membershipRequests.filter(r => r.status === "pending").map((request) => (
+              <div key={request.id} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                <div>
+                  <p className="font-bold text-gray-900 dark:text-white text-lg">{request.userName}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{request.userEmail}</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Requested {format(new Date(request.createdAt), "MMM d, yyyy HH:mm")}</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
+                    <button
+                      onClick={() => handleApproveRequest(request, "parent")}
+                      className="px-3 py-2 text-xs font-bold rounded-lg hover:bg-white dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-all"
+                    >
+                      As Parent
+                    </button>
+                    <button
+                      onClick={() => handleApproveRequest(request, "volunteer")}
+                      className="px-3 py-2 text-xs font-bold rounded-lg hover:bg-white dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-all"
+                    >
+                      As Volunteer
+                    </button>
+                    <button
+                      onClick={() => handleApproveRequest(request, "admin")}
+                      className="px-3 py-2 text-xs font-bold rounded-lg hover:bg-white dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-all"
+                    >
+                      As Admin
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => handleRejectRequest(request)}
+                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                    title="Reject Request"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -372,7 +569,80 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Management Section */}
+      {/* Security Settings Section */}
+      <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-red-50 dark:bg-red-900/20 rounded-2xl flex items-center justify-center">
+              <Lock className="h-6 w-6 text-red-600 dark:text-red-400" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Security Settings</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Manage admin override authorization</p>
+            </div>
+          </div>
+          <Shield className="h-6 w-6 text-gray-400" />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+          <div className="space-y-4">
+            <div className="p-6 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin Override PIN</span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setShowPin(!showPin)}
+                    className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                    title={showPin ? "Hide PIN" : "Show PIN"}
+                  >
+                    {showPin ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                  <button
+                    onClick={handleRegeneratePin}
+                    disabled={regeneratingPin}
+                    className="p-2 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
+                    title="Regenerate PIN"
+                  >
+                    <RefreshCw className={`h-5 w-5 ${regeneratingPin ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-center">
+                {churchData?.adminOverridePin ? (
+                  <div className="text-4xl font-mono font-bold tracking-[0.5em] text-gray-900 dark:text-white">
+                    {showPin ? deobfuscatePin(churchData.adminOverridePin) : "****"}
+                  </div>
+                ) : (
+                  <div className="text-gray-400 dark:text-gray-500 italic">No PIN generated yet</div>
+                )}
+              </div>
+              {churchData?.pinLastUpdatedAt && (
+                <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-4">
+                  Last updated: {format(new Date(churchData.pinLastUpdatedAt), "MMM d, yyyy HH:mm")}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="font-bold text-gray-900 dark:text-white">About Admin Override</h4>
+            <ul className="space-y-3">
+              {[
+                "Used for manual checkout when QR codes are unavailable",
+                "Requires a 4-digit numeric PIN for authorization",
+                "Every override is logged for audit purposes",
+                "Only admins can view or regenerate this PIN",
+                "Volunteers can use the PIN but cannot see it here"
+              ].map((text, i) => (
+                <li key={i} className="flex items-start space-x-3 text-sm text-gray-600 dark:text-gray-400">
+                  <div className="h-1.5 w-1.5 bg-blue-600 rounded-full mt-1.5 shrink-0" />
+                  <span>{text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Room Management */}
         <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
@@ -403,7 +673,7 @@ export default function AdminDashboard() {
                     <Edit2 className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => handleDeleteRoom(room.id)}
+                    onClick={() => handleDeleteRoom(room)}
                     className="p-2 text-gray-400 hover:text-red-600 transition-colors"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -440,7 +710,7 @@ export default function AdminDashboard() {
           <div className="divide-y divide-gray-50 dark:divide-gray-800 max-h-[600px] overflow-y-auto">
             {users?.filter(u => {
               const search = searchTerm.toLowerCase();
-              const fullName = `${u.firstName || ''} ${u.surname || ''}`.toLowerCase();
+              const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase();
               const name = (u.name || '').toLowerCase();
               const email = (u.email || '').toLowerCase();
               const idNumber = (u.idNumber || '').toLowerCase();
@@ -449,11 +719,15 @@ export default function AdminDashboard() {
               <div key={u.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                 <div className="flex items-center space-x-4">
                   <div className="h-10 w-10 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center overflow-hidden">
-                    {u.photoUrl ? <img src={u.photoUrl} alt="" className="h-full w-full object-cover" /> : <Users className="h-5 w-5 text-gray-400" />}
+                    {u.photoUrl || u.photoURL ? (
+                      <img src={u.photoUrl || u.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <Users className="h-5 w-5 text-gray-400" />
+                    )}
                   </div>
                   <div>
                     <p className="font-bold text-gray-900 dark:text-white">
-                      {u.firstName ? `${u.firstName} ${u.surname}` : (u.name || u.email)}
+                      {u.firstName ? `${u.firstName} ${u.lastName}` : (u.name || u.email)}
                     </p>
                     <div className="flex flex-col space-y-1">
                       {u.idNumber && (
@@ -487,7 +761,7 @@ export default function AdminDashboard() {
                     {u.deactivated ? <CheckCircle2 className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
                   </button>
                   <button
-                    onClick={() => handleDeleteUser(u.id)}
+                    onClick={() => handleDeleteUser(u)}
                     className="p-2 text-gray-400 hover:text-red-600 transition-colors"
                     title="Delete User"
                   >
@@ -519,12 +793,12 @@ export default function AdminDashboard() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Surname</label>
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Last Name</label>
                   <input
                     required
                     type="text"
-                    value={newUser.surname}
-                    onChange={(e) => setNewUser({ ...newUser, surname: e.target.value })}
+                    value={newUser.lastName}
+                    onChange={(e) => setNewUser({ ...newUser, lastName: e.target.value })}
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                   />
                 </div>
@@ -605,12 +879,12 @@ export default function AdminDashboard() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Surname</label>
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Last Name</label>
                   <input
                     required
                     type="text"
-                    value={editingUser.surname || ""}
-                    onChange={(e) => setEditingUser({ ...editingUser, surname: e.target.value })}
+                    value={editingUser.lastName || ""}
+                    onChange={(e) => setEditingUser({ ...editingUser, lastName: e.target.value })}
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                   />
                 </div>
@@ -684,7 +958,9 @@ export default function AdminDashboard() {
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Capacity</label>
                   <input
                     required
-                    type="number"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={editingRoom.capacity}
                     onChange={(e) => setEditingRoom({ ...editingRoom, capacity: e.target.value })}
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
@@ -694,7 +970,9 @@ export default function AdminDashboard() {
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Min Age</label>
                   <input
                     required
-                    type="number"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={editingRoom.minAge}
                     onChange={(e) => setEditingRoom({ ...editingRoom, minAge: e.target.value })}
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
@@ -704,7 +982,9 @@ export default function AdminDashboard() {
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Max Age</label>
                   <input
                     required
-                    type="number"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={editingRoom.maxAge}
                     onChange={(e) => setEditingRoom({ ...editingRoom, maxAge: e.target.value })}
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
@@ -746,7 +1026,9 @@ export default function AdminDashboard() {
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Capacity</label>
                   <input
                     required
-                    type="number"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={newRoom.capacity}
                     onChange={(e) => setNewRoom({ ...newRoom, capacity: e.target.value })}
                     placeholder="20"
@@ -757,7 +1039,9 @@ export default function AdminDashboard() {
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Min Age</label>
                   <input
                     required
-                    type="number"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={newRoom.minAge}
                     onChange={(e) => setNewRoom({ ...newRoom, minAge: e.target.value })}
                     placeholder="0"
@@ -768,7 +1052,9 @@ export default function AdminDashboard() {
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Max Age</label>
                   <input
                     required
-                    type="number"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={newRoom.maxAge}
                     onChange={(e) => setNewRoom({ ...newRoom, maxAge: e.target.value })}
                     placeholder="2"
@@ -784,6 +1070,72 @@ export default function AdminDashboard() {
                 {loading ? "Creating..." : "Create Room"}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Room Confirmation Modal */}
+      {showDeleteRoomModal && roomToDelete && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowDeleteRoomModal(false)} />
+          <div className="relative bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-sm p-8 text-center space-y-6">
+            <div className="mx-auto h-16 w-16 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+              <Trash2 className="h-8 w-8 text-red-600 dark:text-red-400" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Delete Room?</h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                Are you sure you want to delete <span className="font-bold text-gray-900 dark:text-white">{roomToDelete.name}</span>? This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteRoomModal(false)}
+                className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteRoom}
+                disabled={loading}
+                className="flex-1 px-4 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {showDeleteUserModal && userToDelete && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowDeleteUserModal(false)} />
+          <div className="relative bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-sm p-8 text-center space-y-6">
+            <div className="mx-auto h-16 w-16 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+              <AlertCircle className="h-8 w-8 text-red-600 dark:text-red-400" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Delete User?</h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                Are you sure you want to permanently delete <span className="font-bold text-gray-900 dark:text-white">{userToDelete.firstName} {userToDelete.lastName}</span>? This action is irreversible.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteUserModal(false)}
+                className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteUser}
+                disabled={loading}
+                className="flex-1 px-4 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {loading ? "Delete User" : "Delete User"}
+              </button>
+            </div>
           </div>
         </div>
       )}

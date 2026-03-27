@@ -7,12 +7,14 @@ import {
   signInWithEmailAndPassword, 
   sendEmailVerification, 
   sendPasswordResetEmail,
-  updatePassword
+  updatePassword,
+  updateProfile
 } from "firebase/auth";
-import { Shield, Mail, Lock, ArrowRight, User, CheckCircle2, AlertCircle, Key } from "lucide-react";
+import { Shield, Mail, Lock, ArrowRight, User, CheckCircle2, AlertCircle, Key, Loader2, Eye, EyeOff } from "lucide-react";
 import { auth } from "../lib/firebase";
 import { getDocument, setDocument, updateDocument } from "../lib/firestore";
 import { toast } from "sonner";
+import { getAuthErrorMessage } from "../lib/utils";
 
 type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
 
@@ -24,65 +26,81 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
-  const [surname, setSurname] = useState("");
+  const [lastName, setLastName] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const navigate = useNavigate();
+  const namesRef = React.useRef({ firstName, lastName });
+
+  useEffect(() => {
+    namesRef.current = { firstName, lastName };
+  }, [firstName, lastName]);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (user) {
-        // Force reload to get latest verification status
+        setLoading(true);
+        setError(null);
         try {
+          // Force reload to get latest verification status
           await user.reload();
-        } catch (e) {
-          console.error("Failed to reload user", e);
-        }
-        
-        const updatedUser = auth.currentUser;
-        if (!updatedUser) return;
-
-        // Check verification for password provider
-        const isPasswordProvider = updatedUser.providerData.some(p => p.providerId === "password");
-        if (!updatedUser.emailVerified && isPasswordProvider) {
-          setMode("verify");
-          return;
-        }
-
-        const userDoc = await getDocument("users", updatedUser.uid) as any;
-        
-        // If user exists but doc is missing (e.g. interrupted signup), create it
-        if (!userDoc && updatedUser.email) {
-          const role = updatedUser.email === "oreutlwilediutlwileng@gmail.com" ? "admin" : "parent";
-          const [fName, ...sNameParts] = (updatedUser.displayName || "").split(" ");
           
-          const newDoc = {
-            uid: updatedUser.uid,
-            email: updatedUser.email,
-            role: role,
-            firstName: fName || updatedUser.email.split('@')[0] || "User",
-            surname: sNameParts.join(" ") || "User",
-            photoUrl: updatedUser.photoURL,
-            createdAt: new Date().toISOString(),
-            deactivated: false,
-            mustChangePassword: false
-          };
-          await setDocument("users", updatedUser.uid, newDoc);
+          const updatedUser = auth.currentUser;
+          if (!updatedUser) return;
+
+          // Check verification for password provider
+          const isPasswordProvider = updatedUser.providerData.some(p => p.providerId === "password");
+          if (!updatedUser.emailVerified && isPasswordProvider) {
+            setMode("verify");
+            setLoading(false);
+            return;
+          }
+
+          let userDoc = await getDocument("users", updatedUser.uid) as any;
           
-          // Navigate based on new doc
-          if (role === "admin") navigate("/admin");
-          else navigate("/parent");
-          return;
-        }
+          // If user exists but doc is missing (e.g. interrupted signup), create it
+          if (!userDoc && updatedUser.email) {
+            const isMasterAdmin = updatedUser.email === "oreutlwilediutlwileng@gmail.com";
+            const [fName, ...lNameParts] = (updatedUser.displayName || "").split(" ");
+            
+            userDoc = {
+              uid: updatedUser.uid,
+              email: updatedUser.email,
+              firstName: namesRef.current.firstName || fName || "",
+              lastName: namesRef.current.lastName || lNameParts.join(" ") || "",
+              role: isMasterAdmin ? "master_admin" : null,
+              status: isMasterAdmin ? "approved" : "incomplete_profile",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            await setDocument("users", updatedUser.uid, userDoc);
+          }
 
-        if (userDoc?.mustChangePassword) {
-          setMode("must-change");
-          return;
-        }
+          if (userDoc?.mustChangePassword) {
+            setMode("must-change");
+            setLoading(false);
+            return;
+          }
 
-        if (userDoc) {
-          if (userDoc.role === "admin") navigate("/admin");
-          else if (userDoc.role === "volunteer") navigate("/volunteer");
-          else navigate("/parent");
+          if (userDoc) {
+            if (userDoc.status === "incomplete_profile") navigate("/complete-profile");
+            else if (userDoc.status === "pending") navigate("/pending-approval");
+            else if (userDoc.status === "rejected") navigate("/rejected");
+            else if (userDoc.role === "master_admin") navigate("/master-admin");
+            else if (userDoc.role === "admin") navigate("/admin");
+            else if (userDoc.role === "volunteer") navigate("/volunteer");
+            else if (userDoc.role === "parent") navigate("/parent");
+            else navigate("/");
+          }
+        } catch (err: any) {
+          console.error("Auth state change error:", err);
+          const msg = getAuthErrorMessage(err);
+          setError(msg);
+          toast.error(msg);
+        } finally {
+          setLoading(false);
         }
       }
     });
@@ -98,32 +116,55 @@ export default function Login() {
       const user = result.user;
 
       const userDoc = await getDocument("users", user.uid) as any;
+      
+      // Extract name parts
+      const displayName = user.displayName || "";
+      const nameParts = displayName.split(" ");
+      const firstName = nameParts[0] || "";
+      const lastName = nameParts.slice(1).join(" ") || "";
+      const photoUrl = user.photoURL || "";
+      const phone = user.phoneNumber || "";
+
       if (!userDoc) {
-        const role = user.email === "oreutlwilediutlwileng@gmail.com" ? "admin" : "parent";
-        const [fName, ...sNameParts] = (user.displayName || "").split(" ");
+        const isMasterAdmin = user.email === "oreutlwilediutlwileng@gmail.com";
         
         await setDocument("users", user.uid, {
           uid: user.uid,
           email: user.email,
-          role: role,
-          firstName: fName || user.email?.split('@')[0] || "User",
-          surname: sNameParts.join(" ") || "Parent",
-          photoUrl: user.photoURL,
+          firstName,
+          lastName,
+          photoUrl,
+          phone,
+          role: isMasterAdmin ? "master_admin" : null,
+          roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : [],
+          status: isMasterAdmin ? "approved" : "incomplete_profile",
           createdAt: new Date().toISOString(),
-          deactivated: false,
-          mustChangePassword: false
+          updatedAt: new Date().toISOString()
         });
-      } else if (!userDoc.photoUrl && user.photoURL) {
-        // Update photo if missing in doc but present in Google
-        await updateDocument("users", user.uid, { photoUrl: user.photoURL });
+      } else {
+        // Update missing info
+        const updates: any = {};
+        if (!userDoc.photoUrl && photoUrl) updates.photoUrl = photoUrl;
+        if (!userDoc.firstName && firstName) updates.firstName = firstName;
+        if (!userDoc.lastName && lastName) updates.lastName = lastName;
+        if (!userDoc.phone && phone) updates.phone = phone;
+        
+        // Ensure master admin has correct roles even if they already existed
+        const isMasterAdmin = user.email === "oreutlwilediutlwileng@gmail.com";
+        if (isMasterAdmin && (!userDoc.roles || userDoc.roles.length < 3)) {
+          updates.roles = ["master_admin", "admin", "volunteer"];
+          updates.role = "master_admin";
+        }
+        
+        if (Object.keys(updates).length > 0) {
+          await updateDocument("users", user.uid, updates);
+        }
       }
     } catch (err: any) {
       console.error(err);
-      if (err.code === "auth/operation-not-allowed") {
-        setError("Google sign-in is not enabled in the Firebase Console. Please contact the administrator.");
-      } else {
-        setError(err.message || "Failed to login");
-      }
+      const msg = getAuthErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -161,17 +202,19 @@ export default function Login() {
     try {
       if (mode === "signup") {
         const result = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(result.user, { displayName: `${firstName} ${lastName}` });
         await sendEmailVerification(result.user);
         
         await setDocument("users", result.user.uid, {
           uid: result.user.uid,
           email: email,
-          role: "parent",
-          firstName,
-          surname,
+          firstName: firstName,
+          lastName: lastName,
+          role: null,
+          roles: [],
+          status: "incomplete_profile",
           createdAt: new Date().toISOString(),
-          deactivated: false,
-          mustChangePassword: false
+          updatedAt: new Date().toISOString()
         });
         
         setMode("verify");
@@ -181,11 +224,9 @@ export default function Login() {
       }
     } catch (err: any) {
       console.error(err);
-      if (err.code === "auth/operation-not-allowed") {
-        setError("Email/Password authentication is not enabled in the Firebase Console. Please contact the administrator.");
-      } else {
-        setError(err.message || "Authentication failed");
-      }
+      const msg = getAuthErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -200,7 +241,9 @@ export default function Login() {
       toast.success("Password reset link sent to your email!");
       setMode("signin");
     } catch (err: any) {
-      setError(err.message || "Failed to send reset email");
+      const msg = getAuthErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -227,11 +270,24 @@ export default function Login() {
       toast.success("Password updated successfully!");
       navigate("/");
     } catch (err: any) {
-      setError(err.message || "Failed to update password");
+      const msg = getAuthErrorMessage(err);
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="flex flex-col items-center space-y-4">
+          <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+          <p className="text-gray-500 dark:text-gray-400 font-medium">Authenticating...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (mode === "verify") {
     return (
@@ -307,12 +363,19 @@ export default function Login() {
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                 <input
                   required
-                  type="password"
+                  type={showNewPassword ? "text" : "password"}
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                >
+                  {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
               </div>
               <p className="text-[10px] text-gray-500 dark:text-gray-400">
                 8+ chars, uppercase, lowercase, number, special char.
@@ -324,12 +387,19 @@ export default function Login() {
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                 <input
                   required
-                  type="password"
+                  type={showConfirmPassword ? "text" : "password"}
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                >
+                  {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
               </div>
             </div>
             <button 
@@ -406,12 +476,12 @@ export default function Login() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Surname</label>
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Last Name</label>
                   <input
                     required
                     type="text"
-                    value={surname}
-                    onChange={e => setSurname(e.target.value)}
+                    value={lastName}
+                    onChange={e => setLastName(e.target.value)}
                     placeholder="Doe"
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                   />
@@ -453,12 +523,19 @@ export default function Login() {
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                     <input
                       required
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={e => setPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                      className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                    >
+                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
                   </div>
                   {mode === "signup" && (
                     <p className="text-[10px] text-gray-500 dark:text-gray-400">
@@ -474,12 +551,19 @@ export default function Login() {
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                       <input
                         required
-                        type="password"
+                        type={showConfirmPassword ? "text" : "password"}
                         value={confirmPassword}
                         onChange={e => setConfirmPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                      >
+                        {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      </button>
                     </div>
                   </div>
                 )}

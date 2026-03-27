@@ -44,6 +44,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
     if (!scannerRef.current || isCameraActive || isInitializing) return;
 
     setIsInitializing(true);
+    setIsCameraActive(true); // Hide overlay immediately
     
     // Responsive qrbox
     const qrboxSize = (width: number, height: number) => {
@@ -63,26 +64,29 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
       await scannerRef.current.start(
         { facingMode: "environment" }, 
         config, 
-        (text) => onScanSuccessRef.current(text), 
+        (text) => {
+          stopCamera();
+          onScanSuccessRef.current(text);
+        }, 
         (err) => onScanFailureRef.current?.(err)
       );
-      if (isMounted.current) {
-        setIsCameraActive(true);
-      }
     } catch (err) {
       console.warn("Back camera failed, trying front camera", err);
       try {
         await scannerRef.current.start(
           { facingMode: "user" }, 
           config, 
-          (text) => onScanSuccessRef.current(text), 
+          (text) => {
+            stopCamera();
+            onScanSuccessRef.current(text);
+          }, 
           (err) => onScanFailureRef.current?.(err)
         );
-        if (isMounted.current) {
-          setIsCameraActive(true);
-        }
       } catch (fallbackErr) {
         console.error("All cameras failed", fallbackErr);
+        if (isMounted.current) {
+          setIsCameraActive(false); // Show overlay again on failure
+        }
         if (onScanFailureRef.current) {
           onScanFailureRef.current("Could not access camera. Please check permissions.");
         }
@@ -95,14 +99,19 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
   };
 
   const stopCamera = async () => {
-    if (!scannerRef.current || !isCameraActive) return;
+    if (!scannerRef.current) return;
     try {
-      await scannerRef.current.stop();
+      if (scannerRef.current.isScanning) {
+        await scannerRef.current.stop();
+      }
       if (isMounted.current) {
         setIsCameraActive(false);
       }
     } catch (err) {
       console.error("Failed to stop camera", err);
+      if (isMounted.current) {
+        setIsCameraActive(false);
+      }
     }
   };
 

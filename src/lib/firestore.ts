@@ -160,6 +160,19 @@ export async function getUserByEmail(email: string) {
   }
 }
 
+export async function getInvitationByToken(token: string) {
+  try {
+    const colRef = collection(db, "invitations");
+    const q = query(colRef, where("token", "==", token), where("status", "==", "pending"));
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) return null;
+    const doc = querySnapshot.docs[0];
+    return { id: doc.id, ...doc.data() };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, "invitations");
+  }
+}
+
 export function subscribeToCollection(path: string, constraints: QueryConstraint[], callback: (data: any[]) => void) {
   const colRef = collection(db, path);
   const q = query(colRef, ...constraints);
@@ -171,7 +184,7 @@ export function subscribeToCollection(path: string, constraints: QueryConstraint
   });
 }
 
-export function subscribeToDocument(path: string, id: string, callback: (data: any) => void) {
+export function subscribeToDocument(path: string, id: string, callback: (data: any) => void, onError?: (error: any) => void) {
   const docRef = doc(db, path, id);
   return onSnapshot(docRef, (snapshot) => {
     if (snapshot.exists()) {
@@ -180,7 +193,64 @@ export function subscribeToDocument(path: string, id: string, callback: (data: a
       callback(null);
     }
   }, (error) => {
-    handleFirestoreError(error, OperationType.GET, `${path}/${id}`);
+    if (onError) {
+      onError(error);
+    } else {
+      handleFirestoreError(error, OperationType.GET, `${path}/${id}`);
+    }
   });
+}
+
+export async function getChurches() {
+  return getCollection("churches");
+}
+
+export async function createMembershipRequest(data: any) {
+  return addDocument("membershipRequests", {
+    ...data,
+    status: "pending"
+  });
+}
+
+export async function getPendingRequests(churchId: string) {
+  return getCollection("membershipRequests", [
+    where("churchId", "==", churchId),
+    where("status", "==", "pending")
+  ]);
+}
+
+export async function approveMembershipRequest(requestId: string, userId: string, churchId: string, role: string = "parent") {
+  try {
+    // 1. Update request status
+    await updateDocument("membershipRequests", requestId, {
+      status: "approved"
+    });
+
+    // 2. Update user document
+    await updateDocument("users", userId, {
+      churchId,
+      role,
+      status: "approved"
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `membershipRequests/${requestId}`);
+  }
+}
+
+export async function logAudit(data: {
+  action: string;
+  category: "security" | "checkin" | "checkout" | "admin";
+  details: any;
+  churchId: string;
+  userId: string;
+}) {
+  try {
+    await addDocument("audit_logs", {
+      ...data,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("Failed to log audit event:", error);
+  }
 }
 

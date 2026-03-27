@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { addDocument, getCollection, updateDocument, subscribeToCollection, getDocument } from "../lib/firestore";
+import { addDocument, getCollection, updateDocument, subscribeToCollection, getDocument, subscribeToDocument, logAudit } from "../lib/firestore";
 import { where, query, collection } from "firebase/firestore";
 import { QRScanner } from "../components/QRScanner";
 import { 
@@ -17,14 +17,16 @@ import {
   X,
   UserCheck,
   ShieldAlert,
-  Key
+  Key,
+  Lock
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { hashPin } from "../lib/security";
 
 export default function VolunteerDashboard() {
-  const { user, role, darkMode } = useAuth();
+  const { user, userData, role, darkMode } = useAuth();
   const [activeTab, setActiveTab] = useState<"scan" | "list">("scan");
   const [scannedChildren, setScannedChildren] = useState<any[]>([]);
   const [authorizedGuardians, setAuthorizedGuardians] = useState<any[]>([]);
@@ -36,22 +38,33 @@ export default function VolunteerDashboard() {
   const [checkoutChild, setCheckoutChild] = useState<any>(null);
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
+  const [overridePin, setOverridePin] = useState("");
+  const [churchData, setChurchData] = useState<any>(null);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
   const [scanningGuardian, setScanningGuardian] = useState(false);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const lastScannedRef = useRef<{ text: string, time: number } | null>(null);
 
   useEffect(() => {
+    if (!userData?.churchId) return;
+
     const fetchRooms = async () => {
-      const data = await getCollection("rooms");
+      const data = await getCollection("rooms", [where("churchId", "==", userData.churchId)]);
       setRooms(data || []);
     };
     fetchRooms();
 
-    const unsubscribe = subscribeToCollection("checkins", [where("status", "==", "checked-in")], (data) => {
+    const unsubscribe = subscribeToCollection("checkins", [
+      where("churchId", "==", userData.churchId),
+      where("status", "==", "checked-in")
+    ], (data) => {
       setCheckedInChildren(data);
     });
 
-    const unsubscribeRecent = subscribeToCollection("checkins", [], (data) => {
+    const unsubscribeRecent = subscribeToCollection("checkins", [
+      where("churchId", "==", userData.churchId)
+    ], (data) => {
       const sorted = data.sort((a: any, b: any) => 
         new Date(b.updatedAt || b.checkInTime).getTime() - new Date(a.updatedAt || a.checkInTime).getTime()
       ).slice(0, 5);
@@ -62,12 +75,20 @@ export default function VolunteerDashboard() {
       unsubscribe();
       unsubscribeRecent();
     };
-  }, []);
+  }, [userData?.churchId]);
+
+  useEffect(() => {
+    if (userData?.churchId) {
+      const unsubChurch = subscribeToDocument("churches", userData.churchId, setChurchData);
+      return () => unsubChurch();
+    }
+  }, [userData?.churchId]);
 
   useEffect(() => {
     const fetchGuardians = async () => {
-      if (scannedChildren.length === 1) {
+      if (scannedChildren.length === 1 && userData?.churchId) {
         const data = await getCollection("guardians", [
+          where("churchId", "==", userData.churchId),
           where("childIds", "array-contains", scannedChildren[0].id),
           where("active", "==", true)
         ]);
@@ -77,7 +98,7 @@ export default function VolunteerDashboard() {
       }
     };
     fetchGuardians();
-  }, [scannedChildren]);
+  }, [scannedChildren, userData?.churchId]);
 
   const handleScanSuccess = async (text: string) => {
     if (loading) return;
@@ -93,10 +114,11 @@ export default function VolunteerDashboard() {
     lastScannedRef.current = { text: decodedText, time: now };
 
     // Case 1: Scanning for Guardian during checkout
-    if (scanningGuardian && checkoutChild) {
+    if (scanningGuardian && checkoutChild && userData?.churchId) {
       setLoading(true);
       try {
         const guardians = await getCollection("guardians", [
+          where("churchId", "==", userData.churchId),
           where("childIds", "array-contains", checkoutChild.childId),
           where("qrToken", "==", decodedText),
           where("active", "==", true)
@@ -104,7 +126,7 @@ export default function VolunteerDashboard() {
 
         if (guardians && guardians.length > 0) {
           const guardian = guardians[0] as any;
-          await processCheckout(checkoutChild, guardian.id, `${guardian.firstName} ${guardian.surname}`);
+          await processCheckout(checkoutChild, guardian.id, `${guardian.firstName} ${guardian.lastName}`);
         } else {
           toast.error("Unauthorized guardian QR code");
         }
@@ -160,36 +182,46 @@ export default function VolunteerDashboard() {
     }
 
     // New check-in
-    setLoading(true);
-    try {
-      const children = await getCollection("children", [where("qrCode", "==", decodedText)]);
-      if (children && children.length > 0) {
-        setScannedChildren([children[0]]);
-      } else {
-        toast.error("Child not found. Please register the child first.");
+    if (userData?.churchId) {
+      setLoading(true);
+      try {
+        const children = await getCollection("children", [
+          where("churchId", "==", userData.churchId),
+          where("qrCode", "==", decodedText)
+        ]);
+        if (children && children.length > 0) {
+          setScannedChildren([children[0]]);
+        } else {
+          toast.error("Child not found. Please register the child first.");
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const handleCheckIn = async () => {
-    if (scannedChildren.length === 0 || !selectedRoom || !user) return;
+  const handleCheckIn = async (childToCheckIn?: any, roomId?: string) => {
+    const childrenToProcess = childToCheckIn ? [childToCheckIn] : scannedChildren;
+    const targetRoomId = roomId || selectedRoom;
+
+    if (childrenToProcess.length === 0 || !targetRoomId || !user || !userData?.churchId) return;
+    
     setLoading(true);
     try {
-      const room = rooms.find(r => r.id === selectedRoom);
+      const room = rooms.find(r => r.id === targetRoomId);
       
-      for (const child of scannedChildren) {
+      for (const child of childrenToProcess) {
         // Fetch parent name for check-in record
         const parentDoc = await getDocument("users", (child as any).parentId) as any;
-        const parentName = parentDoc ? `${parentDoc.firstName} ${parentDoc.surname}` : "Parent";
+        const parentName = parentDoc ? `${parentDoc.firstName} ${parentDoc.lastName}` : "Parent";
 
         await addDocument("checkins", {
+          churchId: userData.churchId,
           childId: child.id,
-          childName: `${child.firstName} ${child.surname}`,
-          roomId: selectedRoom,
+          childName: `${child.firstName} ${child.lastName}`,
+          roomId: targetRoomId,
           roomName: room.name,
           checkInTime: new Date().toISOString(),
           volunteerId: user.uid,
@@ -200,10 +232,19 @@ export default function VolunteerDashboard() {
         });
       }
       
-      toast.success(`${scannedChildren.length} children checked in successfully!`);
-      setScannedChildren([]);
-      setSelectedRoom("");
-      setActiveTab("list");
+      if (childToCheckIn) {
+        setScannedChildren(prev => prev.filter(c => c.id !== childToCheckIn.id));
+        toast.success(`${childToCheckIn.firstName} checked in successfully!`);
+        if (scannedChildren.length <= 1) {
+          setSelectedRoom("");
+          setActiveTab("list");
+        }
+      } else {
+        toast.success(`${scannedChildren.length} children checked in successfully!`);
+        setScannedChildren([]);
+        setSelectedRoom("");
+        setActiveTab("list");
+      }
     } catch (err) {
       console.error(err);
       toast.error("Check-in failed");
@@ -240,9 +281,74 @@ export default function VolunteerDashboard() {
       toast.error("Please provide a reason for override");
       return;
     }
+    if (overridePin.length !== 4) {
+      toast.error("Please enter a 4-digit PIN");
+      return;
+    }
+
+    // Rate limiting check
+    if (lockoutUntil && Date.now() < lockoutUntil) {
+      const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      toast.error(`Too many failed attempts. Try again in ${remaining} seconds.`);
+      return;
+    }
+
     setLoading(true);
-    await processCheckout(checkoutChild, "admin_override", "Admin Override", true, overrideReason);
-    setLoading(false);
+    try {
+      const hashedInput = await hashPin(overridePin);
+      
+      if (hashedInput === churchData?.adminOverridePinHash) {
+        // Success
+        await processCheckout(checkoutChild, "admin_override", "Admin Override", true, overrideReason);
+        
+        // Log audit event
+        await logAudit({
+          action: "admin_override_checkout",
+          category: "security",
+          details: {
+            childId: checkoutChild.childId,
+            childName: checkoutChild.childName,
+            reason: overrideReason,
+            method: "admin_override"
+          },
+          churchId: userData.churchId,
+          userId: user.uid
+        });
+
+        setFailedAttempts(0);
+        setOverridePin("");
+      } else {
+        // Failure
+        const newAttempts = failedAttempts + 1;
+        setFailedAttempts(newAttempts);
+        
+        if (newAttempts >= 3) {
+          const lockoutTime = Date.now() + (60 * 1000); // 1 minute lockout
+          setLockoutUntil(lockoutTime);
+          toast.error("Incorrect PIN. Too many failed attempts. Locked for 1 minute.");
+        } else {
+          toast.error(`Incorrect PIN. ${3 - newAttempts} attempts remaining.`);
+        }
+        
+        // Log failed attempt
+        await logAudit({
+          action: "failed_admin_override",
+          category: "security",
+          details: {
+            childId: checkoutChild.childId,
+            childName: checkoutChild.childName,
+            attempts: newAttempts
+          },
+          churchId: userData.churchId,
+          userId: user.uid
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Override verification failed");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (role !== "admin" && role !== "volunteer") {
@@ -325,14 +431,14 @@ export default function VolunteerDashboard() {
                     <div className="flex items-center space-x-4">
                       <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center overflow-hidden">
                         {scannedChildren.length === 1 && scannedChildren[0].photoUrl ? (
-                          <img src={scannedChildren[0].photoUrl} alt={`${scannedChildren[0].firstName} ${scannedChildren[0].surname}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                          <img src={scannedChildren[0].photoUrl} alt={`${scannedChildren[0].firstName} ${scannedChildren[0].lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           <Users className="h-8 w-8 text-blue-600 dark:text-blue-400" />
                         )}
                       </div>
                       <div>
                         <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
-                          {scannedChildren.length === 1 ? `${scannedChildren[0].firstName} ${scannedChildren[0].surname}` : `${scannedChildren.length} Children`}
+                          {scannedChildren.length === 1 ? `${scannedChildren[0].firstName} ${scannedChildren[0].lastName}` : `${scannedChildren.length} Children`}
                         </h3>
                         <p className="text-gray-500 dark:text-gray-400">
                           {scannedChildren.length === 1 ? `${scannedChildren[0].age} years old` : "Group Check-in"}
@@ -345,40 +451,41 @@ export default function VolunteerDashboard() {
                 </div>
 
                 {scannedChildren.length > 1 && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Group Members</p>
-                    <div className="grid grid-cols-1 gap-2">
+                  <div className="space-y-4">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Group Members - Assign Individually</p>
+                    <div className="grid grid-cols-1 gap-4">
                       {scannedChildren.map(child => (
-                        <div key={child.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-700">
-                          <div className="flex items-center space-x-3">
-                            <div className="h-8 w-8 bg-white dark:bg-gray-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
-                              {child.photoUrl ? (
-                                <img src={child.photoUrl} alt={`${child.firstName} ${child.surname}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                              ) : (
-                                <Users className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                              )}
+                        <div key={child.id} className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                              <div className="h-10 w-10 bg-white dark:bg-gray-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
+                                {child.photoUrl ? (
+                                  <img src={child.photoUrl} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                                )}
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</p>
+                                <p className="text-[10px] text-gray-500 dark:text-gray-400">{child.age} years old</p>
+                              </div>
                             </div>
-                            <span className="text-sm font-bold text-gray-900 dark:text-white">{child.firstName} {child.surname}</span>
                           </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">{child.age}y</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {scannedChildren.length === 1 && authorizedGuardians.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Authorized Guardians</p>
-                    <div className="grid grid-cols-1 gap-2">
-                      {authorizedGuardians.map(g => (
-                        <div key={g.id} className="flex items-center space-x-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-700">
-                          <div className="h-8 w-8 bg-white dark:bg-gray-800 rounded-lg flex items-center justify-center border border-gray-100 dark:border-gray-700">
-                            <UserCheck className="h-4 w-4 text-green-600 dark:text-green-400" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-gray-900 dark:text-white">{g.firstName} {g.surname}</p>
-                            <p className="text-[10px] text-gray-500 dark:text-gray-400">{g.relationship}</p>
+                          
+                          <div className="grid grid-cols-2 gap-2">
+                            {rooms
+                              .filter(room => child.age >= (room.minAge || 0) && child.age <= (room.maxAge || 99))
+                              .map((room) => (
+                                <button
+                                  key={room.id}
+                                  onClick={() => handleCheckIn(child, room.id)}
+                                  disabled={loading}
+                                  className="p-3 rounded-xl border border-gray-200 dark:border-gray-700 text-left hover:border-blue-500 dark:hover:border-blue-500 transition-all bg-white dark:bg-gray-800"
+                                >
+                                  <p className="text-xs font-bold text-gray-900 dark:text-white">{room.name}</p>
+                                  <p className="text-[10px] text-gray-400">Assign</p>
+                                </button>
+                              ))}
                           </div>
                         </div>
                       ))}
@@ -386,60 +493,45 @@ export default function VolunteerDashboard() {
                   </div>
                 )}
 
-                {scannedChildren.length === 1 && scannedChildren[0].allergies && (
-                  <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-2xl border border-red-100 dark:border-red-900/30 flex items-start space-x-3">
-                    <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5" />
-                    <div>
-                      <p className="font-bold text-red-600 dark:text-red-400">Allergies & Medical</p>
-                      <p className="text-red-500 dark:text-red-300 text-sm">{scannedChildren[0].allergies}</p>
+                {scannedChildren.length === 1 && (
+                  <>
+                    <div className="space-y-4">
+                      <label className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Assign to Room</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {rooms
+                          .filter(room => {
+                            if (scannedChildren.length === 0) return true;
+                            return scannedChildren.every(child => 
+                              child.age >= (room.minAge || 0) && child.age <= (room.maxAge || 99)
+                            );
+                          })
+                          .map((room) => (
+                            <button
+                              key={room.id}
+                              onClick={() => setSelectedRoom(room.id)}
+                              className={`p-4 rounded-2xl border-2 text-left transition-all ${
+                                selectedRoom === room.id
+                                  ? "border-blue-600 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400"
+                                  : "border-gray-100 dark:border-gray-700 hover:border-blue-200 dark:hover:border-blue-800 text-gray-600 dark:text-gray-400"
+                              }`}
+                            >
+                              <p className="font-bold">{room.name}</p>
+                              <p className="text-xs opacity-70">Ages: {room.minAge}-{room.maxAge}</p>
+                            </button>
+                          ))}
+                      </div>
                     </div>
-                  </div>
+
+                    <button
+                      onClick={() => handleCheckIn()}
+                      disabled={!selectedRoom || loading}
+                      className="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none disabled:opacity-50 flex items-center justify-center space-x-2"
+                    >
+                      <CheckCircle2 className="h-5 w-5" />
+                      <span>{loading ? "Checking In..." : "Confirm Check-In"}</span>
+                    </button>
+                  </>
                 )}
-
-                <div className="space-y-4">
-                  <label className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Assign to Room</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {rooms
-                      .filter(room => {
-                        if (scannedChildren.length === 0) return true;
-                        return scannedChildren.every(child => 
-                          child.age >= (room.minAge || 0) && child.age <= (room.maxAge || 99)
-                        );
-                      })
-                      .map((room) => (
-                        <button
-                          key={room.id}
-                          onClick={() => setSelectedRoom(room.id)}
-                          className={`p-4 rounded-2xl border-2 text-left transition-all ${
-                            selectedRoom === room.id
-                              ? "border-blue-600 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400"
-                              : "border-gray-100 dark:border-gray-700 hover:border-blue-200 dark:hover:border-blue-800 text-gray-600 dark:text-gray-400"
-                          }`}
-                        >
-                          <p className="font-bold">{room.name}</p>
-                          <p className="text-xs opacity-70">Ages: {room.minAge}-{room.maxAge}</p>
-                        </button>
-                      ))}
-                    {rooms.filter(room => 
-                      scannedChildren.every(child => 
-                        child.age >= (room.minAge || 0) && child.age <= (room.maxAge || 99)
-                      )
-                    ).length === 0 && (
-                      <p className="col-span-2 text-sm text-red-500 font-medium p-4 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-900/30">
-                        No rooms found for this age group ({scannedChildren.map(c => c.age).join(", ")} years).
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleCheckIn}
-                  disabled={!selectedRoom || loading}
-                  className="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none disabled:opacity-50 flex items-center justify-center space-x-2"
-                >
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span>{loading ? "Checking In..." : "Confirm Check-In"}</span>
-                </button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -642,6 +734,26 @@ export default function VolunteerDashboard() {
                   </div>
 
                   <div className="space-y-2">
+                    <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Admin Override PIN</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={4}
+                        value={overridePin}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          if (val.length <= 4) setOverridePin(val);
+                        }}
+                        placeholder="Enter 4-digit PIN"
+                        className="w-full pl-12 pr-4 py-4 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 dark:text-white text-center text-2xl tracking-[1em] font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
                     <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Reason for Override</label>
                     <textarea
                       value={overrideReason}
@@ -660,7 +772,7 @@ export default function VolunteerDashboard() {
                     </button>
                     <button
                       onClick={handleAdminOverride}
-                      disabled={!overrideReason.trim() || loading}
+                      disabled={!overrideReason.trim() || loading || overridePin.length !== 4}
                       className="flex-[2] bg-red-600 text-white py-4 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none disabled:opacity-50"
                     >
                       {loading ? "Processing..." : "Confirm Override"}

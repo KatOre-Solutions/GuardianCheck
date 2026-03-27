@@ -7,19 +7,28 @@ service cloud.firestore {
     // ===============================================================
     //
     // Collection: users
-    // Fields: uid, email, role (admin, volunteer, parent), name, photoURL
+    // Fields: uid, email, role, firstName, lastName, churchId, status, createdAt, updatedAt
+    //
+    // Collection: churches
+    // Fields: name, address, adminEmail, adminOverridePinHash, adminOverridePin, pinLastUpdatedAt, createdAt
+    //
+    // Collection: audit_logs
+    // Fields: action, category, details, churchId, userId, timestamp
+    //
+    // Collection: membershipRequests
+    // Fields: userId, userEmail, userName, churchId, churchName, status, createdAt, updatedAt
     //
     // Collection: children
-    // Fields: name, age, allergies, notes, parentId, qrCode, pickupPin
+    // Fields: firstName, lastName, age, allergies, notes, parentId, churchId, createdAt, updatedAt
     //
     // Collection: rooms
-    // Fields: name, capacity, ageRange
+    // Fields: name, capacity, minAge, maxAge, churchId, createdAt, updatedAt
     //
     // Collection: guardians
-    // Fields: name, phone, relationship, childId, qrToken, parentId
+    // Fields: firstName, lastName, phone, relationship, childIds, qrToken, parentId, churchId, active, createdAt, updatedAt
     //
     // Collection: checkins
-    // Fields: childId, childName, roomId, roomName, checkInTime, checkOutTime, volunteerId, volunteerName, checkOutVolunteerId, checkOutVolunteerName, status, qrCode, guardianId, guardianName, checkedInBy, overrideReason
+    // Fields: childId, childName, roomId, roomName, checkInTime, checkOutTime, volunteerId, volunteerName, status, churchId, createdAt, updatedAt
     //
     // ===============================================================
 
@@ -31,87 +40,49 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isNotDeactivated() {
-      return isAuthenticated() && 
-        (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('deactivated', false) == false);
-    }
-
-    function isOwner(userId) {
-      return isNotDeactivated() && request.auth.uid == userId;
-    }
-
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    function isMasterAdmin() {
+      let userData = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             (('roles' in userData && 'master_admin' in userData.roles) || userData.role == 'master_admin');
+    }
+
+    function isApproved() {
+      let userData = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             userData.status == 'approved';
+    }
+
     function isAdmin() {
-      return isNotDeactivated() && 
-        (
-          (request.auth.token.email == "oreutlwilediutlwileng@gmail.com" && request.auth.token.email_verified == true) ||
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-        );
+      let userData = getUserData();
+      return isApproved() && (('roles' in userData && 'admin' in userData.roles) || userData.role == 'admin' || isMasterAdmin());
     }
 
     function isVolunteer() {
-      return isNotDeactivated() && (isAdmin() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'volunteer'));
+      let userData = getUserData();
+      return isApproved() && (('roles' in userData && 'volunteer' in userData.roles) || userData.role == 'volunteer' || isAdmin());
     }
 
     function isParent() {
-      return isNotDeactivated() && (isVolunteer() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'parent'));
+      let userData = getUserData();
+      return isApproved() && (('roles' in userData && 'parent' in userData.roles) || userData.role == 'parent' || isAdmin());
+    }
+
+    function isChurchMember(churchId) {
+      return isApproved() && getUserData().churchId == churchId;
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'firstName', 'surname', 'createdAt', 'updatedAt']) &&
-             data.uid is string && data.uid.size() > 0 &&
-             data.email is string && data.email.size() > 0 &&
-             data.firstName is string && data.firstName.size() > 0 &&
-             data.surname is string &&
-             data.role in ['admin', 'volunteer', 'parent'] &&
-             data.createdAt is string && data.updatedAt is string &&
-             (!('gender' in data) || data.gender in ['male', 'female', 'other', 'Male', 'Female', 'Other']) &&
-             (!('deactivated' in data) || data.deactivated is bool);
-    }
-
-    function isValidChild(data) {
-      return data.keys().hasAll(['firstName', 'surname', 'age', 'parentId', 'createdAt', 'updatedAt']) &&
-             data.firstName is string && data.firstName.size() > 0 &&
-             data.surname is string &&
-             data.age is number && data.age >= 0 &&
-             data.parentId is string && data.parentId.size() > 0 &&
-             data.createdAt is string && data.updatedAt is string &&
-             (!('gender' in data) || data.gender in ['male', 'female', 'other', 'Male', 'Female', 'Other']);
-    }
-
-    function isValidGuardian(data) {
-      return data.keys().hasAll(['firstName', 'surname', 'phone', 'relationship', 'childIds', 'qrToken', 'parentId', 'createdAt', 'updatedAt', 'active']) &&
-             data.firstName is string && data.firstName.size() > 0 &&
-             data.surname is string &&
-             data.phone is string &&
-             data.relationship is string &&
-             data.childIds is list &&
-             data.qrToken is string &&
-             data.parentId is string &&
-             data.active is bool &&
-             data.createdAt is string && data.updatedAt is string &&
-             (!('gender' in data) || data.gender in ['male', 'female', 'other', 'Male', 'Female', 'Other']);
-    }
-
-    function isValidRoom(data) {
-      return data.keys().hasAll(['name', 'capacity']) &&
-             data.name is string && data.name.size() > 0 &&
-             data.capacity is number && data.capacity >= 0;
-    }
-
-    function isValidCheckIn(data) {
-      return data.keys().hasAll(['childId', 'roomId', 'checkInTime', 'status', 'createdAt', 'updatedAt']) &&
-             data.childId is string && data.roomId is string &&
-             data.status in ['checked-in', 'checked-out'] &&
-             data.createdAt is string && data.updatedAt is string &&
-             (!('volunteerName' in data) || data.volunteerName is string) &&
-             (!('checkOutVolunteerName' in data) || data.checkOutVolunteerName is string) &&
-             (!('guardianName' in data) || data.guardianName is string) &&
-             (!('checkedInBy' in data) || data.checkedInBy is string);
+      return data.keys().hasAll(['uid', 'email', 'status']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.status in ['incomplete_profile', 'pending', 'approved', 'rejected'] &&
+             (!('roles' in data) || data.roles is list);
     }
 
     // ===============================================================
@@ -119,40 +90,94 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isNotDeactivated();
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
-        (request.resource.data.role == 'parent' || 
-         (request.auth.token.email == "oreutlwilediutlwileng@gmail.com" && request.auth.token.email_verified == true && request.resource.data.role == 'admin'));
-      allow update: if isNotDeactivated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
-      allow delete: if isAdmin();
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isMasterAdmin() || 
+        (isApproved() && resource != null && getUserData().churchId == resource.data.churchId && (isAdmin() || isVolunteer()))
+      );
+      allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && (
+        (request.auth.uid == userId && (
+          // User can update their own profile if incomplete
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().status == 'incomplete_profile' && request.resource.data.status == 'pending') ||
+          // User can update their own settings (like darkMode)
+          (isApproved() && request.resource.data.status == 'approved' && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role) && (!('churchId' in request.resource.data) || request.resource.data.churchId == resource.data.churchId))
+        )) ||
+        isMasterAdmin() ||
+        (isAdmin() && resource != null && (!('role' in resource.data) || resource.data.role != 'master_admin') && (!('churchId' in resource.data) || getUserData().churchId == resource.data.churchId) && (!('churchId' in request.resource.data) || request.resource.data.churchId == getUserData().churchId) && (!('role' in request.resource.data) || request.resource.data.role != 'master_admin'))
+      );
+      allow delete: if isMasterAdmin();
+    }
+
+    match /churches/{churchId} {
+      allow read: if isAuthenticated(); // Restrict to authenticated users
+      allow create: if isMasterAdmin();
+      allow update: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
+      allow delete: if isMasterAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isApproved();
+      allow update, delete: if false;
+    }
+
+    match /membershipRequests/{requestId} {
+      allow read: if isAuthenticated() && (
+        (resource != null && request.auth.uid == resource.data.userId) || 
+        isMasterAdmin() || 
+        (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId)
+      );
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && request.resource.data.status == 'pending';
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin();
     }
 
     match /children/{childId} {
-      allow read: if isNotDeactivated() && (isVolunteer() || resource.data.parentId == request.auth.uid);
-      allow create: if isAuthenticated() && isValidChild(request.resource.data) && request.resource.data.parentId == request.auth.uid;
-      allow update: if isNotDeactivated() && isValidChild(request.resource.data) && 
-        (isVolunteer() || (resource.data.parentId == request.auth.uid && request.resource.data.parentId == resource.data.parentId));
-      allow delete: if isAdmin() || (isNotDeactivated() && resource.data.parentId == request.auth.uid);
+      allow read: if isMasterAdmin() || (
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        (isVolunteer() || isAdmin() || (isParent() && resource.data.parentId == request.auth.uid))
+      );
+      allow create: if isApproved() && getUserData().churchId == request.resource.data.churchId && (isAdmin() || (isParent() && request.resource.data.parentId == request.auth.uid));
+      allow update: if isMasterAdmin() || (
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid))
+      );
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
 
     match /guardians/{guardianId} {
-      allow read: if isNotDeactivated() && (isVolunteer() || resource.data.parentId == request.auth.uid);
-      allow create: if isAuthenticated() && isValidGuardian(request.resource.data) && request.resource.data.parentId == request.auth.uid;
-      allow update: if isNotDeactivated() && isValidGuardian(request.resource.data) && 
-        (isAdmin() || (resource.data.parentId == request.auth.uid && request.resource.data.parentId == resource.data.parentId));
-      allow delete: if isAdmin() || (isNotDeactivated() && resource.data.parentId == request.auth.uid);
+      allow read: if isMasterAdmin() || (
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        (isVolunteer() || isAdmin() || (isParent() && resource.data.parentId == request.auth.uid))
+      );
+      allow create: if isApproved() && getUserData().churchId == request.resource.data.churchId && (isAdmin() || (isParent() && request.resource.data.parentId == request.auth.uid));
+      allow update: if isMasterAdmin() || (
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid))
+      );
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
 
     match /rooms/{roomId} {
-      allow read: if isNotDeactivated();
-      allow write: if isAdmin();
+      allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow create: if isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId);
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
 
     match /checkins/{checkinId} {
-      allow read: if isNotDeactivated() && (isVolunteer() || get(/databases/$(database)/documents/children/$(resource.data.childId)).data.parentId == request.auth.uid);
-      allow create: if isVolunteer() && isValidCheckIn(request.resource.data);
-      allow update: if isVolunteer() && isValidCheckIn(request.resource.data);
-      allow delete: if isAdmin();
+      allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow create: if isApproved() && getUserData().churchId == request.resource.data.churchId && (isVolunteer() || isAdmin());
+      allow update: if isApproved() && resource != null && getUserData().churchId == resource.data.churchId && (isVolunteer() || isAdmin());
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+    }
+
+    match /invitations/{invitationId} {
+      allow read: if true; 
+      allow create: if isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId);
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
 
     match /{path=**} {

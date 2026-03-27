@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument } from "../lib/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
-import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home } from "lucide-react";
+import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, CreditCard, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 
@@ -20,20 +22,25 @@ export default function ParentDashboard() {
   const [editingChild, setEditingChild] = useState<any>(null);
   const [childToDelete, setChildToDelete] = useState<any>(null);
   const [guardianToDelete, setGuardianToDelete] = useState<any>(null);
-  const [newChild, setNewChild] = useState({ firstName: "", surname: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
+  const [newChild, setNewChild] = useState({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
-  const [newGuardian, setNewGuardian] = useState({ firstName: "", surname: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
+  const [newGuardian, setNewGuardian] = useState({ firstName: "", lastName: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const RELATIONSHIPS = ["Mother", "Father", "Grandparent", "Aunt", "Uncle", "Sibling", "Nanny", "Other"];
   const GENDERS = ["Male", "Female", "Other"];
 
   useEffect(() => {
-    if (user) {
-      const unsubscribeChildren = subscribeToCollection("children", [where("parentId", "==", user.uid)], (data) => {
+    if (user && userData?.churchId) {
+      const constraints = [
+        where("parentId", "==", user.uid),
+        where("churchId", "==", userData.churchId)
+      ];
+      const unsubscribeChildren = subscribeToCollection("children", constraints, (data) => {
         setChildren(data);
       });
-      const unsubscribeGuardians = subscribeToCollection("guardians", [where("parentId", "==", user.uid)], (data) => {
+      const unsubscribeGuardians = subscribeToCollection("guardians", constraints, (data) => {
         setGuardians(data);
       });
       return () => {
@@ -41,24 +48,61 @@ export default function ParentDashboard() {
         unsubscribeGuardians();
       };
     }
-  }, [user]);
+  }, [user, userData?.churchId]);
+
+  useEffect(() => {
+    if (user && userData) {
+      // Sync account holder guardian info if it exists
+      const syncAccountHolder = async () => {
+        const parentFirstName = userData.firstName || user.displayName?.split(" ")[0] || "Parent";
+        const parentLastName = userData.lastName || user.displayName?.split(" ").slice(1).join(" ") || "";
+        const parentPhotoUrl = userData.photoUrl || userData.photoURL || user.photoURL || "";
+
+        const existingParentGuardian = guardians.find(g => 
+          g.phone === "Account Holder" && 
+          g.parentId === user.uid
+        );
+
+        if (existingParentGuardian) {
+          if (
+            existingParentGuardian.firstName !== parentFirstName ||
+            existingParentGuardian.lastName !== parentLastName ||
+            existingParentGuardian.photoUrl !== parentPhotoUrl
+          ) {
+            await updateDocument("guardians", existingParentGuardian.id, {
+              firstName: parentFirstName,
+              lastName: parentLastName,
+              photoUrl: parentPhotoUrl,
+              photoURL: parentPhotoUrl
+            });
+          }
+        }
+      };
+      syncAccountHolder();
+    }
+  }, [userData, guardians, user]);
 
   const handleAddChild = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (!userData?.churchId) {
+      toast.error("You must select a church in your profile before adding children.");
+      return;
+    }
     setLoading(true);
     try {
       const childId = await addDocument("children", {
         ...newChild,
         age: Number(newChild.age),
         parentId: user.uid,
+        churchId: userData.churchId,
         qrCode: `child_${Math.random().toString(36).substr(2, 9)}`
       });
 
       // Check if parent guardian already exists for this account
       const parentFirstName = userData?.firstName || user.displayName?.split(" ")[0] || "Parent";
-      const parentSurname = userData?.surname || user.displayName?.split(" ").slice(1).join(" ") || "";
-      const parentPhotoUrl = userData?.photoUrl || user.photoURL || "";
+      const parentLastName = userData?.lastName || user.displayName?.split(" ").slice(1).join(" ") || "";
+      const parentPhotoUrl = userData?.photoUrl || userData?.photoURL || user.photoURL || "";
       
       const existingParentGuardian = guardians.find(g => 
         g.phone === "Account Holder" && 
@@ -71,28 +115,31 @@ export default function ParentDashboard() {
         await updateDocument("guardians", existingParentGuardian.id, {
           childIds: updatedChildIds,
           firstName: parentFirstName,
-          surname: parentSurname,
-          photoUrl: parentPhotoUrl // Ensure photo is synced
+          lastName: parentLastName,
+          photoUrl: parentPhotoUrl, // Ensure photo is synced
+          photoURL: parentPhotoUrl
         });
       } else {
         // Create new parent guardian
         const qrToken = `guardian_${Math.random().toString(36).substr(2, 12)}`;
         await addDocument("guardians", {
           firstName: parentFirstName,
-          surname: parentSurname,
+          lastName: parentLastName,
           phone: "Account Holder",
           relationship: "Parent",
           childIds: [childId],
           parentId: user.uid,
+          churchId: userData.churchId,
           qrToken,
           photoUrl: parentPhotoUrl,
+          photoURL: parentPhotoUrl,
           active: true
         });
       }
 
       toast.success("Child registered successfully!");
       setShowAddModal(false);
-      setNewChild({ firstName: "", surname: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
+      setNewChild({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
     } catch (err) {
       console.error(err);
       toast.error("Failed to register child");
@@ -149,42 +196,58 @@ export default function ParentDashboard() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isEditing = false) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, isEditing = false) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
-    if (file.size > 1024 * 1024) {
-      toast.error("Image size must be less than 1MB");
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size must be less than 5MB");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
+    setUploading(true);
+    try {
+      const storageRef = ref(storage, `children/${user.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      
       if (isEditing) {
-        setEditingChild({ ...editingChild, photoUrl: base64String });
+        setEditingChild({ ...editingChild, photoUrl: url, photoURL: url });
       } else {
-        setNewChild({ ...newChild, photoUrl: base64String });
+        setNewChild({ ...newChild, photoUrl: url, photoURL: url });
       }
-    };
-    reader.readAsDataURL(file);
+      toast.success("Image uploaded successfully");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to upload image");
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const handleGuardianImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleGuardianImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
-    if (file.size > 1024 * 1024) {
-      toast.error("Image size must be less than 1MB");
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size must be less than 5MB");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      setNewGuardian({ ...newGuardian, photoUrl: base64String });
-    };
-    reader.readAsDataURL(file);
+    setUploading(true);
+    try {
+      const storageRef = ref(storage, `guardians/${user.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      
+      setNewGuardian({ ...newGuardian, photoUrl: url, photoURL: url });
+      toast.success("Image uploaded successfully");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to upload image");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const toggleGroupSelection = (id: string) => {
@@ -199,15 +262,16 @@ export default function ParentDashboard() {
 
   const handleAddGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedChild) return;
+    if (!user || !selectedChild || !userData?.churchId) return;
     setLoading(true);
     try {
       // Check if guardian already exists for this account (same name and phone)
       const existingGuardian = guardians.find(g => 
         g.firstName.toLowerCase() === newGuardian.firstName.toLowerCase() && 
-        g.surname.toLowerCase() === newGuardian.surname.toLowerCase() && 
+        g.lastName.toLowerCase() === newGuardian.lastName.toLowerCase() && 
         g.phone === newGuardian.phone &&
-        g.parentId === user.uid
+        g.parentId === user.uid &&
+        g.churchId === userData.churchId
       );
 
       if (existingGuardian) {
@@ -227,12 +291,13 @@ export default function ParentDashboard() {
           ...newGuardian,
           childIds: [selectedChild.id],
           parentId: user.uid,
+          churchId: userData.churchId,
           qrToken,
           active: true
         });
         toast.success("New guardian added successfully!");
       }
-      setNewGuardian({ firstName: "", surname: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
+      setNewGuardian({ firstName: "", lastName: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
     } catch (err) {
       console.error(err);
       toast.error("Failed to add guardian");
@@ -381,8 +446,13 @@ export default function ParentDashboard() {
 
             <div className="flex items-center justify-between">
               <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center overflow-hidden">
-                {child.photoUrl ? (
-                  <img src={child.photoUrl} alt={`${child.firstName} ${child.surname}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                {child.photoUrl || child.photoURL ? (
+                  <img 
+                    src={child.photoUrl || child.photoURL} 
+                    alt={`${child.firstName} ${child.lastName}`} 
+                    className="h-full w-full object-cover" 
+                    referrerPolicy="no-referrer" 
+                  />
                 ) : (
                   <User className="h-8 w-8 text-blue-600 dark:text-blue-400" />
                 )}
@@ -394,7 +464,7 @@ export default function ParentDashboard() {
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{child.firstName} {child.surname}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</h3>
               {child.allergies && (
                 <div className="flex items-center space-x-2 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-1 rounded-lg text-sm font-medium">
                   <AlertCircle className="h-4 w-4" />
@@ -410,7 +480,7 @@ export default function ParentDashboard() {
               <div className="flex flex-col items-center space-y-2">
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Child ID Card</p>
                 <button 
-                  onClick={() => downloadQR(`qr-child-${child.id}`, `${child.firstName} ${child.surname}`, "CHILD")}
+                  onClick={() => downloadQR(`qr-child-${child.id}`, `${child.firstName} ${child.lastName}`, "CHILD")}
                   className="flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
                 >
                   <Download className="h-3 w-3" />
@@ -472,7 +542,7 @@ export default function ParentDashboard() {
             >
               <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Guardians for {selectedChild.firstName} {selectedChild.surname}</h2>
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Guardians for {selectedChild.firstName} {selectedChild.lastName}</h2>
                   <p className="text-sm text-gray-500 dark:text-gray-400">Authorized people who can pick up this child</p>
                 </div>
                 <button onClick={() => setShowGuardianModal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
@@ -487,8 +557,13 @@ export default function ParentDashboard() {
                   <div className="flex flex-col md:flex-row gap-6">
                     <div className="flex flex-col items-center space-y-2">
                       <div className="h-24 w-24 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
-                        {newGuardian.photoUrl ? (
-                          <img src={newGuardian.photoUrl} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                        {uploading ? (
+                          <div className="flex flex-col items-center space-y-2">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                            <span className="text-[8px] font-bold text-blue-600 uppercase">Uploading...</span>
+                          </div>
+                        ) : newGuardian.photoUrl || newGuardian.photoURL ? (
+                          <img src={newGuardian.photoUrl || newGuardian.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
                         )}
@@ -496,10 +571,13 @@ export default function ParentDashboard() {
                           type="file"
                           accept="image/*"
                           onChange={handleGuardianImageUpload}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          disabled={uploading}
+                          className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                         />
                       </div>
-                      <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase">Upload Photo</p>
+                      <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase">
+                        {uploading ? "Uploading..." : "Upload Photo"}
+                      </p>
                     </div>
 
                     <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -514,24 +592,30 @@ export default function ParentDashboard() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Surname</label>
+                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Last Name</label>
                         <input
                           required
                           placeholder="e.g. Doe"
-                          value={newGuardian.surname}
-                          onChange={e => setNewGuardian({...newGuardian, surname: e.target.value})}
+                          value={newGuardian.lastName}
+                          onChange={e => setNewGuardian({...newGuardian, lastName: e.target.value})}
                           className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                         />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Phone Number</label>
-                        <input
-                          required
-                          placeholder="Phone"
-                          value={newGuardian.phone}
-                          onChange={e => setNewGuardian({...newGuardian, phone: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                        />
+                        <div className="relative">
+                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                          <input
+                            required
+                            type="tel"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            placeholder="Phone"
+                            value={newGuardian.phone}
+                            onChange={(e) => setNewGuardian({ ...newGuardian, phone: e.target.value })}
+                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          />
+                        </div>
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Relationship</label>
@@ -548,13 +632,19 @@ export default function ParentDashboard() {
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">ID Number</label>
-                        <input
-                          required
-                          placeholder="ID Number"
-                          value={newGuardian.idNumber}
-                          onChange={e => setNewGuardian({...newGuardian, idNumber: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                        />
+                        <div className="relative">
+                          <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                          <input
+                            required
+                            type="tel"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            placeholder="ID Number"
+                            value={newGuardian.idNumber}
+                            onChange={(e) => setNewGuardian({ ...newGuardian, idNumber: e.target.value })}
+                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -576,15 +666,20 @@ export default function ParentDashboard() {
                         <div className="flex items-start justify-between">
                           <div className="flex items-center space-x-3">
                             <div className="h-12 w-12 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
-                              {guardian.photoUrl ? (
-                                <img src={guardian.photoUrl} alt={`${guardian.firstName} ${guardian.surname}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                              {guardian.photoUrl || guardian.photoURL ? (
+                                <img 
+                                  src={guardian.photoUrl || guardian.photoURL} 
+                                  alt={`${guardian.firstName} ${guardian.lastName}`} 
+                                  className="h-full w-full object-cover" 
+                                  referrerPolicy="no-referrer" 
+                                />
                               ) : (
                                 <User className="h-6 w-6 text-gray-300 dark:text-gray-600" />
                               )}
                             </div>
                             <div>
                               <div className="flex items-center space-x-2">
-                                <p className="font-bold text-gray-900 dark:text-white">{guardian.firstName} {guardian.surname}</p>
+                                <p className="font-bold text-gray-900 dark:text-white">{guardian.firstName} {guardian.lastName}</p>
                                 {!guardian.active && (
                                   <span className="text-[10px] bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded font-bold uppercase">Inactive</span>
                                 )}
@@ -626,7 +721,7 @@ export default function ParentDashboard() {
                           </div>
                           <button 
                             disabled={!guardian.active}
-                            onClick={() => downloadQR(`qr-${guardian.id}`, `${guardian.firstName} ${guardian.surname}`)}
+                            onClick={() => downloadQR(`qr-${guardian.id}`, `${guardian.firstName} ${guardian.lastName}`)}
                             className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active ? "text-blue-600 dark:text-blue-400" : "text-gray-400 dark:text-gray-600"}`}
                           >
                             <Download className="h-3 w-3" />
@@ -675,8 +770,13 @@ export default function ParentDashboard() {
                 <form onSubmit={handleAddChild} className="space-y-6">
                   <div className="flex flex-col items-center space-y-4">
                     <div className="h-24 w-24 bg-gray-50 dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
-                      {newChild.photoUrl ? (
-                        <img src={newChild.photoUrl} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      {uploading ? (
+                        <div className="flex flex-col items-center space-y-2">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                          <span className="text-[10px] font-bold text-blue-600 uppercase">Uploading...</span>
+                        </div>
+                      ) : newChild.photoUrl || newChild.photoURL ? (
+                        <img src={newChild.photoUrl || newChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
                       )}
@@ -684,10 +784,13 @@ export default function ParentDashboard() {
                         type="file"
                         accept="image/*"
                         onChange={(e) => handleImageUpload(e)}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        disabled={uploading}
+                        className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                       />
                     </div>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase">Click to upload photo</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase">
+                      {uploading ? "Uploading..." : "Click to upload photo"}
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -703,26 +806,31 @@ export default function ParentDashboard() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Surname</label>
+                      <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Last Name</label>
                       <input
                         required
                         type="text"
-                        value={newChild.surname}
-                        onChange={(e) => setNewChild({ ...newChild, surname: e.target.value })}
+                        value={newChild.lastName}
+                        onChange={(e) => setNewChild({ ...newChild, lastName: e.target.value })}
                         placeholder="e.g. Doe"
                         className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Age</label>
-                      <input
-                        required
-                        type="number"
-                        value={newChild.age}
-                        onChange={(e) => setNewChild({ ...newChild, age: e.target.value })}
-                        placeholder="Age"
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                      />
+                      <div className="relative">
+                        <Calendar className="absolute left-4 top-3.5 h-5 w-5 text-gray-400" />
+                        <input
+                          required
+                          type="tel"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={newChild.age}
+                          onChange={(e) => setNewChild({ ...newChild, age: e.target.value })}
+                          placeholder="Age"
+                          className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        />
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Gender</label>
@@ -803,8 +911,13 @@ export default function ParentDashboard() {
                 <form onSubmit={handleEditChild} className="space-y-6">
                   <div className="flex flex-col items-center space-y-4">
                     <div className="h-24 w-24 bg-gray-50 dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
-                      {editingChild.photoUrl ? (
-                        <img src={editingChild.photoUrl} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      {uploading ? (
+                        <div className="flex flex-col items-center space-y-2">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                          <span className="text-[10px] font-bold text-blue-600 uppercase">Uploading...</span>
+                        </div>
+                      ) : editingChild.photoUrl || editingChild.photoURL ? (
+                        <img src={editingChild.photoUrl || editingChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
                       )}
@@ -812,10 +925,13 @@ export default function ParentDashboard() {
                         type="file"
                         accept="image/*"
                         onChange={(e) => handleImageUpload(e, true)}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        disabled={uploading}
+                        className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                       />
                     </div>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase">Click to change photo</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase">
+                      {uploading ? "Uploading..." : "Click to change photo"}
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -831,25 +947,30 @@ export default function ParentDashboard() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Surname</label>
+                      <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Last Name</label>
                       <input
                         required
                         type="text"
-                        value={editingChild.surname}
-                        onChange={(e) => setEditingChild({ ...editingChild, surname: e.target.value })}
+                        value={editingChild.lastName || ""}
+                        onChange={(e) => setEditingChild({ ...editingChild, lastName: e.target.value })}
                         placeholder="e.g. Doe"
                         className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                       />
                     </div>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Age</label>
-                      <input
-                        required
-                        type="number"
-                        value={editingChild.age}
-                        onChange={(e) => setEditingChild({ ...editingChild, age: e.target.value })}
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                      />
+                      <div className="relative">
+                        <Calendar className="absolute left-4 top-3.5 h-5 w-5 text-gray-400" />
+                        <input
+                          required
+                          type="tel"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={editingChild.age}
+                          onChange={(e) => setEditingChild({ ...editingChild, age: e.target.value })}
+                          className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        />
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Gender</label>
@@ -923,7 +1044,7 @@ export default function ParentDashboard() {
                 <h2 className="text-2xl font-bold">Delete Child?</h2>
               </div>
               <p className="text-gray-600 dark:text-gray-400">
-                Are you sure you want to delete <strong>{childToDelete.firstName} {childToDelete.surname}</strong>? This action will also remove all authorized guardians and cannot be undone.
+                Are you sure you want to delete <strong>{childToDelete.firstName} {childToDelete.lastName}</strong>? This action will also remove all authorized guardians and cannot be undone.
               </p>
               <div className="flex space-x-3">
                 <button
@@ -969,7 +1090,7 @@ export default function ParentDashboard() {
                 <h2 className="text-2xl font-bold">Remove Guardian?</h2>
               </div>
               <p className="text-gray-600 dark:text-gray-400">
-                Are you sure you want to remove <strong>{guardianToDelete.firstName} {guardianToDelete.surname}</strong> as a guardian? They will no longer be able to pick up your child.
+                Are you sure you want to remove <strong>{guardianToDelete.firstName} {guardianToDelete.lastName}</strong> as a guardian? They will no longer be able to pick up your child.
               </p>
               <div className="flex space-x-3">
                 <button
@@ -1031,13 +1152,13 @@ export default function ParentDashboard() {
                       >
                         <div className="flex items-center space-x-3">
                           <div className="h-10 w-10 bg-white dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
-                            {child.photoUrl ? (
-                              <img src={child.photoUrl} alt={`${child.firstName} ${child.surname}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                            {child.photoUrl || child.photoURL ? (
+                              <img src={child.photoUrl || child.photoURL} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
                               <User className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                             )}
                           </div>
-                          <span className="font-bold text-gray-900 dark:text-white">{child.firstName} {child.surname}</span>
+                          <span className="font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</span>
                         </div>
                         {selectedForGroup.includes(child.id) && (
                           <CheckCircle2 className="h-6 w-6 text-blue-600 dark:text-blue-400" />

@@ -10,16 +10,23 @@ import Login from "./pages/Login";
 import ParentDashboard from "./pages/ParentDashboard";
 import VolunteerDashboard from "./pages/VolunteerDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import ProfileCompletion from "./pages/ProfileCompletion";
+import PendingApproval from "./pages/PendingApproval";
+import Rejected from "./pages/Rejected";
+import MasterAdminDashboard from "./pages/MasterAdminDashboard";
+import AcceptInvite from "./pages/AcceptInvite";
 import Profile from "./pages/Profile";
 
 function Navigation() {
-  const { user, role } = useAuth();
+  const { user, roles } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
     await auth.signOut();
     navigate("/");
   };
+
+  const hasRole = (role: string) => roles.includes(role as any);
 
   return (
     <nav className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
@@ -35,19 +42,25 @@ function Navigation() {
           <div className="flex items-center space-x-4">
             {user ? (
               <>
-                {role === "admin" && (
+                {hasRole("master_admin") && (
+                  <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                    <LayoutDashboard className="h-4 w-4" />
+                    <span className="hidden sm:inline">Master Admin</span>
+                  </Link>
+                )}
+                {hasRole("admin") && (
                   <Link to="/admin" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
                     <Settings className="h-4 w-4" />
                     <span className="hidden sm:inline">Admin</span>
                   </Link>
                 )}
-                {(role === "admin" || role === "volunteer") && (
+                {(hasRole("admin") || hasRole("volunteer") || hasRole("master_admin")) && (
                   <Link to="/volunteer" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
                     <ClipboardCheck className="h-4 w-4" />
                     <span className="hidden sm:inline">Volunteer</span>
                   </Link>
                 )}
-                {(role === "admin" || role === "parent") && (
+                {(hasRole("admin") || hasRole("parent") || hasRole("master_admin")) && (
                   <Link to="/parent" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
                     <HomeIcon className="h-4 w-4" />
                     <span className="hidden sm:inline">Parent</span>
@@ -84,20 +97,29 @@ function Navigation() {
 }
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) {
-  const { user, role, loading } = useAuth();
+  const { user, role, roles, status, loading } = useAuth();
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (!loading && !user) {
-      navigate("/login");
-    } else if (!loading && user && role && !allowedRoles.includes(role)) {
-      // Redirect to their appropriate dashboard if they try to access a forbidden one
-      if (role === "admin") navigate("/admin");
-      else if (role === "volunteer") navigate("/volunteer");
-      else if (role === "parent") navigate("/parent");
-      else navigate("/");
+    if (!loading) {
+      if (!user) {
+        navigate("/login");
+      } else if (status === "incomplete_profile" || !status) {
+        navigate("/complete-profile");
+      } else if (status === "pending") {
+        navigate("/pending-approval");
+      } else if (status === "rejected") {
+        navigate("/rejected");
+      } else if (roles.length > 0 && !allowedRoles.some(r => roles.includes(r as any))) {
+        // Redirect to their appropriate dashboard if they try to access a forbidden one
+        if (roles.includes("master_admin")) navigate("/master-admin");
+        else if (roles.includes("admin")) navigate("/admin");
+        else if (roles.includes("volunteer")) navigate("/volunteer");
+        else if (roles.includes("parent")) navigate("/parent");
+        else navigate("/");
+      }
     }
-  }, [user, role, loading, navigate, allowedRoles]);
+  }, [user, role, roles, status, loading, navigate, allowedRoles]);
 
   if (loading) {
     return (
@@ -107,7 +129,8 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
     );
   }
 
-  return user && role && allowedRoles.includes(role) ? <>{children}</> : null;
+  const hasAccess = roles.some(r => allowedRoles.includes(r as any));
+  return user && hasAccess ? <>{children}</> : null;
 }
 
 export default function App() {
@@ -120,10 +143,14 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/accept-invite" element={<AcceptInvite />} />
+              <Route path="/complete-profile" element={<ProfileCompletion />} />
+              <Route path="/pending-approval" element={<PendingApproval />} />
+              <Route path="/rejected" element={<Rejected />} />
               <Route 
                 path="/profile" 
                 element={
-                  <ProtectedRoute allowedRoles={["admin", "volunteer", "parent"]}>
+                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
                     <Profile />
                   </ProtectedRoute>
                 } 
@@ -131,7 +158,7 @@ export default function App() {
               <Route 
                 path="/parent" 
                 element={
-                  <ProtectedRoute allowedRoles={["admin", "parent"]}>
+                  <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
                     <ParentDashboard />
                   </ProtectedRoute>
                 } 
@@ -139,7 +166,7 @@ export default function App() {
               <Route 
                 path="/volunteer" 
                 element={
-                  <ProtectedRoute allowedRoles={["admin", "volunteer"]}>
+                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer"]}>
                     <VolunteerDashboard />
                   </ProtectedRoute>
                 } 
@@ -149,6 +176,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRoles={["admin"]}>
                     <AdminDashboard />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/master-admin" 
+                element={
+                  <ProtectedRoute allowedRoles={["master_admin"]}>
+                    <MasterAdminDashboard />
                   </ProtectedRoute>
                 } 
               />

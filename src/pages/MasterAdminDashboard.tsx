@@ -1,0 +1,396 @@
+import React, { useState, useEffect } from "react";
+import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle } from "lucide-react";
+import { getChurches, addDocument, removeDocument, getCollection, updateDocument } from "../lib/firestore";
+import { toast } from "sonner";
+import { motion, AnimatePresence } from "motion/react";
+
+import { useAuth } from "../hooks/useAuth";
+
+export default function MasterAdminDashboard() {
+  const [churches, setChurches] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [churchToDelete, setChurchToDelete] = useState<any>(null);
+  const [newChurch, setNewChurch] = useState({ name: "", address: "", adminEmail: "" });
+  const [stats, setStats] = useState<Record<string, { users: number, children: number, guardians: number }>>({});
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const { userData, user } = useAuth();
+
+  useEffect(() => {
+    loadData();
+    syncMasterAdminRoles();
+  }, []);
+
+  async function syncMasterAdminRoles() {
+    if (user && userData && user.email === "oreutlwilediutlwileng@gmail.com") {
+      const requiredRoles = ["master_admin", "admin", "volunteer"];
+      const hasAllRoles = requiredRoles.every(r => userData.roles?.includes(r));
+      
+      if (!hasAllRoles) {
+        try {
+          await updateDocument("users", user.uid, {
+            roles: requiredRoles,
+            role: "master_admin",
+            updatedAt: new Date().toISOString()
+          });
+          toast.success("Roles synchronized successfully!");
+        } catch (error) {
+          console.error("Failed to sync roles:", error);
+        }
+      }
+    }
+  }
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [churchesData, allUsers, allChildren, allGuardians, allRequests] = await Promise.all([
+        getChurches(),
+        getCollection("users"),
+        getCollection("children"),
+        getCollection("guardians"),
+        getCollection("membershipRequests")
+      ]);
+
+      setChurches(churchesData);
+      setPendingRequests((allRequests as any[]).filter(r => r.status === "pending"));
+      
+      if (churchesData.length === 0) {
+        // Auto-seed if empty
+        const initialChurches = [
+          { name: "Bryanston Methodist", address: "Bryanston, Johannesburg", adminEmail: "admin@bryanstonmethodist.org" },
+          { name: "Randburg Methodist", address: "Randburg, Johannesburg", adminEmail: "admin@randburgmethodist.org" },
+          { name: "St Paul's Methodist", address: "Johannesburg", adminEmail: "admin@stpaulsmethodist.org" }
+        ];
+        for (const church of initialChurches) {
+          await addDocument("churches", {
+            ...church,
+            createdAt: new Date().toISOString()
+          });
+        }
+        const updatedChurches = await getChurches();
+        setChurches(updatedChurches);
+        toast.success("Initial churches seeded!");
+      }
+
+      const newStats: Record<string, { users: number, children: number, guardians: number }> = {};
+      
+      (churchesData as any[]).forEach(church => {
+        newStats[church.id] = {
+          users: (allUsers as any[]).filter(u => u.churchId === church.id).length,
+          children: (allChildren as any[]).filter(c => c.churchId === church.id).length,
+          guardians: (allGuardians as any[]).filter(g => g.churchId === church.id).length
+        };
+      });
+
+      setStats(newStats);
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to load dashboard data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const handleApproveRequest = async (request: any, role: string = "admin") => {
+    try {
+      await updateDocument("membershipRequests", request.id, { status: "approved", updatedAt: new Date().toISOString() });
+      await updateDocument("users", request.userId, { 
+        churchId: request.churchId, 
+        role, 
+        status: "approved",
+        updatedAt: new Date().toISOString()
+      });
+      toast.success(`Approved ${request.userName} as ${role}`);
+      loadData();
+    } catch (error) {
+      toast.error("Failed to approve request");
+    }
+  };
+
+  const handleRejectRequest = async (request: any) => {
+    try {
+      await updateDocument("membershipRequests", request.id, { status: "rejected", updatedAt: new Date().toISOString() });
+      await updateDocument("users", request.userId, { status: "rejected", updatedAt: new Date().toISOString() });
+      toast.success(`Rejected ${request.userName}`);
+      loadData();
+    } catch (error) {
+      toast.error("Failed to reject request");
+    }
+  };
+
+  const handleAddChurch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await addDocument("churches", {
+        ...newChurch,
+        createdAt: new Date().toISOString()
+      });
+      toast.success("Church added successfully!");
+      setShowAddModal(false);
+      setNewChurch({ name: "", address: "", adminEmail: "" });
+      loadData();
+    } catch (error) {
+      toast.error("Failed to add church");
+    }
+  };
+
+  const handleDeleteChurch = async () => {
+    if (!churchToDelete) return;
+    try {
+      await removeDocument("churches", churchToDelete.id);
+      toast.success("Church deleted");
+      setChurchToDelete(null);
+      loadData();
+    } catch (error) {
+      toast.error("Failed to delete church");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Master Admin Dashboard</h1>
+          <p className="text-gray-500 dark:text-gray-400">Manage all churches in the system.</p>
+        </div>
+        <div className="flex space-x-4">
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center space-x-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
+          >
+            <Plus className="h-5 w-5" />
+            <span>Add Church</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Pending Approvals Section */}
+      {pendingRequests.length > 0 && (
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center space-x-2">
+            <Users className="h-6 w-6 text-blue-600" />
+            <span>Pending Approvals</span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {pendingRequests.map((request) => (
+              <motion.div
+                key={request.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="font-bold text-gray-900 dark:text-white">{request.userName}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{request.userEmail}</p>
+                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+                      Church: {churches.find(c => c.id === request.churchId)?.name || "Unknown"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => handleApproveRequest(request, "admin")}
+                    className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors"
+                  >
+                    Approve Admin
+                  </button>
+                  <button
+                    onClick={() => handleApproveRequest(request, "volunteer")}
+                    className="flex-1 bg-purple-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-purple-700 transition-colors"
+                  >
+                    Approve Volunteer
+                  </button>
+                  <button
+                    onClick={() => handleApproveRequest(request, "parent")}
+                    className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors"
+                  >
+                    Approve Parent
+                  </button>
+                  <button
+                    onClick={() => handleRejectRequest(request)}
+                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="h-5 w-5" />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {churches.map((church) => (
+          <motion.div
+            key={church.id}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white dark:bg-gray-900 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-md transition-all group"
+          >
+            <div className="flex justify-between items-start mb-4">
+              <div className="h-12 w-12 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center">
+                <ChurchIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+              </div>
+              <button
+                onClick={() => setChurchToDelete(church)}
+                className="text-gray-400 hover:text-red-600 transition-colors p-2"
+              >
+                <Trash2 className="h-5 w-5" />
+              </button>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{church.name}</h3>
+            <div className="space-y-2 text-sm text-gray-500 dark:text-gray-400 mb-6">
+              <div className="flex items-center space-x-2">
+                <MapPin className="h-4 w-4" />
+                <span>{church.address}</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Mail className="h-4 w-4" />
+                <span>{church.adminEmail}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 pt-4 border-t border-gray-50 dark:border-gray-800">
+              <div className="text-center">
+                <div className="flex items-center justify-center text-blue-600 dark:text-blue-400 mb-1">
+                  <Users className="h-4 w-4" />
+                </div>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">{stats[church.id]?.users || 0}</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase">Users</p>
+              </div>
+              <div className="text-center">
+                <div className="flex items-center justify-center text-green-600 dark:text-green-400 mb-1">
+                  <Baby className="h-4 w-4" />
+                </div>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">{stats[church.id]?.children || 0}</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase">Children</p>
+              </div>
+              <div className="text-center">
+                <div className="flex items-center justify-center text-purple-600 dark:text-purple-400 mb-1">
+                  <ShieldCheck className="h-4 w-4" />
+                </div>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">{stats[church.id]?.guardians || 0}</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase">Guardians</p>
+              </div>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-gray-900 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-gray-100 dark:border-gray-800"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Add New Church</h2>
+                <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full">
+                  <X className="h-6 w-6 text-gray-400" />
+                </button>
+              </div>
+              <form onSubmit={handleAddChurch} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Church Name</label>
+                  <input
+                    required
+                    type="text"
+                    value={newChurch.name}
+                    onChange={e => setNewChurch({ ...newChurch, name: e.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    placeholder="Grace Community Church"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Address</label>
+                  <input
+                    required
+                    type="text"
+                    value={newChurch.address}
+                    onChange={e => setNewChurch({ ...newChurch, address: e.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    placeholder="123 Faith St, City"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Admin Email</label>
+                  <input
+                    required
+                    type="email"
+                    value={newChurch.adminEmail}
+                    onChange={e => setNewChurch({ ...newChurch, adminEmail: e.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    placeholder="admin@church.com"
+                  />
+                </div>
+                <div className="flex space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="flex-1 px-4 py-3 rounded-xl font-bold bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-3 rounded-xl font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
+                  >
+                    Add Church
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {churchToDelete && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-gray-900 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-gray-100 dark:border-gray-800 text-center"
+            >
+              <div className="mx-auto h-16 w-16 bg-red-50 dark:bg-red-900/20 rounded-2xl flex items-center justify-center mb-6">
+                <AlertTriangle className="h-10 w-10 text-red-600 dark:text-red-400" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Delete Church?</h2>
+              <p className="text-gray-500 dark:text-gray-400 mb-8">
+                Are you sure you want to delete <span className="font-bold text-gray-900 dark:text-white">{churchToDelete.name}</span>? This action cannot be undone.
+              </p>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setChurchToDelete(null)}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteChurch}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold bg-red-600 text-white hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

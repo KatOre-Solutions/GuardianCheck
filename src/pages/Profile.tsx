@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
+import { updateProfile } from "firebase/auth";
 import { getDocument, updateDocument, deactivateUser } from "../lib/firestore";
-import { auth } from "../lib/firebase";
-import { User, Mail, Phone, MapPin, CreditCard, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle } from "lucide-react";
+import { auth, storage } from "../lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { User, Mail, Phone, MapPin, CreditCard, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "motion/react";
 
@@ -12,6 +14,11 @@ export default function Profile() {
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [darkMode, setDarkMode] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [showDeactivateModal, setShowDeactivateModal] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
   useEffect(() => {
     if (user) {
@@ -28,13 +35,16 @@ export default function Profile() {
     try {
       const data = await getDocument("users", user.uid) as any;
       if (data) {
-        setProfile(data);
+        setProfile({
+          ...data,
+          photoUrl: data.photoUrl || data.photoURL || user.photoURL
+        });
       } else {
         // Fallback if document is missing
         const [fName, ...sNameParts] = (user.displayName || "").split(" ");
         setProfile({
           firstName: fName || user.email?.split('@')[0] || "User",
-          surname: sNameParts.join(" ") || "User",
+          lastName: sNameParts.join(" ") || "User",
           email: user.email,
           photoUrl: user.photoURL,
           role: "parent" // Default role
@@ -63,14 +73,39 @@ export default function Profile() {
     }
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProfile({ ...profile, photoUrl: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+    if (!file || !user) return;
+
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error("File size exceeds 5MB limit");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const storageRef = ref(storage, `profiles/${user.uid}/${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      
+      setProfile({ ...profile, photoUrl: downloadURL });
+      
+      // Also update Firestore immediately to persist the photo change
+      await updateDocument("users", user.uid, { 
+        photoUrl: downloadURL,
+        photoURL: downloadURL,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Update Firebase Auth profile as well
+      await updateProfile(user, { photoURL: downloadURL });
+      
+      toast.success("Profile picture uploaded!");
+    } catch (error) {
+      console.error("Upload failed:", error);
+      toast.error("Failed to upload profile picture");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -85,14 +120,16 @@ export default function Profile() {
   };
 
   const handleDeactivate = async () => {
-    if (window.confirm("Are you sure you want to deactivate your account? You will be logged out and unable to sign back in.")) {
-      try {
-        await deactivateUser(user!.uid);
-        await auth.signOut();
-        toast.success("Account deactivated successfully");
-      } catch (error) {
-        toast.error("Failed to deactivate account");
-      }
+    setDeactivating(true);
+    try {
+      await deactivateUser(user!.uid);
+      await auth.signOut();
+      toast.success("Account deactivated successfully");
+    } catch (error) {
+      toast.error("Failed to deactivate account");
+    } finally {
+      setDeactivating(false);
+      setShowDeactivateModal(false);
     }
   };
 
@@ -132,7 +169,7 @@ export default function Profile() {
         <div className="space-y-6">
           <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 text-center">
             <div className="relative inline-block">
-              <div className="h-32 w-32 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 border-4 border-white dark:border-gray-800 shadow-lg mx-auto">
+              <div className="h-32 w-32 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 border-4 border-white dark:border-gray-800 shadow-lg mx-auto relative group">
                 {profile?.photoUrl || auth.currentUser?.photoURL ? (
                   <img src={profile?.photoUrl || auth.currentUser?.photoURL || ""} alt="Profile" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
@@ -140,15 +177,20 @@ export default function Profile() {
                     <User className="h-16 w-16" />
                   </div>
                 )}
+                {uploading && (
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 text-white animate-spin" />
+                  </div>
+                )}
               </div>
-              <label className="absolute bottom-0 right-0 h-10 w-10 bg-blue-600 text-white rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700 transition-all shadow-lg border-2 border-white dark:border-gray-800">
+              <label className={`absolute bottom-0 right-0 h-10 w-10 bg-blue-600 text-white rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700 transition-all shadow-lg border-2 border-white dark:border-gray-800 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 <Camera className="h-5 w-5" />
-                <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} />
+                <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} />
               </label>
             </div>
             <div className="mt-4">
               <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                {profile?.firstName} {profile?.surname}
+                {profile?.firstName} {profile?.lastName}
               </h3>
               <p className="text-gray-500 dark:text-gray-400 text-sm">{profile?.email}</p>
               <div className="mt-2 inline-block px-3 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs font-bold rounded-full uppercase tracking-wider">
@@ -166,7 +208,7 @@ export default function Profile() {
               Deactivating your account will prevent you from logging in. Your data will be kept for audit purposes.
             </p>
             <button
-              onClick={handleDeactivate}
+              onClick={() => setShowDeactivateModal(true)}
               className="mt-4 w-full flex items-center justify-center space-x-2 bg-red-600 text-white p-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none"
             >
               <Trash2 className="h-5 w-5" />
@@ -192,14 +234,14 @@ export default function Profile() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Surname</label>
+                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Last Name</label>
                 <div className="relative">
                   <User className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                   <input
                     required
                     type="text"
-                    value={profile?.surname || ""}
-                    onChange={e => setProfile({ ...profile, surname: e.target.value })}
+                    value={profile?.lastName || ""}
+                    onChange={e => setProfile({ ...profile, lastName: e.target.value })}
                     className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
                   />
                 </div>
@@ -267,6 +309,39 @@ export default function Profile() {
           </form>
         </div>
       </div>
+
+      {/* Deactivation Confirmation Modal */}
+      {showDeactivateModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowDeactivateModal(false)} />
+          <div className="relative bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-sm p-8 text-center space-y-6">
+            <div className="mx-auto h-16 w-16 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+              <AlertCircle className="h-8 w-8 text-red-600 dark:text-red-400" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Deactivate Account?</h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                Are you sure you want to deactivate your account? You will be logged out and unable to sign back in.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeactivateModal(false)}
+                className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeactivate}
+                disabled={deactivating}
+                className="flex-1 px-4 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deactivating ? "Deactivating..." : "Deactivate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
