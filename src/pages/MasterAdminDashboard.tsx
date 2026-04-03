@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle } from "lucide-react";
+import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter } from "lucide-react";
 import { getChurches, addDocument, removeDocument, getCollection, updateDocument } from "../lib/firestore";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
+import { format, isAfter, parseISO } from "date-fns";
 
 import { useAuth } from "../hooks/useAuth";
 
@@ -11,9 +12,11 @@ export default function MasterAdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [churchToDelete, setChurchToDelete] = useState<any>(null);
-  const [newChurch, setNewChurch] = useState({ name: "", address: "", adminEmail: "" });
+  const [newChurch, setNewChurch] = useState({ name: "", address: "", adminEmail: "", plan: "starter" });
   const [stats, setStats] = useState<Record<string, { users: number, children: number, guardians: number }>>({});
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
   const { userData, user } = useAuth();
 
   useEffect(() => {
@@ -55,24 +58,6 @@ export default function MasterAdminDashboard() {
       setChurches(churchesData);
       setPendingRequests((allRequests as any[]).filter(r => r.status === "pending"));
       
-      if (churchesData.length === 0) {
-        // Auto-seed if empty
-        const initialChurches = [
-          { name: "Bryanston Methodist", address: "Bryanston, Johannesburg", adminEmail: "admin@bryanstonmethodist.org" },
-          { name: "Randburg Methodist", address: "Randburg, Johannesburg", adminEmail: "admin@randburgmethodist.org" },
-          { name: "St Paul's Methodist", address: "Johannesburg", adminEmail: "admin@stpaulsmethodist.org" }
-        ];
-        for (const church of initialChurches) {
-          await addDocument("churches", {
-            ...church,
-            createdAt: new Date().toISOString()
-          });
-        }
-        const updatedChurches = await getChurches();
-        setChurches(updatedChurches);
-        toast.success("Initial churches seeded!");
-      }
-
       const newStats: Record<string, { users: number, children: number, guardians: number }> = {};
       
       (churchesData as any[]).forEach(church => {
@@ -91,6 +76,31 @@ export default function MasterAdminDashboard() {
       setLoading(false);
     }
   }
+
+  const filteredChurches = churches.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         c.adminEmail.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    let matchesStatus = true;
+    if (filterStatus === "paid") {
+      matchesStatus = c.status === "active" && !!c.lastPaymentDate;
+    } else if (filterStatus === "unpaid") {
+      matchesStatus = c.status === "active" && !c.lastPaymentDate;
+    } else if (filterStatus !== "all") {
+      matchesStatus = c.status === filterStatus;
+    }
+    
+    return matchesSearch && matchesStatus;
+  });
+
+  const platformStats = {
+    totalChurches: churches.length,
+    totalUsers: Object.values(stats).reduce((acc, s) => acc + (s as any).users, 0),
+    totalChildren: Object.values(stats).reduce((acc, s) => acc + (s as any).children, 0),
+    activeTrials: churches.filter(c => c.status === "trialing").length,
+    paidSubscriptions: churches.filter(c => c.status === "active" && c.lastPaymentDate).length,
+    manualActivations: churches.filter(c => c.status === "active" && !c.lastPaymentDate).length,
+  };
 
   const handleApproveRequest = async (request: any, role: string = "admin") => {
     try {
@@ -124,11 +134,13 @@ export default function MasterAdminDashboard() {
     try {
       await addDocument("churches", {
         ...newChurch,
-        createdAt: new Date().toISOString()
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       });
       toast.success("Church added successfully!");
       setShowAddModal(false);
-      setNewChurch({ name: "", address: "", adminEmail: "" });
+      setNewChurch({ name: "", address: "", adminEmail: "", plan: "starter" });
       loadData();
     } catch (error) {
       toast.error("Failed to add church");
@@ -156,29 +168,53 @@ export default function MasterAdminDashboard() {
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-center">
+    <div className="space-y-12 pb-24">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Master Admin Dashboard</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage all churches in the system.</p>
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white tracking-tight">Platform Overview</h1>
+          <p className="text-gray-500 dark:text-gray-400">Global management for GuardianCheck SaaS</p>
         </div>
-        <div className="flex space-x-4">
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center space-x-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-bold flex items-center space-x-2 hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 dark:shadow-none"
+        >
+          <Plus className="h-5 w-5" />
+          <span>Provision New Church</span>
+        </button>
+      </header>
+
+      {/* Platform Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+        {[
+          { label: "Total Churches", value: platformStats.totalChurches, icon: <ChurchIcon className="h-6 w-6 text-blue-600" />, color: "bg-blue-50" },
+          { label: "Total Users", value: platformStats.totalUsers, icon: <Users className="h-6 w-6 text-purple-600" />, color: "bg-purple-50" },
+          { label: "Total Children", value: platformStats.totalChildren, icon: <Baby className="h-6 w-6 text-green-600" />, color: "bg-green-50" },
+          { label: "Active Trials", value: platformStats.activeTrials, icon: <TrendingUp className="h-6 w-6 text-orange-600" />, color: "bg-orange-50" },
+          { label: "Paid Subs", value: platformStats.paidSubscriptions, icon: <CreditCard className="h-6 w-6 text-green-600" />, color: "bg-green-50" },
+          { label: "Manual Active", value: platformStats.manualActivations, icon: <ShieldCheck className="h-6 w-6 text-purple-600" />, color: "bg-purple-50" },
+        ].map((stat, idx) => (
+          <motion.div
+            key={idx}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: idx * 0.1 }}
+            className="bg-white dark:bg-gray-900 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800"
           >
-            <Plus className="h-5 w-5" />
-            <span>Add Church</span>
-          </button>
-        </div>
+            <div className={`h-12 w-12 ${stat.color} dark:bg-opacity-10 rounded-2xl flex items-center justify-center mb-4`}>
+              {stat.icon}
+            </div>
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">{stat.label}</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">{stat.value}</p>
+          </motion.div>
+        ))}
       </div>
 
       {/* Pending Approvals Section */}
       {pendingRequests.length > 0 && (
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center space-x-2">
+        <section className="space-y-6">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center space-x-2">
             <Users className="h-6 w-6 text-blue-600" />
-            <span>Pending Approvals</span>
+            <span>Pending Platform Access Requests</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {pendingRequests.map((request) => (
@@ -186,39 +222,33 @@ export default function MasterAdminDashboard() {
                 key={request.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700"
+                className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700"
               >
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="font-bold text-gray-900 dark:text-white">{request.userName}</h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400">{request.userEmail}</p>
                     <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
-                      Church: {churches.find(c => c.id === request.churchId)?.name || "Unknown"}
+                      Target Church: {churches.find(c => c.id === request.churchId)?.name || "Unknown"}
                     </p>
                   </div>
                 </div>
-                <div className="flex space-x-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => handleApproveRequest(request, "admin")}
-                    className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors"
+                    className="flex-1 bg-blue-600 text-white py-2 px-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors"
                   >
                     Approve Admin
                   </button>
                   <button
                     onClick={() => handleApproveRequest(request, "volunteer")}
-                    className="flex-1 bg-purple-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-purple-700 transition-colors"
+                    className="flex-1 bg-purple-600 text-white py-2 px-3 rounded-xl text-xs font-bold hover:bg-purple-700 transition-colors"
                   >
                     Approve Volunteer
                   </button>
                   <button
-                    onClick={() => handleApproveRequest(request, "parent")}
-                    className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors"
-                  >
-                    Approve Parent
-                  </button>
-                  <button
                     onClick={() => handleRejectRequest(request)}
-                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                    className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"
                   >
                     <Trash2 className="h-5 w-5" />
                   </button>
@@ -226,67 +256,127 @@ export default function MasterAdminDashboard() {
               </motion.div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {churches.map((church) => (
-          <motion.div
-            key={church.id}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white dark:bg-gray-900 rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-md transition-all group"
-          >
-            <div className="flex justify-between items-start mb-4">
-              <div className="h-12 w-12 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center">
-                <ChurchIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <button
-                onClick={() => setChurchToDelete(church)}
-                className="text-gray-400 hover:text-red-600 transition-colors p-2"
+      {/* Church Management Section */}
+      <section className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Church Directory</h2>
+          <div className="flex items-center space-x-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search churches..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            >
+              <option value="all">All Statuses</option>
+              <option value="trialing">Trialing</option>
+              <option value="active">Active (All)</option>
+              <option value="paid">Paid Only</option>
+              <option value="unpaid">Unpaid/Manual</option>
+              <option value="delinquent">Delinquent</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {filteredChurches.map((church) => {
+            const isTrialing = church.status === "trialing";
+            const trialExpired = isTrialing && church.trialEndsAt && !isAfter(parseISO(church.trialEndsAt), new Date());
+
+            return (
+              <motion.div
+                key={church.id}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white dark:bg-gray-900 rounded-[2rem] p-8 shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-xl transition-all group"
               >
-                <Trash2 className="h-5 w-5" />
-              </button>
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{church.name}</h3>
-            <div className="space-y-2 text-sm text-gray-500 dark:text-gray-400 mb-6">
-              <div className="flex items-center space-x-2">
-                <MapPin className="h-4 w-4" />
-                <span>{church.address}</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Mail className="h-4 w-4" />
-                <span>{church.adminEmail}</span>
-              </div>
-            </div>
+                <div className="flex justify-between items-start mb-6">
+                  <div className="h-14 w-14 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <ChurchIcon className="h-7 w-7 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                      church.status === "active" ? "bg-green-100 text-green-600" :
+                      church.status === "trialing" ? (trialExpired ? "bg-red-100 text-red-600" : "bg-orange-100 text-orange-600") :
+                      "bg-gray-100 text-gray-600"
+                    }`}>
+                      {church.status === "trialing" && trialExpired ? "Trial Expired" : church.status}
+                    </span>
+                    <button
+                      onClick={() => setChurchToDelete(church)}
+                      className="text-gray-300 hover:text-red-600 transition-colors p-2"
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-3 gap-2 pt-4 border-t border-gray-50 dark:border-gray-800">
-              <div className="text-center">
-                <div className="flex items-center justify-center text-blue-600 dark:text-blue-400 mb-1">
-                  <Users className="h-4 w-4" />
+                <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{church.name}</h3>
+                <div className="space-y-3 text-sm text-gray-500 dark:text-gray-400 mb-8">
+                  <div className="flex items-center space-x-2">
+                    <MapPin className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{church.address}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Mail className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{church.adminEmail}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="h-4 w-4 shrink-0" />
+                    <span>Plan: <span className="font-bold text-blue-600 uppercase">{church.plan || "Starter"}</span></span>
+                  </div>
+                  {church.lastPaymentDate && (
+                    <div className="flex items-center space-x-2 text-xs text-green-600 font-medium">
+                      <ShieldCheck className="h-4 w-4 shrink-0" />
+                      <span>Last Paid: {format(parseISO(church.lastPaymentDate), "MMM dd, yyyy")}</span>
+                    </div>
+                  )}
+                  {church.nextBillingDate && (
+                    <div className="flex items-center space-x-2 text-xs text-blue-600 font-medium">
+                      <Calendar className="h-4 w-4 shrink-0" />
+                      <span>Next Bill: {format(parseISO(church.nextBillingDate), "MMM dd, yyyy")}</span>
+                    </div>
+                  )}
+                  {church.status === "active" && !church.lastPaymentDate && (
+                    <div className="flex items-center space-x-2 text-xs text-orange-600 font-medium">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      <span>Manual Activation (No Payment)</span>
+                    </div>
+                  )}
                 </div>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">{stats[church.id]?.users || 0}</p>
-                <p className="text-[10px] font-bold text-gray-400 uppercase">Users</p>
-              </div>
-              <div className="text-center">
-                <div className="flex items-center justify-center text-green-600 dark:text-green-400 mb-1">
-                  <Baby className="h-4 w-4" />
-                </div>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">{stats[church.id]?.children || 0}</p>
-                <p className="text-[10px] font-bold text-gray-400 uppercase">Children</p>
-              </div>
-              <div className="text-center">
-                <div className="flex items-center justify-center text-purple-600 dark:text-purple-400 mb-1">
-                  <ShieldCheck className="h-4 w-4" />
-                </div>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">{stats[church.id]?.guardians || 0}</p>
-                <p className="text-[10px] font-bold text-gray-400 uppercase">Guardians</p>
-              </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
 
+                <div className="grid grid-cols-3 gap-4 pt-6 border-t border-gray-50 dark:border-gray-800">
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-gray-900 dark:text-white">{stats[church.id]?.users || 0}</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase">Users</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-gray-900 dark:text-white">{stats[church.id]?.children || 0}</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase">Kids</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-gray-900 dark:text-white">{stats[church.id]?.guardians || 0}</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase">Guardians</p>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Add Church Modal */}
       <AnimatePresence>
         {showAddModal && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
@@ -297,7 +387,7 @@ export default function MasterAdminDashboard() {
               className="bg-white dark:bg-gray-900 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-gray-100 dark:border-gray-800"
             >
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Add New Church</h2>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Provision New Church</h2>
                 <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full">
                   <X className="h-6 w-6 text-gray-400" />
                 </button>
@@ -336,6 +426,18 @@ export default function MasterAdminDashboard() {
                     placeholder="admin@church.com"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Plan</label>
+                  <select
+                    value={newChurch.plan}
+                    onChange={e => setNewChurch({ ...newChurch, plan: e.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  >
+                    <option value="starter">Starter (R249)</option>
+                    <option value="growth">Growth (R499)</option>
+                    <option value="professional">Professional (R999)</option>
+                  </select>
+                </div>
                 <div className="flex space-x-3 pt-4">
                   <button
                     type="button"
@@ -348,7 +450,7 @@ export default function MasterAdminDashboard() {
                     type="submit"
                     className="flex-1 px-4 py-3 rounded-xl font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
                   >
-                    Add Church
+                    Create Church
                   </button>
                 </div>
               </form>
@@ -357,6 +459,7 @@ export default function MasterAdminDashboard() {
         )}
       </AnimatePresence>
 
+      {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {churchToDelete && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">

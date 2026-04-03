@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { Shield, QrCode, ClipboardCheck, Users, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Shield, QrCode, ClipboardCheck, Users, ArrowRight, CheckCircle2, Star, Zap, Globe, Heart } from "lucide-react";
 import { motion } from "motion/react";
 
 export default function Home() {
@@ -27,8 +27,35 @@ export default function Home() {
     }
   ];
 
+  const pricing = [
+    {
+      name: "Starter",
+      price: "R249",
+      description: "Perfect for small churches starting out.",
+      features: ["Up to 30 Children", "1 Active Room", "QR Check-In", "Basic Reports", "Email Support"],
+      cta: "Start Free Trial",
+      highlight: false
+    },
+    {
+      name: "Growth",
+      price: "R499",
+      description: "Ideal for growing congregations.",
+      features: ["Up to 150 Children", "Unlimited Rooms", "Advanced Reports", "Guardian Management", "Priority Email Support"],
+      cta: "Start Free Trial",
+      highlight: true
+    },
+    {
+      name: "Professional",
+      price: "R999",
+      description: "Complete solution for large churches.",
+      features: ["Unlimited Children", "Unlimited Rooms", "Real-time Dashboard", "Custom Branding", "24/7 Support"],
+      cta: "Contact Sales",
+      highlight: false
+    }
+  ];
+
   return (
-    <div className="space-y-24 pb-24 dark:bg-gray-950 transition-colors">
+    <div className="space-y-32 pb-24 dark:bg-gray-950 transition-colors">
       {/* Hero Section */}
       <section className="relative overflow-hidden pt-12 pb-24 lg:pt-24">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
@@ -38,6 +65,10 @@ export default function Home() {
             transition={{ duration: 0.6 }}
             className="space-y-8"
           >
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
+              <Star className="h-4 w-4 text-blue-600" />
+              <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">Trusted by 500+ Churches</span>
+            </div>
             <h1 className="text-5xl lg:text-7xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight">
               Secure Child Check-In <br />
               <span className="text-blue-600 dark:text-blue-400">for Your Church</span>
@@ -47,17 +78,17 @@ export default function Home() {
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Link
-                to="/login"
+                to="/register-church"
                 className="bg-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 dark:shadow-blue-900/20 flex items-center justify-center space-x-2"
               >
-                <span>Get Started</span>
+                <span>Start 14-Day Free Trial</span>
                 <ArrowRight className="h-5 w-5" />
               </Link>
               <Link
-                to="/parent"
+                to="/login"
                 className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white border-2 border-gray-100 dark:border-gray-800 px-8 py-4 rounded-xl font-semibold hover:border-blue-600 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all flex items-center justify-center"
               >
-                Parent Portal
+                Login
               </Link>
             </div>
           </motion.div>
@@ -117,6 +148,117 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Pricing Section */}
+      <section className="space-y-16">
+        <div className="text-center space-y-4">
+          <h2 className="text-4xl font-bold text-gray-900 dark:text-white">Simple, Transparent Pricing</h2>
+          <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+            Choose the plan that fits your church size. All plans include a 14-day free trial.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {pricing.map((plan, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.1 }}
+              viewport={{ once: true }}
+              className={`relative p-8 rounded-3xl border ${
+                plan.highlight 
+                  ? "bg-blue-600 border-blue-600 text-white shadow-2xl shadow-blue-200 dark:shadow-none" 
+                  : "bg-white dark:bg-gray-900 border-gray-100 dark:border-gray-800 text-gray-900 dark:text-white"
+              }`}
+            >
+              {plan.highlight && (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full">
+                  Most Popular
+                </div>
+              )}
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-xl font-bold">{plan.name}</h3>
+                  <p className={`text-sm ${plan.highlight ? "text-blue-100" : "text-gray-500"}`}>{plan.description}</p>
+                </div>
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-4xl font-bold">{plan.price}</span>
+                  <span className={`text-sm ${plan.highlight ? "text-blue-100" : "text-gray-500"}`}>/month</span>
+                </div>
+                <ul className="space-y-4">
+                  {plan.features.map((f, i) => (
+                    <li key={i} className="flex items-center space-x-3 text-sm">
+                      <CheckCircle2 className={`h-5 w-5 ${plan.highlight ? "text-blue-200" : "text-blue-600"}`} />
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/register-church"
+                  className={`w-full py-4 rounded-xl font-bold text-center block transition-all ${
+                    plan.highlight 
+                      ? "bg-white text-blue-600 hover:bg-blue-50" 
+                      : "bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90"
+                  }`}
+                >
+                  {plan.cta}
+                </Link>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* Trust Section */}
+      <section className="bg-gray-50 dark:bg-gray-900/50 rounded-3xl p-12 lg:p-24">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div className="space-y-8">
+            <h2 className="text-4xl font-bold text-gray-900 dark:text-white leading-tight">
+              Built for the <span className="text-blue-600">South African Church</span>
+            </h2>
+            <div className="space-y-6">
+              <div className="flex items-start space-x-4">
+                <div className="h-10 w-10 rounded-xl bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center shrink-0">
+                  <Zap className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-white">Fast & Reliable</h4>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Optimized for local network conditions and mobile usage.</p>
+                </div>
+              </div>
+              <div className="flex items-start space-x-4">
+                <div className="h-10 w-10 rounded-xl bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center shrink-0">
+                  <Globe className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-white">Local Payments</h4>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Integrated with PayFast for secure, local Rand payments.</p>
+                </div>
+              </div>
+              <div className="flex items-start space-x-4">
+                <div className="h-10 w-10 rounded-xl bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center shrink-0">
+                  <Heart className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-white">Mission Focused</h4>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">We understand the unique needs of local ministries.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="relative">
+             <div className="aspect-video rounded-2xl bg-gray-200 dark:bg-gray-800 overflow-hidden shadow-xl">
+                <img 
+                  src="https://picsum.photos/seed/community/800/450" 
+                  alt="Community" 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+             </div>
+          </div>
+        </div>
+      </section>
+
       {/* CTA Section */}
       <section className="bg-blue-600 rounded-3xl p-12 text-center space-y-8">
         <h2 className="text-4xl font-bold text-white">Ready to Secure Your Children's Ministry?</h2>
@@ -124,10 +266,10 @@ export default function Home() {
           Join hundreds of churches using GuardianCheck to provide a safe and welcoming environment for families.
         </p>
         <Link
-          to="/login"
+          to="/register-church"
           className="inline-block bg-white text-blue-600 px-10 py-4 rounded-xl font-bold text-lg hover:bg-blue-50 transition-colors shadow-xl"
         >
-          Get Started for Free
+          Start Your Free Trial Now
         </Link>
       </section>
     </div>

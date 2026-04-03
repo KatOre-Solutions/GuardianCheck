@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument } from "../lib/firestore";
+import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument, setDocument } from "../lib/firestore";
 import { where } from "firebase/firestore";
 import { 
   LayoutDashboard, 
@@ -23,8 +23,12 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  Lock
+  Lock,
+  CreditCard,
+  Zap,
+  AlertTriangle
 } from "lucide-react";
+import PayFastButton from "../components/PayFastButton";
 import { hashPin, generatePin, obfuscatePin, deobfuscatePin } from "../lib/security";
 import { 
   BarChart, 
@@ -41,6 +45,7 @@ import {
 } from "recharts";
 import { format, subDays, startOfDay, endOfDay } from "date-fns";
 import { toast } from "sonner";
+import { motion } from "motion/react";
 
 export default function AdminDashboard() {
   const { user, role, userData } = useAuth();
@@ -64,13 +69,18 @@ export default function AdminDashboard() {
   const [userToDelete, setUserToDelete] = useState<any>(null);
   const [showDeleteUserModal, setShowDeleteUserModal] = useState(false);
   const [churchData, setChurchData] = useState<any>(null);
+  const [churchSecurity, setChurchSecurity] = useState<any>(null);
   const [showPin, setShowPin] = useState(false);
   const [regeneratingPin, setRegeneratingPin] = useState(false);
 
   useEffect(() => {
     if (role === "admin" && userData?.churchId) {
       const unsubChurch = subscribeToDocument("churches", userData.churchId, setChurchData);
-      return () => unsubChurch();
+      const unsubSecurity = subscribeToDocument("church_security", userData.churchId, setChurchSecurity);
+      return () => {
+        unsubChurch();
+        unsubSecurity();
+      };
     }
   }, [role, userData?.churchId]);
 
@@ -319,10 +329,17 @@ export default function AdminDashboard() {
       const hash = await hashPin(newPin);
       const obfuscated = obfuscatePin(newPin);
       
-      await updateDocument("churches", userData.churchId, {
+      await setDocument("church_security", userData.churchId, {
         adminOverridePinHash: hash,
         adminOverridePin: obfuscated, // Obfuscated for "Show PIN"
         pinLastUpdatedAt: new Date().toISOString()
+      });
+
+      // Clear sensitive data from public church document
+      await updateDocument("churches", userData.churchId, {
+        adminOverridePinHash: null,
+        adminOverridePin: null,
+        pinLastUpdatedAt: null
       });
       
       toast.success("New Admin Override PIN generated!");
@@ -400,6 +417,66 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-12 pb-24">
+      {/* Subscription Status Banner */}
+      {churchData?.status === "trialing" && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-orange-500 to-amber-600 p-4 rounded-2xl text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-4"
+        >
+          <div className="flex items-center space-x-3">
+            <div className="h-10 w-10 bg-white/20 rounded-xl flex items-center justify-center">
+              <Zap className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="font-bold">Free Trial Active</p>
+              <p className="text-sm text-orange-50/80">
+                Your trial ends on {churchData.trialEndsAt ? format(new Date(churchData.trialEndsAt), "MMMM d, yyyy") : "N/A"}. 
+                Upgrade now to ensure uninterrupted service.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              const subSection = document.getElementById('subscription-section');
+              subSection?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="bg-white text-orange-600 px-6 py-2 rounded-xl font-bold text-sm hover:bg-orange-50 transition-colors"
+          >
+            Upgrade Plan
+          </button>
+        </motion.div>
+      )}
+
+      {churchData?.status === "delinquent" && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-red-600 to-pink-700 p-4 rounded-2xl text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-4"
+        >
+          <div className="flex items-center space-x-3">
+            <div className="h-10 w-10 bg-white/20 rounded-xl flex items-center justify-center">
+              <AlertTriangle className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="font-bold">Subscription Overdue</p>
+              <p className="text-sm text-red-50/80">
+                Your account is currently restricted due to a payment issue. Please update your subscription.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              const subSection = document.getElementById('subscription-section');
+              subSection?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="bg-white text-red-600 px-6 py-2 rounded-xl font-bold text-sm hover:bg-red-50 transition-colors"
+          >
+            Pay Now
+          </button>
+        </motion.div>
+      )}
+
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Control Center</h1>
@@ -569,6 +646,90 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {/* Subscription Management Section */}
+      <div id="subscription-section" className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-8">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center">
+              <CreditCard className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Subscription & Billing</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Manage your plan and payments</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+              churchData?.status === "active" ? "bg-green-100 text-green-600" :
+              churchData?.status === "trialing" ? "bg-orange-100 text-orange-600" :
+              "bg-red-100 text-red-600"
+            }`}>
+              {churchData?.status || "Unknown"}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl border border-gray-100 dark:border-gray-700">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Current Plan</p>
+                  <h4 className="text-3xl font-bold text-gray-900 dark:text-white uppercase">{churchData?.plan || "Starter"}</h4>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Price</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {churchData?.plan === "professional" ? "R999" : churchData?.plan === "growth" ? "R499" : "R249"}
+                    <span className="text-sm text-gray-500 font-normal">/mo</span>
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+                <Calendar className="h-4 w-4" />
+                <span>Next billing date: <span className="font-bold text-gray-900 dark:text-white">
+                  {churchData?.nextBillingDate ? format(new Date(churchData.nextBillingDate), "MMMM d, yyyy") : "N/A"}
+                </span></span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/30">
+                <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">Users Limit</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {users.length} / {churchData?.plan === "professional" ? "Unlimited" : churchData?.plan === "growth" ? "50" : "20"}
+                </p>
+              </div>
+              <div className="p-4 bg-purple-50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-900/30">
+                <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase mb-1">Children Limit</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {children.length} / {churchData?.plan === "professional" ? "Unlimited" : churchData?.plan === "growth" ? "200" : "50"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
+              <h4 className="font-bold text-gray-900 dark:text-white mb-4">Payment Method</h4>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                Secure payments processed via PayFast. Local South African payment gateway.
+              </p>
+              <PayFastButton 
+                churchId={userData?.churchId || ""} 
+                plan={churchData?.plan || "starter"} 
+                amount={churchData?.plan === "professional" ? 999 : churchData?.plan === "growth" ? 499 : 249}
+                itemName={`GuardianCheck ${churchData?.plan || "Starter"} Subscription`}
+                mPaymentId={`SUB-${userData?.churchId}-${Date.now()}`}
+              />
+              <p className="text-[10px] text-center text-gray-400 mt-4">
+                By clicking "Pay Now", you agree to our terms of service and subscription policy.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Security Settings Section */}
       <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
         <div className="flex items-center justify-between">
@@ -608,17 +769,17 @@ export default function AdminDashboard() {
                 </div>
               </div>
               <div className="flex items-center justify-center">
-                {churchData?.adminOverridePin ? (
+                {churchSecurity?.adminOverridePin ? (
                   <div className="text-4xl font-mono font-bold tracking-[0.5em] text-gray-900 dark:text-white">
-                    {showPin ? deobfuscatePin(churchData.adminOverridePin) : "****"}
+                    {showPin ? deobfuscatePin(churchSecurity.adminOverridePin) : "****"}
                   </div>
                 ) : (
                   <div className="text-gray-400 dark:text-gray-500 italic">No PIN generated yet</div>
                 )}
               </div>
-              {churchData?.pinLastUpdatedAt && (
+              {churchSecurity?.pinLastUpdatedAt && (
                 <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-4">
-                  Last updated: {format(new Date(churchData.pinLastUpdatedAt), "MMM d, yyyy HH:mm")}
+                  Last updated: {format(new Date(churchSecurity.pinLastUpdatedAt), "MMM d, yyyy HH:mm")}
                 </p>
               )}
             </div>

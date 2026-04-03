@@ -40,6 +40,7 @@ export default function VolunteerDashboard() {
   const [overrideReason, setOverrideReason] = useState("");
   const [overridePin, setOverridePin] = useState("");
   const [churchData, setChurchData] = useState<any>(null);
+  const [churchSecurity, setChurchSecurity] = useState<any>(null);
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
   const [scanningGuardian, setScanningGuardian] = useState(false);
@@ -80,7 +81,11 @@ export default function VolunteerDashboard() {
   useEffect(() => {
     if (userData?.churchId) {
       const unsubChurch = subscribeToDocument("churches", userData.churchId, setChurchData);
-      return () => unsubChurch();
+      const unsubSecurity = subscribeToDocument("church_security", userData.churchId, setChurchSecurity);
+      return () => {
+        unsubChurch();
+        unsubSecurity();
+      };
     }
   }, [userData?.churchId]);
 
@@ -297,7 +302,7 @@ export default function VolunteerDashboard() {
     try {
       const hashedInput = await hashPin(overridePin);
       
-      if (hashedInput === churchData?.adminOverridePinHash) {
+      if (hashedInput === churchSecurity?.adminOverridePinHash) {
         // Success
         await processCheckout(checkoutChild, "admin_override", "Admin Override", true, overrideReason);
         

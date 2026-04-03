@@ -16,6 +16,7 @@ import Rejected from "./pages/Rejected";
 import MasterAdminDashboard from "./pages/MasterAdminDashboard";
 import AcceptInvite from "./pages/AcceptInvite";
 import Profile from "./pages/Profile";
+import RegisterChurch from "./pages/RegisterChurch";
 
 function Navigation() {
   const { user, roles } = useAuth();
@@ -143,6 +144,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/register-church" element={<RegisterChurch />} />
               <Route path="/accept-invite" element={<AcceptInvite />} />
               <Route path="/complete-profile" element={<ProfileCompletion />} />
               <Route path="/pending-approval" element={<PendingApproval />} />
