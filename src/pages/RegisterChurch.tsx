@@ -44,6 +44,7 @@ export default function RegisterChurch() {
       // 2. Create Church Document
       const churchId = await addDocument("churches", {
         name: formData.churchName,
+        adminEmail: formData.email,
         status: "trialing",
         trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
         createdAt: new Date().toISOString(),

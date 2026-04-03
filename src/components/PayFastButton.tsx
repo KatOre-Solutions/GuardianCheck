@@ -19,9 +19,9 @@ export default function PayFastButton({
   isSandbox = true 
 }: PayFastButtonProps) {
   // These should come from environment variables
-  const merchantId = import.meta.env.VITE_PAYFAST_MERCHANT_ID || "10000100";
-  const merchantKey = import.meta.env.VITE_PAYFAST_MERCHANT_KEY || "46f0cd694581a";
-  const isSandboxEnv = import.meta.env.VITE_PAYFAST_SANDBOX === "true";
+  const merchantId = (import.meta as any).env.VITE_PAYFAST_MERCHANT_ID || "10000100";
+  const merchantKey = (import.meta as any).env.VITE_PAYFAST_MERCHANT_KEY || "46f0cd694581a";
+  const isSandboxEnv = (import.meta as any).env.VITE_PAYFAST_SANDBOX === "true";
   
   const baseUrl = (isSandbox || isSandboxEnv)
     ? "https://sandbox.payfast.co.za/eng/process" 
