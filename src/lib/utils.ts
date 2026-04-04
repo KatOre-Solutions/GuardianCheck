@@ -18,9 +18,9 @@ export function getAuthErrorMessage(error: any): string {
     case "auth/user-disabled":
       return "This account has been disabled. Please contact support.";
     case "auth/user-not-found":
-      return "No account found with this email. Please sign up.";
+      return "Email address incorrect.";
     case "auth/wrong-password":
-      return "Incorrect password. Please try again.";
+      return "Password incorrect.";
     case "auth/weak-password":
       return "Password is too weak. It must be at least 6 characters.";
     case "auth/operation-not-allowed":
@@ -38,7 +38,7 @@ export function getAuthErrorMessage(error: any): string {
       if (typeof code === 'string') {
         if (code.includes("email-already-in-use")) return "This email is already registered. Please sign in instead.";
         if (code.includes("network-request-failed")) return "Network error. Please check your internet connection and try again.";
-        if (code.includes("invalid-credential")) return "Invalid email or password. Please try again.";
+        if (code.includes("invalid-credential")) return "Email address or password incorrect.";
       }
       return error.message || "An error occurred during authentication";
   }

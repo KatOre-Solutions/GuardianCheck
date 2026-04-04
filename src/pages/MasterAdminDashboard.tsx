@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter } from "lucide-react";
-import { getChurches, addDocument, removeDocument, getCollection, updateDocument } from "../lib/firestore";
+import { getChurches, addDocument, removeDocument, getCollection, updateDocument, subscribeToCollection } from "../lib/firestore";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
 import { format, isAfter, parseISO } from "date-fns";
+import { where } from "firebase/firestore";
 
 import { useAuth } from "../hooks/useAuth";
 
@@ -20,8 +21,13 @@ export default function MasterAdminDashboard() {
   const { userData, user } = useAuth();
 
   useEffect(() => {
+    const unsubChurches = subscribeToCollection("churches", [], (data) => {
+      setChurches(data);
+      setLoading(false);
+    });
     loadData();
     syncMasterAdminRoles();
+    return () => unsubChurches();
   }, []);
 
   async function syncMasterAdminRoles() {
@@ -45,37 +51,45 @@ export default function MasterAdminDashboard() {
   }
 
   async function loadData() {
-    setLoading(true);
+    // Keep loadData for other collections for now, but remove churches from it
     try {
-      const [churchesData, allUsers, allChildren, allGuardians, allRequests] = await Promise.all([
-        getChurches(),
+      const [allUsers, allChildren, allGuardians, allRequests] = await Promise.all([
         getCollection("users"),
         getCollection("children"),
         getCollection("guardians"),
         getCollection("membershipRequests")
       ]);
 
-      setChurches(churchesData);
       setPendingRequests((allRequests as any[]).filter(r => r.status === "pending"));
       
       const newStats: Record<string, { users: number, children: number, guardians: number }> = {};
       
-      (churchesData as any[]).forEach(church => {
-        newStats[church.id] = {
-          users: (allUsers as any[]).filter(u => u.churchId === church.id).length,
-          children: (allChildren as any[]).filter(c => c.churchId === church.id).length,
-          guardians: (allGuardians as any[]).filter(g => g.churchId === church.id).length
-        };
+      // We'll update stats when churches or other data changes
+      // For simplicity, we'll recalculate stats here
+      setStats(prev => {
+        const updatedStats = { ...prev };
+        churches.forEach(church => {
+          updatedStats[church.id] = {
+            users: (allUsers as any[]).filter(u => u.churchId === church.id).length,
+            children: (allChildren as any[]).filter(c => c.churchId === church.id).length,
+            guardians: (allGuardians as any[]).filter(g => g.churchId === church.id).length
+          };
+        });
+        return updatedStats;
       });
 
-      setStats(newStats);
     } catch (error) {
       console.error(error);
       toast.error("Failed to load dashboard data");
-    } finally {
-      setLoading(false);
     }
   }
+
+  // Recalculate stats when churches or data changes
+  useEffect(() => {
+    if (churches.length > 0) {
+      loadData();
+    }
+  }, [churches.length]);
 
   const filteredChurches = churches.filter(c => {
     const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 

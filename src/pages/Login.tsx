@@ -328,6 +328,25 @@ export default function Login() {
               {loading ? "Checking..." : "I've Verified My Email"}
             </button>
             <button 
+              onClick={async () => {
+                if (!auth.currentUser) return;
+                setLoading(true);
+                try {
+                  await sendEmailVerification(auth.currentUser);
+                  toast.success("Verification email resent! Please check your inbox.");
+                } catch (e: any) {
+                  const msg = getAuthErrorMessage(e);
+                  toast.error(msg);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+              className="w-full text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+            >
+              Resend Verification Email
+            </button>
+            <button 
               onClick={() => auth.signOut().then(() => setMode("signin"))}
               className="w-full text-gray-500 dark:text-gray-400 font-semibold hover:text-gray-700 dark:hover:text-gray-200"
             >

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument, setDocument } from "../lib/firestore";
 import { where } from "firebase/firestore";
@@ -49,6 +50,7 @@ import { motion } from "motion/react";
 
 export default function AdminDashboard() {
   const { user, role, userData } = useAuth();
+  const [searchParams] = useSearchParams();
   const [rooms, setRooms] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
@@ -72,6 +74,20 @@ export default function AdminDashboard() {
   const [churchSecurity, setChurchSecurity] = useState<any>(null);
   const [showPin, setShowPin] = useState(false);
   const [regeneratingPin, setRegeneratingPin] = useState(false);
+
+  useEffect(() => {
+    const paymentStatus = searchParams.get("payment");
+    if (paymentStatus === "success") {
+      toast.success("Payment successful! Your subscription is being processed.", {
+        description: "It may take a few minutes for your status to update.",
+        duration: 6000
+      });
+    } else if (paymentStatus === "cancel") {
+      toast.error("Payment cancelled.", {
+        description: "Your subscription was not updated."
+      });
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (role === "admin" && userData?.churchId) {

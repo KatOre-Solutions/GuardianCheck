@@ -30,14 +30,14 @@ if (!getApps().length) {
       });
     }
     
-    initializeApp(options);
-    db = getFirestore(firebaseConfig.firestoreDatabaseId);
+    const app = initializeApp(options);
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
   } catch (error) {
     console.warn("Firebase Admin initialization failed. Server-side Firestore operations may fail.", error);
     // Fallback to uninitialized db to prevent crash, but operations will fail later if called
   }
 } else {
-  db = getFirestore(firebaseConfig.firestoreDatabaseId);
+  db = getFirestore(getApps()[0], firebaseConfig.firestoreDatabaseId);
 }
 
 const app = express();
@@ -74,7 +74,7 @@ async function startServer() {
   // PayFast ITN Webhook
   app.post("/api/payfast-itn", async (req, res) => {
     const data = req.body;
-    console.log("PayFast ITN Received:", data);
+    console.log("PayFast ITN Received:", JSON.stringify(data, null, 2));
 
     try {
       // 1. Validate Signature
@@ -82,14 +82,18 @@ async function startServer() {
       const signature = generateSignature(data, passphrase);
       
       if (signature !== data.signature) {
-        console.error("Invalid PayFast Signature");
+        console.error(`Invalid PayFast Signature. Calculated: ${signature}, Received: ${data.signature}`);
         return res.status(400).send("Invalid Signature");
       }
+
+      console.log("PayFast Signature Validated.");
 
       // 2. Ping-back to PayFast to verify data
       const sandbox = process.env.PAYFAST_SANDBOX === "true";
       const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
       const validateUrl = `https://${pfHost}/eng/query/validate`;
+      
+      console.log(`Pinging back to PayFast for validation: ${validateUrl}`);
       
       const params = new URLSearchParams();
       Object.keys(data).forEach(key => params.append(key, data[key]));
@@ -101,10 +105,14 @@ async function startServer() {
         return res.status(400).send("Validation Failed");
       }
 
+      console.log("PayFast Data Validation Successful.");
+
       // 3. Process Payment
       if (data.payment_status === "COMPLETE") {
-        const churchId = data.custom_str1; // We passed churchId here
-        const plan = data.custom_str2; // We passed plan here
+        const churchId = data.custom_str1;
+        const plan = data.custom_str2;
+        
+        console.log(`Processing COMPLETE payment for Church: ${churchId}, Plan: ${plan}`);
         
         if (!churchId) {
           console.error("Missing churchId in ITN data");
@@ -116,8 +124,9 @@ async function startServer() {
 
         if (churchDoc.exists) {
           const now = new Date();
-          // Correctly handle month lengths using date-fns
           const nextBilling = addMonths(now, 1);
+
+          console.log(`Updating church ${churchId} to active status.`);
 
           await churchRef.update({
             status: "active",
@@ -139,13 +148,17 @@ async function startServer() {
             createdAt: now.toISOString()
           });
 
-          console.log(`Church ${churchId} subscription updated to active.`);
+          console.log(`Church ${churchId} subscription updated to active successfully.`);
+        } else {
+          console.error(`Church document not found: ${churchId}`);
         }
+      } else {
+        console.log(`Payment status is not COMPLETE: ${data.payment_status}`);
       }
 
       res.status(200).send("OK");
-    } catch (error) {
-      console.error("Error processing PayFast ITN:", error);
+    } catch (error: any) {
+      console.error("Error processing PayFast ITN:", error.message, error.stack);
       res.status(500).send("Internal Error");
     }
   });

@@ -28,10 +28,10 @@ export default function PayFastButton({
     : "https://www.payfast.co.za/eng/process";
 
   // Use the current origin or a configured APP_URL for the notify_url
-  const currentOrigin = window.location.origin;
-  const returnUrl = `${currentOrigin}/admin?payment=success&plan=${plan}`;
-  const cancelUrl = `${currentOrigin}/admin?payment=cancel`;
-  const notifyUrl = `${currentOrigin}/api/payfast-itn`;
+  const appUrl = (import.meta as any).env.VITE_APP_URL || window.location.origin;
+  const returnUrl = `${window.location.origin}/admin?payment=success&plan=${plan}`;
+  const cancelUrl = `${window.location.origin}/admin?payment=cancel`;
+  const notifyUrl = `${appUrl}/api/payfast-itn`;
 
   return (
     <form action={baseUrl} method="post">
