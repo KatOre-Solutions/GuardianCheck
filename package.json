@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx api/index.ts",
-    "start": "node api/index.ts",
+    "start": "tsx api/index.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
@@ -38,6 +38,7 @@
     "recharts": "^3.8.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
+    "tsx": "^4.21.0",
     "uuid": "^13.0.0",
     "vite": "^6.2.0",
     "zod": "^4.3.6"
@@ -51,7 +52,6 @@
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
