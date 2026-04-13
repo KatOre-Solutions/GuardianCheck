@@ -10,11 +10,11 @@ import { getAuth } from "firebase-admin/auth";
 import { addMonths, format, parseISO } from "date-fns";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import { EmailService } from "./emailService";
+import { EmailService } from "./emailService.js";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import NodeCache from "node-cache";
-import { CURRENT_POLICY_VERSION } from "../src/constants/legalContent";
+import { CURRENT_POLICY_VERSION } from "../src/constants/legalContent.js";
 
 // TTL Cache for Firestore reads (60 seconds default)
 const cache = new NodeCache({ stdTTL: 60, checkperiod: 120 });
