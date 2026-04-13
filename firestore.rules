@@ -145,7 +145,7 @@ service cloud.firestore {
       return data.keys().hasAll(['version', 'acceptedAt', 'churchId', 'roleAtTime', 'legalContext']) &&
              data.version is string &&
              data.acceptedAt == request.time && // Force server timestamp
-             data.churchId == user.churchId && // Prevent churchId spoofing
+             (data.churchId == user.churchId || (isMasterAdmin() && data.churchId == 'system')) && // Allow 'system' for master admins
              data.roleAtTime == user.role &&   // Capture authoritative role
              data.legalContext is map &&
              data.legalContext.keys().hasAll(['policyHash', 'agreementType']) &&
@@ -207,8 +207,10 @@ service cloud.firestore {
     match /church_policy_acceptance/{churchId} {
       allow read: if isAuthenticated() && (isChurchMember(churchId) || isMasterAdmin());
       // Only admins can accept on behalf of the church
-      allow create: if isAuthenticated() && (isAdmin() || isMasterAdmin()) && 
-                    getUserData().churchId == churchId &&
+      allow create: if isAuthenticated() && (
+                      (isAdmin() && getUserData().churchId == churchId) || 
+                      (isMasterAdmin() && churchId == 'system')
+                    ) && 
                     isValidChurchPolicyAcceptance(request.resource.data);
       allow update, delete: if false; // Immutable
     }
