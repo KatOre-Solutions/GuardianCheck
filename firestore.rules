@@ -273,7 +273,9 @@ service cloud.firestore {
         isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
         (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid)) &&
         request.resource.data.churchId == resource.data.churchId &&
-        request.resource.data.parentId == resource.data.parentId
+        request.resource.data.parentId == resource.data.parentId &&
+        request.resource.data.firstName.size() < 100 &&
+        request.resource.data.lastName.size() < 100
       );
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
@@ -373,8 +375,8 @@ service cloud.firestore {
     }
 
     match /invitations/{invitationId} {
-      // Allow token lookup for unauthenticated users via list with limit 1
-      allow list: if request.query.limit == 1;
+      // Allow token lookup for unauthenticated users via list with limit 1 and token filter
+      allow list: if request.query.limit == 1 && 'token' in request.query.filters;
       
       allow read: if isAuthenticated() && (
         isMasterAdmin() || 

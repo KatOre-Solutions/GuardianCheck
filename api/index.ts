@@ -9,6 +9,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { addMonths, format, parseISO } from "date-fns";
 import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 import { EmailService } from "./emailService.ts";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
@@ -169,6 +170,12 @@ initializeFirebase();
 const emailService = new EmailService(db);
 
 const app = express();
+
+// Security Headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for now to avoid breaking the frontend assets/iframe
+  crossOriginEmbedderPolicy: false
+}));
 
 // Trace ID & Structured Logging Middleware
 app.use((req, res, next) => {
@@ -1098,10 +1105,24 @@ async function startServer() {
     const { churchName, adminFirstName, adminLastName } = req.body;
     const { uid, email } = req.user;
 
-    if (!db) {
-      console.error("Database not initialized");
-      return res.status(500).json({ error: "System configuration error: Database not initialized.", traceId: req.traceId });
+    if (!db || !adminApp) {
+      console.error(`[REGISTRATION_ERROR] Firebase not initialized [Trace: ${req.traceId}]`);
+      return res.status(500).json({ error: "System configuration error: Firebase not initialized.", traceId: req.traceId });
     }
+
+    if (!email) {
+      console.error(`[REGISTRATION_ERROR] No email found for user ${uid} [Trace: ${req.traceId}]`);
+      return res.status(400).json({ error: "Email is required for registration. Please ensure your account has an email address.", traceId: req.traceId });
+    }
+
+    // Prevent multiple registrations for the same user
+    if (req.user.churchId) {
+      console.warn(`[REGISTRATION_WARNING] User ${uid} already associated with church ${req.user.churchId} [Trace: ${req.traceId}]`);
+      return res.status(400).json({ error: "You are already associated with a church. Multiple church registrations per user are not supported.", traceId: req.traceId });
+    }
+
+    let churchRef: any = null;
+    let rollbackExecuted = false;
 
     try {
       console.log(`Starting church registration for: ${churchName} (${email}) [Trace: ${req.traceId}]`);
@@ -1110,6 +1131,11 @@ async function startServer() {
       let slug = churchName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
       if (slug.startsWith("-")) slug = slug.slice(1);
       if (slug.endsWith("-")) slug = slug.slice(0, -1);
+      
+      // Fallback for empty slug
+      if (!slug || slug.length < 2) {
+        slug = `church-${Math.random().toString(36).substring(2, 7)}`;
+      }
       
       // Ensure slug uniqueness
       const existingChurch = await db.collection("churches").where("slug", "==", slug).limit(1).get();
@@ -1120,14 +1146,15 @@ async function startServer() {
       }
 
       // 2. Create Church Document
-      const churchRef = await db.collection("churches").add({
+      churchRef = await db.collection("churches").add({
         name: churchName,
         slug: slug,
         adminEmail: email,
         status: "trialing",
         subscription: {
           tier: "free",
-          status: "active"
+          status: "active",
+          trialEndsAt: addMonths(new Date(), 1).toISOString(), // 1 month trial
         },
         metrics: {
           totalChildren: 0,
@@ -1161,8 +1188,39 @@ async function startServer() {
 
       res.json({ success: true, churchId: churchRef.id, slug: slug });
     } catch (error: any) {
-      console.error("Church registration failed:", error.message);
-      res.status(500).json({ error: error.message || "Failed to register church", traceId: req.traceId });
+      console.error(`[REGISTRATION_ERROR] ${error.message} [Trace: ${req.traceId}]`);
+      
+      // ROLLBACK: Ensure atomicity
+      if (!rollbackExecuted) {
+        rollbackExecuted = true;
+        console.log(`[ROLLBACK] Initiating rollback for user ${uid} [Trace: ${req.traceId}]`);
+        
+        // 1. Delete orphaned church document
+        if (churchRef) {
+          try {
+            await churchRef.delete();
+            console.log(`[ROLLBACK] Deleted orphaned church document: ${churchRef.id}`);
+          } catch (cleanupError: any) {
+            console.error(`[ROLLBACK_FAILED] Failed to delete church doc: ${cleanupError.message}`);
+          }
+        }
+        
+        // 2. Delete Auth user (as requested by user for consistency)
+        try {
+          await getAuth(adminApp).deleteUser(uid);
+          console.log(`[ROLLBACK] Deleted Firebase Auth user: ${uid}`);
+        } catch (authError: any) {
+          console.error(`[ROLLBACK_FAILED] Failed to delete Auth user: ${authError.message}`);
+        }
+      }
+
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || "Failed to register church", 
+          traceId: req.traceId,
+          rollback: "executed"
+        });
+      }
     }
   });
 
@@ -1210,11 +1268,16 @@ async function startServer() {
     if (isApi) {
       res.status(err.status || 500).json({
         error: err.message || "Internal Server Error",
-        code: err.code || "INTERNAL_ERROR"
+        code: err.code || "INTERNAL_ERROR",
+        traceId: req.traceId || "none"
       });
     } else {
-      // For non-API routes, let it fall through to Vite or send a simple HTML error
-      res.status(err.status || 500).send(`Internal Server Error: ${err.message}`);
+      // For non-API routes, still try to return JSON if it's a 500
+      res.status(err.status || 500).json({
+        error: "An unexpected server error occurred.",
+        message: err.message,
+        traceId: req.traceId || "none"
+      });
     }
   });
 

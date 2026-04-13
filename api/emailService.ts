@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { format } from "date-fns";
+import he from "he";
 
 interface EmailOptions {
   to: string;
@@ -86,6 +87,14 @@ export class EmailService {
   private generateTemplate(data: NotificationData): string {
     const { childName, time, roomName, churchName, serviceName, eventType, volunteerName, guardianName, guardianQrToken } = data;
     
+    // Escape user-provided strings
+    const escapedChildName = he.escape(childName);
+    const escapedRoomName = he.escape(roomName);
+    const escapedChurchName = he.escape(churchName);
+    const escapedServiceName = serviceName ? he.escape(serviceName) : "";
+    const escapedVolunteerName = volunteerName ? he.escape(volunteerName) : "";
+    const escapedGuardianName = guardianName ? he.escape(guardianName) : "";
+
     let title = "";
     let message = "";
     let color = "#2563eb"; // blue
@@ -93,31 +102,31 @@ export class EmailService {
     switch (eventType) {
       case 'check-in':
         title = "Check-In Confirmation";
-        message = `<strong>${childName}</strong> has been safely checked into <strong>${roomName}</strong>.`;
+        message = `<strong>${escapedChildName}</strong> has been safely checked into <strong>${escapedRoomName}</strong>.`;
         break;
       case 'check-out':
         title = "Check-Out Notification";
-        message = `<strong>${childName}</strong> has been checked out from <strong>${roomName}</strong>.`;
+        message = `<strong>${escapedChildName}</strong> has been checked out from <strong>${escapedRoomName}</strong>.`;
         color = "#16a34a"; // green
         break;
       case 'duplicate_blocked':
         title = "Security Alert: Duplicate Check-In";
-        message = `A duplicate check-in attempt was blocked for <strong>${childName}</strong>.`;
+        message = `A duplicate check-in attempt was blocked for <strong>${escapedChildName}</strong>.`;
         color = "#dc2626"; // red
         break;
       case 'room_move':
         title = "Room Transfer Notification";
-        message = `<strong>${childName}</strong> has been moved to <strong>${roomName}</strong>.`;
+        message = `<strong>${escapedChildName}</strong> has been moved to <strong>${escapedRoomName}</strong>.`;
         break;
       case 'emergency':
         title = "EMERGENCY ALERT";
-        message = `An emergency alert has been triggered for <strong>${churchName}</strong>. Please follow safety protocols.`;
+        message = `An emergency alert has been triggered for <strong>${escapedChurchName}</strong>. Please follow safety protocols.`;
         color = "#dc2626"; // red
         break;
     }
 
     const qrCodeUrl = guardianQrToken 
-      ? `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${guardianQrToken}`
+      ? `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(guardianQrToken)}`
       : null;
 
     return `
@@ -150,7 +159,7 @@ export class EmailService {
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div class="detail-item">
                   <div class="detail-label">Church</div>
-                  <div class="detail-value">${churchName}</div>
+                  <div class="detail-value">${escapedChurchName}</div>
                 </div>
                 <div class="detail-item">
                   <div class="detail-label">Time</div>
@@ -158,24 +167,24 @@ export class EmailService {
                 </div>
                 <div class="detail-item">
                   <div class="detail-label">Room</div>
-                  <div class="detail-value">${roomName}</div>
+                  <div class="detail-value">${escapedRoomName}</div>
                 </div>
                 ${serviceName ? `
                 <div class="detail-item">
                   <div class="detail-label">Service</div>
-                  <div class="detail-value">${serviceName}</div>
+                  <div class="detail-value">${escapedServiceName}</div>
                 </div>` : ''}
                 
                 ${volunteerName ? `
                 <div class="detail-item">
                   <div class="detail-label">Volunteer</div>
-                  <div class="detail-value">${volunteerName}</div>
+                  <div class="detail-value">${escapedVolunteerName}</div>
                 </div>` : ''}
                 
                 ${guardianName ? `
                 <div class="detail-item">
                   <div class="detail-label">${eventType === 'check-in' ? 'Dropped Off By' : 'Picked Up By'}</div>
-                  <div class="detail-value">${guardianName}</div>
+                  <div class="detail-value">${escapedGuardianName}</div>
                 </div>` : ''}
               </div>
             </div>
@@ -189,7 +198,7 @@ export class EmailService {
             ` : ''}
           </div>
           <div class="footer">
-            <p>This is an automated notification from ${churchName} Check-In System.</p>
+            <p>This is an automated notification from ${escapedChurchName} Check-In System.</p>
             <p>&copy; ${new Date().getFullYear()} GuardianCheck</p>
           </div>
         </div>
@@ -332,7 +341,11 @@ export class EmailService {
     }
 
     try {
-      const subject = `Invitation to join ${data.churchName} on GuardianCheck`;
+      const escapedFirstName = he.escape(data.firstName);
+      const escapedChurchName = he.escape(data.churchName);
+      const escapedRole = he.escape(data.role);
+
+      const subject = `Invitation to join ${escapedChurchName} on GuardianCheck`;
       const html = `
         <!DOCTYPE html>
         <html>
@@ -352,8 +365,8 @@ export class EmailService {
               <h1>Welcome to GuardianCheck</h1>
             </div>
             <div class="content">
-              <p>Hello ${data.firstName},</p>
-              <p>You have been invited to join <strong>${data.churchName}</strong> as a <strong>${data.role}</strong> on GuardianCheck, our secure child check-in platform.</p>
+              <p>Hello ${escapedFirstName},</p>
+              <p>You have been invited to join <strong>${escapedChurchName}</strong> as a <strong>${escapedRole}</strong> on GuardianCheck, our secure child check-in platform.</p>
               <p>Click the button below to accept your invitation and set up your account:</p>
               <div style="text-align: center;">
                 <a href="${data.inviteLink}" class="button">Accept Invitation</a>
