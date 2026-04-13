@@ -43,7 +43,7 @@ export default function PendingApproval() {
           </p>
         </div>
 
-        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl text-sm text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-900/30 flex items-start space-x-3 text-left">
+        <div className="p-4 bg-primary/10 dark:bg-primary/20 rounded-2xl text-sm text-primary/80 dark:text-primary/70 border border-primary/20 dark:border-primary/30 flex items-start space-x-3 text-left">
           <Shield className="h-5 w-5 shrink-0 mt-0.5" />
           <p>Once approved, you will be assigned your role and granted access to the church dashboard.</p>
         </div>

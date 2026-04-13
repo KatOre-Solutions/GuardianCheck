@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument } from "../lib/firestore";
+import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, CreditCard, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { toast } from "sonner";
+import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 
 export default function ParentDashboard() {
   const { user, userData } = useAuth();
   const [children, setChildren] = useState<any[]>([]);
   const [guardians, setGuardians] = useState<any[]>([]);
+  const [checkins, setCheckins] = useState<any[]>([]);
+  const [medicalInfo, setMedicalInfo] = useState<Record<string, any>>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showGuardianModal, setShowGuardianModal] = useState(false);
@@ -43,12 +45,43 @@ export default function ParentDashboard() {
       const unsubscribeGuardians = subscribeToCollection("guardians", constraints, (data) => {
         setGuardians(data);
       });
+      const unsubscribeCheckins = subscribeToCollection("checkins", [
+        where("churchId", "==", userData.churchId),
+        where("status", "==", "checked-in")
+      ], (data) => {
+        // Filter checkins for parent's children
+        const parentChildIds = children.map(c => c.id);
+        setCheckins(data.filter(c => parentChildIds.includes(c.childId)));
+      });
+
       return () => {
         unsubscribeChildren();
         unsubscribeGuardians();
+        unsubscribeCheckins();
       };
     }
-  }, [user, userData?.churchId]);
+  }, [user, userData?.churchId, children.length]);
+
+  // Handle medical info subscriptions individually for each child
+  useEffect(() => {
+    const unsubscribes: (() => void)[] = [];
+    
+    children.forEach(child => {
+      const unsub = subscribeToDocument("child_medical", child.id, (data) => {
+        if (data) {
+          setMedicalInfo(prev => ({
+            ...prev,
+            [child.id]: data
+          }));
+        }
+      });
+      unsubscribes.push(unsub);
+    });
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub());
+    };
+  }, [children]);
 
   useEffect(() => {
     if (user && userData) {
@@ -86,17 +119,30 @@ export default function ParentDashboard() {
     e.preventDefault();
     if (!user) return;
     if (!userData?.churchId) {
-      toast.error("You must select a church in your profile before adding children.");
+      showErrorToast("You must select a church in your profile before adding children.");
       return;
     }
     setLoading(true);
     try {
+      const parentName = `${userData?.firstName} ${userData?.lastName}`;
+      // Split sensitive data
+      const { notes, ...childData } = newChild;
+      
       const childId = await addDocument("children", {
-        ...newChild,
+        ...childData,
         age: Number(newChild.age),
         parentId: user.uid,
+        parentName, // Denormalize for offline check-in
         churchId: userData.churchId,
         qrCode: `child_${Math.random().toString(36).substr(2, 9)}`
+      });
+
+      // Store sensitive medical details separately
+      await setDocument("child_medical", childId, {
+        notes: notes || "",
+        parentId: user.uid,
+        churchId: userData.churchId,
+        updatedAt: new Date().toISOString()
       });
 
       // Check if parent guardian already exists for this account
@@ -137,12 +183,12 @@ export default function ParentDashboard() {
         });
       }
 
-      toast.success("Child registered successfully!");
+      showSuccessToast("Child Registered", "Your child has been registered successfully.");
       setShowAddModal(false);
       setNewChild({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
     } catch (err) {
       console.error(err);
-      toast.error("Failed to register child");
+      showErrorToast(err);
     } finally {
       setLoading(false);
     }
@@ -153,16 +199,27 @@ export default function ParentDashboard() {
     if (!user || !editingChild) return;
     setLoading(true);
     try {
+      const { notes, ...childData } = editingChild;
+      
       await updateDocument("children", editingChild.id, {
-        ...editingChild,
+        ...childData,
         age: Number(editingChild.age)
       });
-      toast.success("Child updated successfully!");
+
+      // Update sensitive medical details
+      await setDocument("child_medical", editingChild.id, {
+        notes: notes || "",
+        parentId: user.uid,
+        churchId: userData.churchId,
+        updatedAt: new Date().toISOString()
+      });
+
+      showSuccessToast("Child updated successfully!");
       setShowEditModal(false);
       setEditingChild(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update child");
+      showErrorToast("Failed to update child");
     } finally {
       setLoading(false);
     }
@@ -185,12 +242,13 @@ export default function ParentDashboard() {
         }
       }
       await removeDocument("children", childToDelete.id);
-      toast.success("Child and associated guardian permissions removed");
+      await removeDocument("child_medical", childToDelete.id);
+      showSuccessToast("Child and associated guardian permissions removed");
       setShowDeleteModal(false);
       setChildToDelete(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to delete child");
+      showErrorToast("Failed to delete child");
     } finally {
       setLoading(false);
     }
@@ -201,7 +259,7 @@ export default function ParentDashboard() {
     if (!file || !user) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image size must be less than 5MB");
+      showErrorToast("Image size must be less than 5MB");
       return;
     }
 
@@ -216,10 +274,10 @@ export default function ParentDashboard() {
       } else {
         setNewChild({ ...newChild, photoUrl: url, photoURL: url });
       }
-      toast.success("Image uploaded successfully");
+      showSuccessToast("Image uploaded successfully");
     } catch (err) {
       console.error(err);
-      toast.error("Failed to upload image");
+      showErrorToast("Failed to upload image");
     } finally {
       setUploading(false);
     }
@@ -230,7 +288,7 @@ export default function ParentDashboard() {
     if (!file || !user) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image size must be less than 5MB");
+      showErrorToast("Image size must be less than 5MB");
       return;
     }
 
@@ -241,10 +299,10 @@ export default function ParentDashboard() {
       const url = await getDownloadURL(storageRef);
       
       setNewGuardian({ ...newGuardian, photoUrl: url, photoURL: url });
-      toast.success("Image uploaded successfully");
+      showSuccessToast("Image uploaded successfully");
     } catch (err) {
       console.error(err);
-      toast.error("Failed to upload image");
+      showErrorToast("Failed to upload image");
     } finally {
       setUploading(false);
     }
@@ -276,14 +334,14 @@ export default function ParentDashboard() {
 
       if (existingGuardian) {
         if (existingGuardian.childIds?.includes(selectedChild.id)) {
-          toast.info("This person is already a guardian for this child");
+          showInfoToast("This person is already a guardian for this child");
         } else {
           const updatedChildIds = [...(existingGuardian.childIds || []), selectedChild.id];
           await updateDocument("guardians", existingGuardian.id, {
             childIds: updatedChildIds,
             active: true // Ensure they are active if re-added
           });
-          toast.success("Existing guardian linked to this child!");
+          showSuccessToast("Existing guardian linked to this child!");
         }
       } else {
         const qrToken = `guardian_${Math.random().toString(36).substr(2, 12)}`;
@@ -295,12 +353,12 @@ export default function ParentDashboard() {
           qrToken,
           active: true
         });
-        toast.success("New guardian added successfully!");
+        showSuccessToast("New guardian added successfully!");
       }
       setNewGuardian({ firstName: "", lastName: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
     } catch (err) {
       console.error(err);
-      toast.error("Failed to add guardian");
+      showErrorToast("Failed to add guardian");
     } finally {
       setLoading(false);
     }
@@ -311,10 +369,10 @@ export default function ParentDashboard() {
       await updateDocument("guardians", guardian.id, {
         active: !guardian.active
       });
-      toast.success(`Guardian ${!guardian.active ? "activated" : "deactivated"}`);
+      showSuccessToast(`Guardian ${!guardian.active ? "activated" : "deactivated"}`);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update status");
+      showErrorToast("Failed to update status");
     }
   };
 
@@ -326,17 +384,17 @@ export default function ParentDashboard() {
       
       if (updatedChildIds.length === 0) {
         await removeDocument("guardians", guardianToDelete.id);
-        toast.success("Guardian removed from system");
+        showSuccessToast("Guardian removed from system");
       } else {
         await updateDocument("guardians", guardianToDelete.id, {
           childIds: updatedChildIds
         });
-        toast.success("Guardian unlinked from this child");
+        showSuccessToast("Guardian unlinked from this child");
       }
       setGuardianToDelete(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to remove guardian");
+      showErrorToast("Failed to remove guardian");
     } finally {
       setLoading(false);
     }
@@ -384,7 +442,7 @@ export default function ParentDashboard() {
     <div className="space-y-8">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center space-x-3">
-          <div className="h-12 w-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200 dark:shadow-none">
+          <div className="h-12 w-12 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 dark:shadow-none">
             <Home className="h-6 w-6 text-white" />
           </div>
           <div className="space-y-1">
@@ -396,7 +454,7 @@ export default function ParentDashboard() {
           {children.length > 1 && (
             <button
               onClick={() => setShowGroupQRModal(true)}
-              className="bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-2 border-blue-600 dark:border-blue-500 px-6 py-3 rounded-xl font-semibold hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all flex items-center justify-center space-x-2 shadow-sm"
+              className="bg-white dark:bg-gray-900 text-primary dark:text-primary/80 border-2 border-primary dark:border-primary/80 px-6 py-3 rounded-xl font-semibold hover:bg-primary/10 dark:hover:bg-primary/20 transition-all flex items-center justify-center space-x-2 shadow-sm"
             >
               <QrIcon className="h-5 w-5" />
               <span>Group Check-in</span>
@@ -404,7 +462,7 @@ export default function ParentDashboard() {
           )}
           <button
             onClick={() => setShowAddModal(true)}
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-blue-700 transition-all flex items-center justify-center space-x-2 shadow-lg shadow-blue-100"
+            className="bg-primary text-white px-6 py-3 rounded-xl font-semibold hover:bg-primary/90 transition-all flex items-center justify-center space-x-2 shadow-lg shadow-primary/10"
           >
             <Plus className="h-5 w-5" />
             <span>Add Child</span>
@@ -413,7 +471,7 @@ export default function ParentDashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {children.map((child) => (
+        {children.filter(c => !c.deleted).map((child) => (
           <motion.div
             key={child.id}
             layout
@@ -425,10 +483,14 @@ export default function ParentDashboard() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setEditingChild(child);
+                  const childMedical = medicalInfo[child.id];
+                  setEditingChild({
+                    ...child,
+                    notes: childMedical?.notes || ""
+                  });
                   setShowEditModal(true);
                 }}
-                className="p-2 bg-white dark:bg-gray-800 shadow-lg rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors border border-gray-100 dark:border-gray-700"
+                className="p-2 bg-white dark:bg-gray-800 shadow-lg rounded-full text-gray-400 hover:text-primary dark:hover:text-primary/80 transition-colors border border-gray-100 dark:border-gray-700"
               >
                 <Edit className="h-4 w-4" />
               </button>
@@ -445,7 +507,7 @@ export default function ParentDashboard() {
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center overflow-hidden">
+              <div className="h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center overflow-hidden">
                 {child.photoUrl || child.photoURL ? (
                   <img 
                     src={child.photoUrl || child.photoURL} 
@@ -454,7 +516,7 @@ export default function ParentDashboard() {
                     referrerPolicy="no-referrer" 
                   />
                 ) : (
-                  <User className="h-8 w-8 text-blue-600 dark:text-blue-400" />
+                  <User className="h-8 w-8 text-primary dark:text-primary/80" />
                 )}
               </div>
               <div className="text-right">
@@ -471,9 +533,15 @@ export default function ParentDashboard() {
                   <span>{child.allergies}</span>
                 </div>
               )}
+              {checkins.find(c => c.childId === child.id) && (
+                <div className="flex items-center space-x-2 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-3 py-1 rounded-lg text-sm font-medium">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Checked In: {checkins.find(c => c.childId === child.id).roomName}</span>
+                </div>
+              )}
             </div>
 
-            <div className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl flex flex-col items-center justify-center space-y-4 border border-dashed border-gray-200 dark:border-gray-700 group-hover:border-blue-200 dark:group-hover:border-blue-500/50 transition-colors">
+            <div className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl flex flex-col items-center justify-center space-y-4 border border-dashed border-gray-200 dark:border-gray-700 group-hover:border-primary/30 dark:group-hover:border-primary/50 transition-colors">
               <div className="bg-white p-4 rounded-xl shadow-sm">
                 <QRCode id={`qr-child-${child.id}`} value={child.qrCode} size={120} />
               </div>
@@ -481,7 +549,7 @@ export default function ParentDashboard() {
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Child ID Card</p>
                 <button 
                   onClick={() => downloadQR(`qr-child-${child.id}`, `${child.firstName} ${child.lastName}`, "CHILD")}
-                  className="flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                  className="flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider text-primary dark:text-primary/80 hover:text-primary/90 dark:hover:text-primary/70"
                 >
                   <Download className="h-3 w-3" />
                   <span>Download QR</span>
@@ -501,7 +569,7 @@ export default function ParentDashboard() {
                   setSelectedChild(child);
                   setShowGuardianModal(true);
                 }}
-                className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-bold text-sm flex items-center"
+                className="text-primary dark:text-primary/80 hover:text-primary/90 dark:hover:text-primary/70 font-bold text-sm flex items-center"
               >
                 <span>Manage Guardians</span>
                 <ChevronRight className="h-4 w-4" />
@@ -511,14 +579,21 @@ export default function ParentDashboard() {
         ))}
 
         {children.length === 0 && (
-          <div className="col-span-full py-24 text-center space-y-4 bg-white dark:bg-gray-900 rounded-3xl border-2 border-dashed border-gray-100 dark:border-gray-800">
-            <div className="mx-auto h-16 w-16 bg-gray-50 dark:bg-gray-800 rounded-full flex items-center justify-center">
-              <User className="h-8 w-8 text-gray-300 dark:text-gray-600" />
+          <div className="col-span-full py-24 text-center space-y-6 bg-white dark:bg-gray-900 rounded-3xl border-2 border-dashed border-gray-100 dark:border-gray-800">
+            <div className="mx-auto h-20 w-20 bg-primary/5 dark:bg-primary/10 rounded-full flex items-center justify-center">
+              <User className="h-10 w-10 text-primary/40 dark:text-primary/60" />
             </div>
-            <div className="space-y-1">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white">No children registered</h3>
-              <p className="text-gray-500 dark:text-gray-400">Add your children to get started with secure check-in.</p>
+            <div className="space-y-2">
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">No children registered yet</h3>
+              <p className="text-gray-500 dark:text-gray-400 max-w-sm mx-auto">Add your children to get started with secure check-in. You'll be able to manage their guardians and generate QR codes.</p>
             </div>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center space-x-2 bg-primary text-white px-8 py-4 rounded-2xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all hover:scale-105 active:scale-95"
+            >
+              <Plus className="h-5 w-5" />
+              <span>Register First Child</span>
+            </button>
           </div>
         )}
       </div>
@@ -559,8 +634,8 @@ export default function ParentDashboard() {
                       <div className="h-24 w-24 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
                         {uploading ? (
                           <div className="flex flex-col items-center space-y-2">
-                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                            <span className="text-[8px] font-bold text-blue-600 uppercase">Uploading...</span>
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                            <span className="text-[8px] font-bold text-primary uppercase">Uploading...</span>
                           </div>
                         ) : newGuardian.photoUrl || newGuardian.photoURL ? (
                           <img src={newGuardian.photoUrl || newGuardian.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
@@ -588,7 +663,7 @@ export default function ParentDashboard() {
                           placeholder="e.g. Jane"
                           value={newGuardian.firstName}
                           onChange={e => setNewGuardian({...newGuardian, firstName: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                         />
                       </div>
                       <div className="space-y-1">
@@ -598,7 +673,7 @@ export default function ParentDashboard() {
                           placeholder="e.g. Doe"
                           value={newGuardian.lastName}
                           onChange={e => setNewGuardian({...newGuardian, lastName: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                         />
                       </div>
                       <div className="space-y-1">
@@ -613,7 +688,7 @@ export default function ParentDashboard() {
                             placeholder="Phone"
                             value={newGuardian.phone}
                             onChange={(e) => setNewGuardian({ ...newGuardian, phone: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                           />
                         </div>
                       </div>
@@ -623,7 +698,7 @@ export default function ParentDashboard() {
                           required
                           value={newGuardian.relationship}
                           onChange={e => setNewGuardian({...newGuardian, relationship: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                         >
                           {RELATIONSHIPS.map(rel => (
                             <option key={rel} value={rel} className="dark:bg-gray-900">{rel}</option>
@@ -642,7 +717,7 @@ export default function ParentDashboard() {
                             placeholder="ID Number"
                             value={newGuardian.idNumber}
                             onChange={(e) => setNewGuardian({ ...newGuardian, idNumber: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                           />
                         </div>
                       </div>
@@ -652,7 +727,7 @@ export default function ParentDashboard() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-50 shadow-lg shadow-blue-100 dark:shadow-none"
+                    className="w-full bg-primary text-white py-3 rounded-xl font-bold hover:bg-primary/90 transition-all disabled:opacity-50 shadow-lg shadow-primary/10 dark:shadow-none"
                   >
                     {loading ? "Adding..." : "Add Guardian"}
                   </button>
@@ -722,7 +797,7 @@ export default function ParentDashboard() {
                           <button 
                             disabled={!guardian.active}
                             onClick={() => downloadQR(`qr-${guardian.id}`, `${guardian.firstName} ${guardian.lastName}`)}
-                            className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active ? "text-blue-600 dark:text-blue-400" : "text-gray-400 dark:text-gray-600"}`}
+                            className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active ? "text-primary dark:text-primary/80" : "text-gray-400 dark:text-gray-600"}`}
                           >
                             <Download className="h-3 w-3" />
                             <span>Download QR</span>
@@ -772,8 +847,8 @@ export default function ParentDashboard() {
                     <div className="h-24 w-24 bg-gray-50 dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
                       {uploading ? (
                         <div className="flex flex-col items-center space-y-2">
-                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                          <span className="text-[10px] font-bold text-blue-600 uppercase">Uploading...</span>
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                          <span className="text-[10px] font-bold text-primary uppercase">Uploading...</span>
                         </div>
                       ) : newChild.photoUrl || newChild.photoURL ? (
                         <img src={newChild.photoUrl || newChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
@@ -802,7 +877,7 @@ export default function ParentDashboard() {
                         value={newChild.firstName}
                         onChange={(e) => setNewChild({ ...newChild, firstName: e.target.value })}
                         placeholder="e.g. John"
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       />
                     </div>
                     <div className="space-y-1">
@@ -813,7 +888,7 @@ export default function ParentDashboard() {
                         value={newChild.lastName}
                         onChange={(e) => setNewChild({ ...newChild, lastName: e.target.value })}
                         placeholder="e.g. Doe"
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       />
                     </div>
                     <div className="space-y-1">
@@ -828,7 +903,7 @@ export default function ParentDashboard() {
                           value={newChild.age}
                           onChange={(e) => setNewChild({ ...newChild, age: e.target.value })}
                           placeholder="Age"
-                          className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                         />
                       </div>
                     </div>
@@ -838,7 +913,7 @@ export default function ParentDashboard() {
                         required
                         value={newChild.gender}
                         onChange={(e) => setNewChild({ ...newChild, gender: e.target.value })}
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       >
                         {GENDERS.map(g => (
                           <option key={g} value={g} className="dark:bg-gray-900">{g}</option>
@@ -856,7 +931,7 @@ export default function ParentDashboard() {
                         value={newChild.allergies}
                         onChange={(e) => setNewChild({ ...newChild, allergies: e.target.value })}
                         placeholder="Peanuts, Dairy, etc."
-                        className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       />
                     </div>
                   </div>
@@ -867,14 +942,14 @@ export default function ParentDashboard() {
                       value={newChild.notes}
                       onChange={(e) => setNewChild({ ...newChild, notes: e.target.value })}
                       placeholder="Special instructions..."
-                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white h-24 resize-none"
+                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white h-24 resize-none"
                     />
                   </div>
 
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none disabled:opacity-50"
+                    className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none disabled:opacity-50"
                   >
                     {loading ? "Registering..." : "Add Child"}
                   </button>
@@ -913,8 +988,8 @@ export default function ParentDashboard() {
                     <div className="h-24 w-24 bg-gray-50 dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
                       {uploading ? (
                         <div className="flex flex-col items-center space-y-2">
-                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                          <span className="text-[10px] font-bold text-blue-600 uppercase">Uploading...</span>
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                          <span className="text-[10px] font-bold text-primary uppercase">Uploading...</span>
                         </div>
                       ) : editingChild.photoUrl || editingChild.photoURL ? (
                         <img src={editingChild.photoUrl || editingChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
@@ -943,7 +1018,7 @@ export default function ParentDashboard() {
                         value={editingChild.firstName}
                         onChange={(e) => setEditingChild({ ...editingChild, firstName: e.target.value })}
                         placeholder="e.g. John"
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       />
                     </div>
                     <div className="space-y-1">
@@ -954,7 +1029,7 @@ export default function ParentDashboard() {
                         value={editingChild.lastName || ""}
                         onChange={(e) => setEditingChild({ ...editingChild, lastName: e.target.value })}
                         placeholder="e.g. Doe"
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       />
                     </div>
                     <div className="space-y-1">
@@ -968,7 +1043,7 @@ export default function ParentDashboard() {
                           pattern="[0-9]*"
                           value={editingChild.age}
                           onChange={(e) => setEditingChild({ ...editingChild, age: e.target.value })}
-                          className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                          className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                         />
                       </div>
                     </div>
@@ -978,7 +1053,7 @@ export default function ParentDashboard() {
                         required
                         value={editingChild.gender || "Male"}
                         onChange={(e) => setEditingChild({ ...editingChild, gender: e.target.value })}
-                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       >
                         {GENDERS.map(g => (
                           <option key={g} value={g} className="dark:bg-gray-900">{g}</option>
@@ -993,7 +1068,7 @@ export default function ParentDashboard() {
                       type="text"
                       value={editingChild.allergies}
                       onChange={(e) => setEditingChild({ ...editingChild, allergies: e.target.value })}
-                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     />
                   </div>
 
@@ -1002,14 +1077,14 @@ export default function ParentDashboard() {
                     <textarea
                       value={editingChild.notes}
                       onChange={(e) => setEditingChild({ ...editingChild, notes: e.target.value })}
-                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white h-24 resize-none"
+                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white h-24 resize-none"
                     />
                   </div>
 
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none disabled:opacity-50"
+                    className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none disabled:opacity-50"
                   >
                     {loading ? "Saving..." : "Save Changes"}
                   </button>
@@ -1140,14 +1215,14 @@ export default function ParentDashboard() {
                   <p className="text-gray-500 dark:text-gray-400">Select children to generate a single QR code for group check-in.</p>
                   
                   <div className="grid grid-cols-1 gap-3">
-                    {children.map(child => (
+                    {children.filter(c => !c.deleted).map(child => (
                       <button
                         key={child.id}
                         onClick={() => toggleGroupSelection(child.id)}
                         className={`p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${
                           selectedForGroup.includes(child.id)
-                            ? "border-blue-600 bg-blue-50 dark:bg-blue-900/20"
-                            : "border-gray-100 dark:border-gray-800 hover:border-blue-200 dark:hover:border-blue-800"
+                            ? "border-primary bg-primary/10 dark:bg-primary/20"
+                            : "border-gray-100 dark:border-gray-800 hover:border-primary/20 dark:hover:border-primary/30"
                         }`}
                       >
                         <div className="flex items-center space-x-3">
@@ -1155,13 +1230,13 @@ export default function ParentDashboard() {
                             {child.photoUrl || child.photoURL ? (
                               <img src={child.photoUrl || child.photoURL} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
-                              <User className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                              <User className="h-5 w-5 text-primary dark:text-primary/80" />
                             )}
                           </div>
                           <span className="font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</span>
                         </div>
                         {selectedForGroup.includes(child.id) && (
-                          <CheckCircle2 className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                          <CheckCircle2 className="h-6 w-6 text-primary dark:text-primary/80" />
                         )}
                       </button>
                     ))}
@@ -1174,7 +1249,7 @@ export default function ParentDashboard() {
                       </div>
                       <div className="text-center">
                         <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Group QR Code</p>
-                        <p className="text-sm font-bold text-blue-600 dark:text-blue-400 mt-1">{selectedForGroup.length} Children Selected</p>
+                        <p className="text-sm font-bold text-primary dark:text-primary/80 mt-1">{selectedForGroup.length} Children Selected</p>
                       </div>
                     </div>
                   )}

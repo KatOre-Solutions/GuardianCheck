@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { updateProfile } from "firebase/auth";
 import { Shield, User, Church as ChurchIcon, ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
+import { useTenant } from "../contexts/TenantContext";
 import { getChurches, updateDocument, createMembershipRequest } from "../lib/firestore";
-import { toast } from "sonner";
+import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
-import { getAuthErrorMessage } from "../lib/utils";
 
 export default function ProfileCompletion() {
   const { user, userData, status, loading: authLoading } = useAuth();
+  const { church: tenantChurch } = useTenant();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [selectedChurch, setSelectedChurch] = useState("");
@@ -61,7 +63,7 @@ export default function ProfileCompletion() {
         setChurches(data);
       } catch (error) {
         console.error("Failed to load churches", error);
-        toast.error(getAuthErrorMessage(error));
+        showErrorToast(error);
       } finally {
         setFetchingChurches(false);
       }
@@ -71,11 +73,20 @@ export default function ProfileCompletion() {
     }
   }, [user, authLoading]);
 
+  useEffect(() => {
+    if (tenantChurch && churches.length > 0 && !selectedChurch) {
+      const found = churches.find(c => c.slug === tenantChurch.slug || c.id === tenantChurch.id);
+      if (found) {
+        setSelectedChurch(found.id);
+      }
+    }
+  }, [tenantChurch, churches, selectedChurch]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     if (!selectedChurch) {
-      toast.error("Please select a church");
+      showErrorToast("Please select a church");
       return;
     }
 
@@ -88,11 +99,17 @@ export default function ProfileCompletion() {
         firstName,
         lastName,
         churchId: selectedChurch,
+        churchSlug: church?.slug,
         status: "pending",
         updatedAt: new Date().toISOString()
       });
 
-      // 2. Create membership request
+      // 2. Update Firebase Auth profile
+      await updateProfile(user, {
+        displayName: `${firstName} ${lastName}`
+      });
+
+      // 3. Create membership request
       await createMembershipRequest({
         userId: user.uid,
         userEmail: user.email,
@@ -103,11 +120,11 @@ export default function ProfileCompletion() {
         updatedAt: new Date().toISOString()
       });
 
-      toast.success("Profile updated and membership request sent!");
+      showSuccessToast("Profile updated and membership request sent!");
       navigate("/pending-approval");
     } catch (error) {
       console.error("Failed to complete profile", error);
-      toast.error(getAuthErrorMessage(error));
+      showErrorToast(error);
     } finally {
       setLoading(false);
     }
@@ -116,7 +133,7 @@ export default function ProfileCompletion() {
   if (fetchingChurches) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+        <Loader2 className="h-12 w-12 text-primary animate-spin" />
       </div>
     );
   }
@@ -129,8 +146,8 @@ export default function ProfileCompletion() {
         className="bg-white dark:bg-gray-900 rounded-3xl shadow-xl p-8 border border-gray-100 dark:border-gray-800"
       >
         <div className="text-center space-y-4 mb-8">
-          <div className="mx-auto h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center">
-            <Shield className="h-10 w-10 text-blue-600 dark:text-blue-400" />
+          <div className="mx-auto h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
+            <Shield className="h-10 w-10 text-primary dark:text-primary/70" />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Complete Your Profile</h2>
           <p className="text-gray-500 dark:text-gray-400">Tell us a bit more about yourself and select your church to get started.</p>
@@ -149,7 +166,7 @@ export default function ProfileCompletion() {
                     value={firstName}
                     onChange={e => setFirstName(e.target.value)}
                     placeholder="John"
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -163,7 +180,7 @@ export default function ProfileCompletion() {
                     value={lastName}
                     onChange={e => setLastName(e.target.value)}
                     placeholder="Doe"
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -177,7 +194,7 @@ export default function ProfileCompletion() {
                   required
                   value={selectedChurch}
                   onChange={e => setSelectedChurch(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white appearance-none"
+                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white appearance-none"
                 >
                   <option value="">Select a church...</option>
                   {churches.map(church => (
@@ -190,7 +207,7 @@ export default function ProfileCompletion() {
 
           <button 
             disabled={loading}
-            className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-blue-700 transition-all disabled:opacity-50 shadow-lg shadow-blue-100 dark:shadow-none"
+            className="w-full bg-primary text-white p-4 rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-primary/90 transition-all disabled:opacity-50 shadow-lg shadow-primary/10 dark:shadow-none"
           >
             <span>{loading ? "Processing..." : "Submit Request"}</span>
             {!loading && <ArrowRight className="h-5 w-5" />}

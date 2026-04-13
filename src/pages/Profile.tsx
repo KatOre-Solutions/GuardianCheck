@@ -1,15 +1,20 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { updateProfile } from "firebase/auth";
 import { getDocument, updateDocument, deactivateUser } from "../lib/firestore";
 import { auth, storage } from "../lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { User, Mail, Phone, MapPin, CreditCard, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { User, Mail, Phone, MapPin, CreditCard, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle, Loader2, ArrowLeft } from "lucide-react";
+import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
+import { useTenant } from "../contexts/TenantContext";
+import { ChurchLogo } from "../components/ChurchLogo";
 
 export default function Profile() {
-  const { user, darkMode: globalDarkMode } = useAuth();
+  const { user, userData, roles, darkMode: globalDarkMode } = useAuth();
+  const { church } = useTenant();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState<any>(null);
@@ -51,7 +56,7 @@ export default function Profile() {
         });
       }
     } catch (error) {
-      toast.error("Failed to load profile");
+      showErrorToast("Failed to load profile");
     } finally {
       setLoading(false);
     }
@@ -65,9 +70,9 @@ export default function Profile() {
         ...profile,
         updatedAt: new Date().toISOString()
       });
-      toast.success("Profile updated successfully!");
+      showSuccessToast("Profile updated successfully!");
     } catch (error) {
-      toast.error("Failed to update profile");
+      showErrorToast("Failed to update profile");
     } finally {
       setSaving(false);
     }
@@ -78,7 +83,7 @@ export default function Profile() {
     if (!file || !user) return;
 
     if (file.size > MAX_FILE_SIZE) {
-      toast.error("File size exceeds 5MB limit");
+      showErrorToast("File size exceeds 5MB limit");
       return;
     }
 
@@ -100,10 +105,10 @@ export default function Profile() {
       // Update Firebase Auth profile as well
       await updateProfile(user, { photoURL: downloadURL });
       
-      toast.success("Profile picture uploaded!");
+      showSuccessToast("Profile picture uploaded!");
     } catch (error) {
       console.error("Upload failed:", error);
-      toast.error("Failed to upload profile picture");
+      showErrorToast("Failed to upload profile picture");
     } finally {
       setUploading(false);
     }
@@ -124,36 +129,60 @@ export default function Profile() {
     try {
       await deactivateUser(user!.uid);
       await auth.signOut();
-      toast.success("Account deactivated successfully");
+      showSuccessToast("Account deactivated successfully");
     } catch (error) {
-      toast.error("Failed to deactivate account");
+      showErrorToast("Failed to deactivate account");
     } finally {
       setDeactivating(false);
       setShowDeactivateModal(false);
     }
   };
 
+  const handleBack = () => {
+    const slug = church?.slug || userData?.churchSlug;
+    if (slug) {
+      if (roles.includes("admin")) navigate(`/${slug}/admin`);
+      else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer`);
+      else if (roles.includes("parent")) navigate(`/${slug}/parent`);
+      else navigate(`/${slug}`);
+    } else {
+      navigate("/");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Account Settings</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage your personal information and preferences</p>
-        </div>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center space-x-4">
+          <button
+            onClick={handleBack}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+            title="Back to Dashboard"
+          >
+            <ArrowLeft className="h-6 w-6 text-gray-500 dark:text-gray-400" />
+          </button>
+          <div className="flex items-center space-x-3">
+            <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} className="h-10 w-10 object-contain" />
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Account Settings</h1>
+              <p className="text-gray-500 dark:text-gray-400">Manage your personal information and preferences</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center space-x-4 ml-12 md:ml-0">
           <button
             onClick={toggleDarkMode}
             className="p-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-all"
           >
-            {darkMode ? <Sun className="h-5 w-5 text-yellow-500" /> : <Moon className="h-5 w-5 text-blue-600" />}
+            {darkMode ? <Sun className="h-5 w-5 text-yellow-500" /> : <Moon className="h-5 w-5 text-primary" />}
           </button>
           <button
             onClick={() => auth.signOut()}
@@ -183,7 +212,7 @@ export default function Profile() {
                   </div>
                 )}
               </div>
-              <label className={`absolute bottom-0 right-0 h-10 w-10 bg-blue-600 text-white rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700 transition-all shadow-lg border-2 border-white dark:border-gray-800 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              <label className={`absolute bottom-0 right-0 h-10 w-10 bg-primary text-white rounded-full flex items-center justify-center cursor-pointer hover:bg-primary/90 transition-all shadow-lg border-2 border-white dark:border-gray-800 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 <Camera className="h-5 w-5" />
                 <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} />
               </label>
@@ -193,7 +222,7 @@ export default function Profile() {
                 {profile?.firstName} {profile?.lastName}
               </h3>
               <p className="text-gray-500 dark:text-gray-400 text-sm">{profile?.email}</p>
-              <div className="mt-2 inline-block px-3 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs font-bold rounded-full uppercase tracking-wider">
+              <div className="mt-2 inline-block px-3 py-1 bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 text-xs font-bold rounded-full uppercase tracking-wider">
                 {profile?.role}
               </div>
             </div>
@@ -229,7 +258,7 @@ export default function Profile() {
                     type="text"
                     value={profile?.firstName || ""}
                     onChange={e => setProfile({ ...profile, firstName: e.target.value })}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -242,7 +271,7 @@ export default function Profile() {
                     type="text"
                     value={profile?.lastName || ""}
                     onChange={e => setProfile({ ...profile, lastName: e.target.value })}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -254,7 +283,7 @@ export default function Profile() {
                     type="text"
                     value={profile?.idNumber || ""}
                     onChange={e => setProfile({ ...profile, idNumber: e.target.value })}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -266,7 +295,7 @@ export default function Profile() {
                     type="tel"
                     value={profile?.cellNumber || ""}
                     onChange={e => setProfile({ ...profile, cellNumber: e.target.value })}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -278,17 +307,17 @@ export default function Profile() {
                     type="text"
                     value={profile?.homeAddress || ""}
                     onChange={e => setProfile({ ...profile, homeAddress: e.target.value })}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Gender</label>
-                <select
-                  value={profile?.gender || ""}
-                  onChange={e => setProfile({ ...profile, gender: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                >
+                  <select
+                    value={profile?.gender || ""}
+                    onChange={e => setProfile({ ...profile, gender: e.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                  >
                   <option value="">Select Gender</option>
                   <option value="Male">Male</option>
                   <option value="Female">Female</option>
@@ -300,7 +329,7 @@ export default function Profile() {
             <div className="pt-6 border-t border-gray-100 dark:border-gray-700 flex justify-end">
               <button
                 disabled={saving}
-                className="flex items-center space-x-2 bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none disabled:opacity-50"
+                className="flex items-center space-x-2 bg-primary text-white px-8 py-3 rounded-xl font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none disabled:opacity-50"
               >
                 <Save className="h-5 w-5" />
                 <span>{saving ? "Saving..." : "Save Changes"}</span>

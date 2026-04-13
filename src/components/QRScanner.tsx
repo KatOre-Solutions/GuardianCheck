@@ -136,7 +136,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
         {!isCameraActive && !isInitializing && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm text-white p-6 text-center space-y-4">
             <div className="p-4 bg-white/10 rounded-full">
-              <Camera className="w-12 h-12 text-blue-400" />
+              <Camera className="w-12 h-12 text-primary" />
             </div>
             <div>
               <h3 className="text-lg font-bold">Camera Scanner</h3>
@@ -144,7 +144,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
             </div>
             <button
               onClick={startCamera}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all transform active:scale-95 flex items-center space-x-2"
+              className="px-6 py-3 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold transition-all transform active:scale-95 flex items-center space-x-2"
             >
               <Camera className="w-5 h-5" />
               <span>Start Camera</span>
@@ -154,7 +154,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
 
         {isInitializing && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm text-white space-y-4">
-            <RefreshCw className="w-10 h-10 text-blue-400 animate-spin" />
+            <RefreshCw className="w-10 h-10 text-primary animate-spin" />
             <p className="text-sm font-medium">Initializing camera...</p>
           </div>
         )}
@@ -180,9 +180,9 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="w-full py-4 px-6 bg-white border-2 border-dashed border-gray-200 hover:border-blue-400 hover:bg-blue-50 rounded-2xl transition-all flex items-center justify-center space-x-3 group"
+            className="w-full py-4 px-6 bg-white border-2 border-dashed border-gray-200 hover:border-primary/40 hover:bg-primary/5 rounded-2xl transition-all flex items-center justify-center space-x-3 group"
           >
-            <Upload className="w-6 h-6 text-gray-400 group-hover:text-blue-500" />
+            <Upload className="w-6 h-6 text-gray-400 group-hover:text-primary" />
             <div className="text-left">
               <p className="text-sm font-bold text-gray-900">Upload QR Image</p>
               <p className="text-xs text-gray-500">Drag & drop or browse from local storage</p>

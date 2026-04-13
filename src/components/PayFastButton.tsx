@@ -56,7 +56,7 @@ export default function PayFastButton({
 
       <button
         type="submit"
-        className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center space-x-2"
+        className="w-full bg-primary text-white py-4 rounded-xl font-bold hover:bg-primary/90 transition-all shadow-lg flex items-center justify-center space-x-2"
       >
         <CreditCard className="h-5 w-5" />
         <span>Pay with PayFast (R{amount.toFixed(2)})</span>

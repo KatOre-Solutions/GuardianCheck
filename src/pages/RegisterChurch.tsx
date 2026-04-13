@@ -5,8 +5,7 @@ import { auth } from "../lib/firebase";
 import { addDocument, setDocument } from "../lib/firestore";
 import { Shield, Building2, User, Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import { motion } from "motion/react";
-import { toast } from "sonner";
-import { getAuthErrorMessage } from "../lib/utils";
+import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
 export default function RegisterChurch() {
   const navigate = useNavigate();
@@ -27,11 +26,11 @@ export default function RegisterChurch() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.password !== formData.confirmPassword) {
-      toast.error("Passwords do not match");
+      showErrorToast("Passwords do not match");
       return;
     }
     if (formData.password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+      showErrorToast("Password must be at least 6 characters");
       return;
     }
 
@@ -41,37 +40,49 @@ export default function RegisterChurch() {
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
 
-      // 2. Create Church Document
-      const churchId = await addDocument("churches", {
-        name: formData.churchName,
-        adminEmail: formData.email,
-        status: "trialing",
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        plan: "growth" // Default to Growth plan for trial
+      // 2. Register Church via API
+      const token = await user.getIdToken();
+      const response = await fetch("/api/register-church", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          churchName: formData.churchName,
+          adminFirstName: formData.adminFirstName,
+          adminLastName: formData.adminLastName
+        })
       });
 
-      // 3. Create User Document
-      await setDocument("users", user.uid, {
-        uid: user.uid,
-        email: formData.email,
-        firstName: formData.adminFirstName,
-        lastName: formData.adminLastName,
-        role: "admin",
-        roles: ["admin", "volunteer"],
-        churchId: churchId,
-        status: "approved", // The creator of the church is auto-approved
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        // If registration fails, delete the auth user to prevent inconsistent state
+        try {
+          await user.delete();
+        } catch (deleteErr) {
+          console.error("Failed to delete user after failed registration", deleteErr);
+          // If delete fails (e.g. user already deleted or network issue), just sign out
+          await auth.signOut();
+        }
+        throw new Error(errorData.error || "Failed to register church");
+      }
 
-      toast.success("Church registered successfully! Welcome to GuardianCheck.");
-      navigate("/admin");
+      const { slug } = await response.json();
+
+      showSuccessToast("Church registered successfully! Welcome to GuardianCheck.");
+      
+      // Wait a moment for Firestore indexing/listeners to catch up
+      setTimeout(() => {
+        navigate(`/${slug}/admin`);
+      }, 1000);
     } catch (err: any) {
       console.error(err);
-      const msg = getAuthErrorMessage(err);
-      toast.error(msg);
+      if (err.code === "auth/email-already-in-use") {
+        showErrorToast("This email is already registered. Please log in instead.");
+      } else {
+        showErrorToast(err.message || "An error occurred during registration");
+      }
     } finally {
       setLoading(false);
     }
@@ -84,7 +95,7 @@ export default function RegisterChurch() {
         <div className="hidden lg:block space-y-8">
           <div className="space-y-4">
             <h2 className="text-4xl font-bold text-gray-900 dark:text-white leading-tight">
-              Start Your <span className="text-blue-600">14-Day Free Trial</span> Today
+              Start Your <span className="text-primary">14-Day Free Trial</span> Today
             </h2>
             <p className="text-lg text-gray-600 dark:text-gray-400">
               Join the community of churches prioritizing safety and simplicity. No credit card required to start.
@@ -100,19 +111,19 @@ export default function RegisterChurch() {
               "Detailed safety and attendance reports"
             ].map((text, i) => (
               <div key={i} className="flex items-center space-x-3">
-                <div className="h-6 w-6 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center shrink-0">
-                  <CheckCircle2 className="h-4 w-4 text-blue-600" />
+                <div className="h-6 w-6 rounded-full bg-primary/10 dark:bg-primary/20 flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="h-4 w-4 text-primary" />
                 </div>
                 <span className="text-gray-700 dark:text-gray-300 font-medium">{text}</span>
               </div>
             ))}
           </div>
 
-          <div className="p-6 bg-blue-50 dark:bg-blue-900/10 rounded-2xl border border-blue-100 dark:border-blue-800">
-            <p className="text-sm text-blue-800 dark:text-blue-200 italic">
+          <div className="p-6 bg-primary/10 dark:bg-primary/20 rounded-2xl border border-primary/20 dark:border-primary/30">
+            <p className="text-sm text-primary/80 dark:text-primary/70 italic">
               "GuardianCheck transformed our Sunday morning check-in. It's faster, safer, and our parents love it!"
             </p>
-            <p className="mt-2 text-xs font-bold text-blue-600 uppercase tracking-wider">— Pastor Sarah, Grace Community</p>
+            <p className="mt-2 text-xs font-bold text-primary uppercase tracking-wider">— Pastor Sarah, Grace Community</p>
           </div>
         </div>
 
@@ -123,8 +134,8 @@ export default function RegisterChurch() {
           className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-800"
         >
           <div className="text-center mb-8">
-            <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Shield className="h-8 w-8 text-blue-600" />
+            <div className="h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Shield className="h-8 w-8 text-primary" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Register Your Church</h1>
             <p className="text-gray-500 dark:text-gray-400">Create your admin account to get started</p>
@@ -142,7 +153,7 @@ export default function RegisterChurch() {
                     required
                     value={formData.churchName}
                     onChange={handleChange}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="e.g. Grace Community Church"
                   />
                 </div>
@@ -159,7 +170,7 @@ export default function RegisterChurch() {
                       required
                       value={formData.adminFirstName}
                       onChange={handleChange}
-                      className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                      className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       placeholder="John"
                     />
                   </div>
@@ -172,7 +183,7 @@ export default function RegisterChurch() {
                     required
                     value={formData.adminLastName}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="Doe"
                   />
                 </div>
@@ -188,7 +199,7 @@ export default function RegisterChurch() {
                     required
                     value={formData.email}
                     onChange={handleChange}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="john@example.com"
                   />
                 </div>
@@ -205,7 +216,7 @@ export default function RegisterChurch() {
                       required
                       value={formData.password}
                       onChange={handleChange}
-                      className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                      className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       placeholder="••••••••"
                     />
                   </div>
@@ -218,7 +229,7 @@ export default function RegisterChurch() {
                     required
                     value={formData.confirmPassword}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="••••••••"
                   />
                 </div>
@@ -228,7 +239,7 @@ export default function RegisterChurch() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center space-x-2 disabled:opacity-50"
+              className="w-full bg-primary text-white py-4 rounded-xl font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none flex items-center justify-center space-x-2 disabled:opacity-50"
             >
               {loading ? (
                 <>
@@ -245,7 +256,7 @@ export default function RegisterChurch() {
 
             <p className="text-center text-sm text-gray-500 dark:text-gray-400">
               Already have an account?{" "}
-              <Link to="/login" className="text-blue-600 font-bold hover:underline">
+              <Link to="/login" className="text-primary font-bold hover:underline">
                 Login here
               </Link>
             </p>

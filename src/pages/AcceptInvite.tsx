@@ -4,8 +4,7 @@ import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/
 import { auth } from "../lib/firebase";
 import { getInvitationByToken, setDocument, updateDocument } from "../lib/firestore";
 import { Shield, Lock, User, Mail, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
-import { toast } from "sonner";
-import { getAuthErrorMessage } from "../lib/utils";
+import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams();
@@ -50,11 +49,11 @@ export default function AcceptInvite() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
+      showErrorToast("Passwords do not match");
       return;
     }
     if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+      showErrorToast("Password must be at least 6 characters");
       return;
     }
 
@@ -76,6 +75,7 @@ export default function AcceptInvite() {
         role: invitation.role,
         roles: invitation.roles || [invitation.role],
         churchId: invitation.churchId,
+        churchSlug: invitation.churchSlug,
         status: "approved",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -88,12 +88,11 @@ export default function AcceptInvite() {
         acceptedBy: user.uid
       });
 
-      toast.success("Account created! Please verify your email.");
+      showSuccessToast("Account created! Please verify your email.");
       navigate("/login");
     } catch (err: any) {
       console.error(err);
-      const msg = getAuthErrorMessage(err);
-      toast.error(msg);
+      showErrorToast(err);
     } finally {
       setSubmitting(false);
     }
@@ -102,7 +101,7 @@ export default function AcceptInvite() {
   if (loading) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
-        <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+        <Loader2 className="h-12 w-12 text-primary animate-spin" />
         <p className="text-gray-500 font-medium">Validating invitation...</p>
       </div>
     );
@@ -132,8 +131,8 @@ export default function AcceptInvite() {
     <div className="max-w-md mx-auto mt-12">
       <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-800 space-y-8">
         <div className="text-center space-y-2">
-          <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Shield className="h-8 w-8 text-blue-600" />
+          <div className="h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Shield className="h-8 w-8 text-primary" />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Welcome!</h2>
           <p className="text-gray-500 dark:text-gray-400">Complete your profile to join the community</p>
@@ -141,17 +140,17 @@ export default function AcceptInvite() {
 
         <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl space-y-3">
           <div className="flex items-center space-x-3 text-sm">
-            <User className="h-4 w-4 text-blue-600" />
+            <User className="h-4 w-4 text-primary" />
             <span className="font-medium text-gray-700 dark:text-gray-300">
               {invitation.firstName} {invitation.lastName}
             </span>
           </div>
           <div className="flex items-center space-x-3 text-sm">
-            <Mail className="h-4 w-4 text-blue-600" />
+            <Mail className="h-4 w-4 text-primary" />
             <span className="font-medium text-gray-700 dark:text-gray-300">{invitation.email}</span>
           </div>
           <div className="flex items-center space-x-3 text-sm">
-            <CheckCircle2 className="h-4 w-4 text-blue-600" />
+            <CheckCircle2 className="h-4 w-4 text-primary" />
             <span className="font-medium text-gray-700 dark:text-gray-300 capitalize">Role: {invitation.role}</span>
           </div>
         </div>
@@ -167,7 +166,7 @@ export default function AcceptInvite() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   placeholder="••••••••"
                 />
               </div>
@@ -182,7 +181,7 @@ export default function AcceptInvite() {
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   placeholder="••••••••"
                 />
               </div>
@@ -192,7 +191,7 @@ export default function AcceptInvite() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center space-x-2 disabled:opacity-50"
+            className="w-full bg-primary text-white py-4 rounded-xl font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none flex items-center justify-center space-x-2 disabled:opacity-50"
           >
             {submitting ? (
               <>

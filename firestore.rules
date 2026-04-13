@@ -28,7 +28,22 @@ service cloud.firestore {
     // Fields: firstName, lastName, phone, relationship, childIds, qrToken, parentId, churchId, active, createdAt, updatedAt
     //
     // Collection: checkins
-    // Fields: childId, childName, roomId, roomName, checkInTime, checkOutTime, volunteerId, volunteerName, status, churchId, createdAt, updatedAt
+    // Fields: childId, childName, roomId, roomName, checkInTime, checkOutTime, volunteerId, volunteerName, status, churchId, eventId, serviceId, createdAt, updatedAt
+    //
+    // Collection: events
+    // Fields: name, date, churchId, createdAt, updatedAt
+    //
+    // Collection: services
+    // Fields: eventId, churchId, name, startTime, endTime, status, date, createdAt, updatedAt
+    //
+    // Collection: policy_acceptance
+    // Fields: lastAcceptedVersion, lastAcceptedAt, status
+    //
+    // Collection: policy_acceptance/{uid}/history
+    // Fields: version, acceptedAt, churchId, roleAtTime, legalContext, forensicData, acceptanceMethod
+    //
+    // Collection: church_policy_acceptance
+    // Fields: acceptedBy, acceptedAt, policyVersion
     //
     // ===============================================================
 
@@ -74,16 +89,76 @@ service cloud.firestore {
       return isApproved() && getUserData().churchId == churchId;
     }
 
+    function isTenant(churchId) {
+      return isAuthenticated() && (
+        isMasterAdmin() || 
+        (isApproved() && getUserData().churchId == churchId)
+      );
+    }
+
+    // --- Validation Helpers ---
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+
+
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'status']) &&
-             data.uid is string &&
-             data.email is string &&
-             data.status in ['incomplete_profile', 'pending', 'approved', 'rejected'];
+             data.keys().hasOnly(['uid', 'email', 'role', 'roles', 'firstName', 'lastName', 'photoUrl', 'phone', 'churchId', 'churchSlug', 'status', 'createdAt', 'updatedAt', 'darkMode']) &&
+             data.uid is string && data.uid.size() < 128 &&
+             isValidEmail(data.email) &&
+             data.status in ['incomplete_profile', 'pending', 'approved', 'rejected'] &&
+             (!('role' in data) || data.role in ['parent', 'volunteer', 'admin', 'master_admin']) &&
+             (!('firstName' in data) || (data.firstName is string && data.firstName.size() < 100)) &&
+             (!('lastName' in data) || (data.lastName is string && data.lastName.size() < 100));
+    }
+
+    function isValidCheckin(data) {
+      return data.keys().hasAll(['childId', 'childName', 'roomId', 'roomName', 'checkInTime', 'status', 'churchId', 'serviceId', 'createdAt', 'updatedAt']) &&
+             data.childId is string && data.childId.size() < 128 &&
+             data.childName is string && data.childName.size() < 200 &&
+             data.roomId is string && data.roomId.size() < 128 &&
+             data.roomName is string && data.roomName.size() < 100 &&
+             data.status in ['checked-in', 'checked-out'] &&
+             data.churchId is string && data.churchId.size() < 128;
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
+
+    function isValidPolicyAcceptance(data) {
+      return data.keys().hasAll(['lastAcceptedVersion', 'lastAcceptedAt', 'status']) &&
+             data.lastAcceptedVersion is string &&
+             data.lastAcceptedAt is string &&
+             data.status in ['compliant', 'outdated'];
+    }
+
+    function isValidPolicyHistory(data, uid) {
+      let user = get(/databases/$(database)/documents/users/$(uid)).data;
+      return data.keys().hasAll(['version', 'acceptedAt', 'churchId', 'roleAtTime', 'legalContext']) &&
+             data.version is string &&
+             data.acceptedAt == request.time && // Force server timestamp
+             data.churchId == user.churchId && // Prevent churchId spoofing
+             data.roleAtTime == user.role &&   // Capture authoritative role
+             data.legalContext is map &&
+             data.legalContext.keys().hasAll(['policyHash', 'agreementType']) &&
+             data.legalContext.agreementType in ['Operator_Agreement', 'Privacy_Notice'];
+    }
+
+    function isValidChurchPolicyAcceptance(data) {
+      return data.keys().hasAll(['acceptedBy', 'acceptedAt', 'policyVersion']) &&
+             data.acceptedBy == request.auth.uid &&
+             data.acceptedAt == request.time &&
+             data.policyVersion is string &&
+             (isAdmin() || isMasterAdmin());
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (
@@ -93,20 +168,53 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
       allow update: if isAuthenticated() && (
-        (request.auth.uid == userId && (
+        (request.auth.uid == userId && isValidUser(request.resource.data) && (
           // User can update their own profile if incomplete
           (getUserData().status == 'incomplete_profile' && request.resource.data.status == 'pending') ||
-          // User can update their own settings (like darkMode)
-          (isApproved() && request.resource.data.status == 'approved' && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role) && (!('churchId' in request.resource.data) || request.resource.data.churchId == resource.data.churchId))
+          // User can update their own settings (like darkMode) but NOT their role or churchId
+          (isApproved() && 
+           request.resource.data.status == resource.data.status && 
+           request.resource.data.role == resource.data.role && 
+           request.resource.data.churchId == resource.data.churchId)
         )) ||
         isMasterAdmin() ||
-        (isAdmin() && resource != null && (!('role' in resource.data) || resource.data.role != 'master_admin') && (!('churchId' in resource.data) || getUserData().churchId == resource.data.churchId) && (!('churchId' in request.resource.data) || request.resource.data.churchId == getUserData().churchId))
+        (isAdmin() && resource != null && 
+         isValidUser(request.resource.data) &&
+         // Admins can't touch master admins
+         (!('role' in resource.data) || resource.data.role != 'master_admin') && 
+         // Admins can't promote anyone to master admin
+         (!('role' in request.resource.data) || request.resource.data.role != 'master_admin') &&
+         // Admins can only manage users in their own church
+         resource.data.churchId == getUserData().churchId && 
+         request.resource.data.churchId == getUserData().churchId)
       );
       allow delete: if isMasterAdmin();
     }
 
+    match /policy_acceptance/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isMasterAdmin());
+      // Summary can be updated by the user when they accept a new version
+      allow write: if isAuthenticated() && request.auth.uid == userId && isValidPolicyAcceptance(request.resource.data);
+      
+      match /history/{versionId} {
+        allow read: if isAuthenticated() && (request.auth.uid == userId || isMasterAdmin());
+        // History is immutable: create only, no update/delete
+        allow create: if isAuthenticated() && request.auth.uid == userId && isValidPolicyHistory(request.resource.data, userId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /church_policy_acceptance/{churchId} {
+      allow read: if isAuthenticated() && (isChurchMember(churchId) || isMasterAdmin());
+      // Only admins can accept on behalf of the church
+      allow create: if isAuthenticated() && (isAdmin() || isMasterAdmin()) && 
+                    getUserData().churchId == churchId &&
+                    isValidChurchPolicyAcceptance(request.resource.data);
+      allow update, delete: if false; // Immutable
+    }
+
     match /churches/{churchId} {
-      allow read: if isAuthenticated(); // Public info only (name, address)
+      allow read: if isAuthenticated() || (request.query.limit == 1); // Allow slug lookup for routing
       allow create: if isAuthenticated() && (
         isMasterAdmin() || 
         (request.resource.data.adminEmail == request.auth.token.email && request.resource.data.status == 'trialing')
@@ -117,13 +225,21 @@ service cloud.firestore {
     
     match /church_security/{churchId} {
       // Sensitive security data (PIN hashes, etc.)
-      allow read: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId) || (isVolunteer() && getUserData().churchId == churchId);
+      // Restricted: Volunteers no longer have read access. Verification moved to server.
+      allow read: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
       allow write: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
     }
 
     match /audit_logs/{logId} {
+      // Audit logs are immutable and only readable by admins
       allow read: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow create: if isAuthenticated() && (isMasterAdmin() || (isApproved() && request.resource.data.churchId == getUserData().churchId));
+      // Creation allowed for church members, server, or during signup
+      allow create: if isAuthenticated() && (
+        isMasterAdmin() || 
+        (isApproved() && (!('churchId' in request.resource.data) || request.resource.data.churchId == getUserData().churchId)) ||
+        (request.resource.data.source == 'server') ||
+        (request.resource.data.action in ['email_signup', 'google_signup', 'user_signup_auto_create'])
+      );
       allow update, delete: if false;
     }
 
@@ -139,20 +255,48 @@ service cloud.firestore {
     }
 
     match /children/{childId} {
+      // Volunteers can read children in their church for check-in
+      // Note: Sensitive medical notes are moved to child_medical collection
       allow read: if isMasterAdmin() || (
         isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
         (isVolunteer() || isAdmin() || (isParent() && resource.data.parentId == request.auth.uid))
       );
       allow create: if isMasterAdmin() || (
-        isApproved() && 
-        request.resource.data.churchId == getUserData().churchId && 
-        (isAdmin() || (isParent() && request.resource.data.parentId == request.auth.uid))
+        isApproved() && request.resource.data.churchId == getUserData().churchId && 
+        (isAdmin() || (isParent() && request.resource.data.parentId == request.auth.uid)) &&
+        request.resource.data.firstName.size() < 100 &&
+        request.resource.data.lastName.size() < 100
       );
       allow update: if isMasterAdmin() || (
         isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
-        (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid))
+        (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid)) &&
+        request.resource.data.churchId == resource.data.churchId &&
+        request.resource.data.parentId == resource.data.parentId
       );
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+    }
+
+    match /child_medical/{childId} {
+      // Sensitive medical details restricted to admins and parents
+      // Supports list operations if filtered by churchId (for admins) or parentId (for parents)
+      allow read: if isMasterAdmin() || (
+        isApproved() && (
+          (isAdmin() && (
+            (resource != null && 'churchId' in resource.data && resource.data.churchId == getUserData().churchId) ||
+            get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId
+          )) ||
+          (isParent() && (
+            (resource != null && 'parentId' in resource.data && resource.data.parentId == request.auth.uid) ||
+            get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid
+          ))
+        )
+      );
+      allow write: if isMasterAdmin() || (
+        isApproved() && (
+          (isAdmin() && get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId) ||
+          (isParent() && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
+        )
+      );
     }
 
     match /guardians/{guardianId} {
@@ -180,8 +324,48 @@ service cloud.firestore {
     }
 
     match /checkins/{checkinId} {
+      // Fine-grained access: Volunteers can only read active check-ins
+      allow read: if isMasterAdmin() || (
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId &&
+        (isAdmin() || (isVolunteer() && resource.data.status == 'checked-in'))
+      );
+      
+      function isValidCheckinStateTransition() {
+        return (resource.data.status == 'checked-in' && request.resource.data.status == 'checked-out');
+      }
+
+      allow create: if isMasterAdmin() || (
+        isApproved() && 
+        request.resource.data.churchId == getUserData().churchId && 
+        (isVolunteer() || isAdmin()) &&
+        isValidCheckin(request.resource.data) &&
+        request.resource.data.status == 'checked-in'
+      );
+      
+      allow update: if isMasterAdmin() || (
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        (isAdmin() || isVolunteer()) &&
+        isValidCheckin(request.resource.data) &&
+        // Prevent changing churchId or childId after creation
+        request.resource.data.churchId == resource.data.churchId &&
+        request.resource.data.childId == resource.data.childId &&
+        // Enforce state transition: checked-in -> checked-out
+        isValidCheckinStateTransition()
+      );
+      
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+    }
+
+    match /events/{eventId} {
       allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow create: if isMasterAdmin() || (isApproved() && request.resource.data.churchId == getUserData().churchId && (isVolunteer() || isAdmin()));
+      allow create: if isMasterAdmin() || (isAdmin() && request.resource.data.churchId == getUserData().churchId);
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+    }
+
+    match /services/{serviceId} {
+      allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow create: if isMasterAdmin() || (isAdmin() && request.resource.data.churchId == getUserData().churchId);
       allow update: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId && (isVolunteer() || isAdmin()));
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
@@ -196,7 +380,9 @@ service cloud.firestore {
         (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId)
       );
       allow create: if isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId);
-      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow update: if isMasterAdmin() || 
+                    (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId) ||
+                    (isAuthenticated() && request.auth.token.email == resource.data.email && request.resource.data.status == 'accepted');
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
 

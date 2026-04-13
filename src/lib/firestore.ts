@@ -10,11 +10,16 @@ import {
   query, 
   where, 
   onSnapshot,
+  runTransaction,
   FirestoreError,
   DocumentData,
-  QueryConstraint
+  QueryConstraint,
+  limit,
+  orderBy,
+  startAfter
 } from "firebase/firestore";
 import { db, auth } from "./firebase";
+import { getHumanReadableError, showErrorToast } from "./error-handler";
 
 export enum OperationType {
   CREATE = 'create',
@@ -45,6 +50,8 @@ export interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const humanError = getHumanReadableError(error);
+  
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -63,8 +70,27 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   }
+  
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  
+  // Log critical errors to audit logs for monitoring
+  if (operationType === OperationType.WRITE || operationType === OperationType.CREATE || operationType === OperationType.UPDATE) {
+    logAudit({
+      action: `FAILED_${operationType.toUpperCase()}`,
+      category: "system_error",
+      details: errInfo,
+      churchId: (auth.currentUser as any)?.churchId, // Attempt to get churchId if available
+      userId: auth.currentUser?.uid
+    }).catch(() => {}); // Ignore audit logging failures to prevent infinite loops
+  }
+  
+  // We throw the human readable version or the full info for the UI to catch
+  throw new Error(JSON.stringify({
+    ...errInfo,
+    humanTitle: humanError.title,
+    humanMessage: humanError.message,
+    humanActionable: humanError.actionable
+  }));
 }
 
 export async function getDocument(path: string, id: string) {
@@ -126,12 +152,35 @@ export async function updateDocument(path: string, id: string, data: DocumentDat
   }
 }
 
-export async function removeDocument(path: string, id: string) {
+export async function removeDocument(path: string, id: string, softDelete: boolean = true) {
   try {
     const docRef = doc(db, path, id);
-    await deleteDoc(docRef);
+    const softDeleteCollections = ["rooms", "events", "services", "children"];
+    
+    if (softDelete && softDeleteCollections.includes(path)) {
+      await updateDoc(docRef, {
+        deleted: true,
+        deletedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    } else {
+      await deleteDoc(docRef);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
+  }
+}
+
+export async function restoreDocument(path: string, id: string) {
+  try {
+    const docRef = doc(db, path, id);
+    await updateDoc(docRef, {
+      deleted: false,
+      deletedAt: null,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${path}/${id}`);
   }
 }
 
@@ -163,7 +212,7 @@ export async function getUserByEmail(email: string) {
 export async function getInvitationByToken(token: string) {
   try {
     const colRef = collection(db, "invitations");
-    const q = query(colRef, where("token", "==", token), where("status", "==", "pending"));
+    const q = query(colRef, where("token", "==", token), where("status", "==", "pending"), limit(1));
     const querySnapshot = await getDocs(q);
     if (querySnapshot.empty) return null;
     const doc = querySnapshot.docs[0];
@@ -239,18 +288,144 @@ export async function approveMembershipRequest(requestId: string, userId: string
 
 export async function logAudit(data: {
   action: string;
-  category: "security" | "checkin" | "checkout" | "admin";
+  category: "security" | "checkin" | "checkout" | "admin" | "system_error";
   details: any;
-  churchId: string;
-  userId: string;
+  churchId?: string;
+  userId?: string;
 }) {
   try {
+    // Filter out undefined values to prevent Firestore errors
+    const cleanData = Object.entries(data).reduce((acc, [key, value]) => {
+      if (value !== undefined) acc[key] = value;
+      return acc;
+    }, {} as any);
+
     await addDocument("audit_logs", {
-      ...data,
+      ...cleanData,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error("Failed to log audit event:", error);
   }
+}
+
+/**
+ * Executes a Firestore transaction with standardized error handling.
+ */
+export async function executeTransaction<T>(
+  updateFunction: (transaction: any) => Promise<T>
+): Promise<T> {
+  try {
+    return await runTransaction(db, updateFunction);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, "transaction");
+    throw error;
+  }
+}
+
+// Event & Service Management
+export async function getEvents(churchId: string) {
+  return getCollection("events", [where("churchId", "==", churchId)]);
+}
+
+export async function getServices(churchId: string, eventId?: string) {
+  const constraints = [where("churchId", "==", churchId)];
+  if (eventId) {
+    constraints.push(where("eventId", "==", eventId));
+  }
+  return getCollection("services", constraints);
+}
+
+export async function getActiveService(churchId: string) {
+  const services = await getCollection("services", [
+    where("churchId", "==", churchId),
+    where("status", "==", "active")
+  ]);
+  return services.length > 0 ? services[0] : null;
+}
+
+export async function activateService(churchId: string, serviceId: string) {
+  try {
+    // 1. Deactivate any currently active service
+    const activeServices = await getCollection("services", [
+      where("churchId", "==", churchId),
+      where("status", "==", "active")
+    ]);
+    
+    for (const service of activeServices) {
+      if (service.id !== serviceId) {
+        await updateDocument("services", service.id, { status: "closed" });
+      }
+    }
+
+    // 2. Activate the new service
+    await updateDocument("services", serviceId, { status: "active" });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `services/${serviceId}`);
+  }
+}
+
+export async function closeService(serviceId: string) {
+  try {
+    await updateDocument("services", serviceId, { status: "closed" });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `services/${serviceId}`);
+  }
+}
+
+export async function ensureSundayEvents(churchId: string) {
+  try {
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 = Sunday
+    const daysUntilSunday = (7 - dayOfWeek) % 7;
+    const nextSunday = new Date(today);
+    nextSunday.setDate(today.getDate() + daysUntilSunday);
+    nextSunday.setHours(0, 0, 0, 0);
+    
+    const dateStr = nextSunday.toISOString().split('T')[0];
+    
+    // Check if event already exists
+    const existingEvents = await getCollection("events", [
+      where("churchId", "==", churchId),
+      where("date", "==", dateStr)
+    ]);
+    
+    if (existingEvents.length === 0) {
+      const eventId = await addDocument("events", {
+        churchId,
+        name: `Sunday Service - ${formatDate(nextSunday)}`,
+        date: dateStr
+      });
+      
+      if (eventId) {
+        // Create default services
+        await addDocument("services", {
+          eventId,
+          churchId,
+          name: "09:00 Service",
+          startTime: "09:00",
+          endTime: "10:30",
+          status: "upcoming",
+          date: dateStr
+        });
+        
+        await addDocument("services", {
+          eventId,
+          churchId,
+          name: "11:00 Service",
+          startTime: "11:00",
+          endTime: "12:30",
+          status: "upcoming",
+          date: dateStr
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Failed to ensure Sunday events:", error);
+  }
+}
+
+function formatDate(date: Date) {
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 

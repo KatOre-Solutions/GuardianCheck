@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument, setDocument } from "../lib/firestore";
+import { auth } from "../lib/firebase";
+import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument, setDocument, restoreDocument, logAudit } from "../lib/firestore";
 import { where } from "firebase/firestore";
 import { 
   LayoutDashboard, 
@@ -27,7 +28,11 @@ import {
   Lock,
   CreditCard,
   Zap,
-  AlertTriangle
+  AlertTriangle,
+  Download,
+  History,
+  RotateCcw,
+  FileText
 } from "lucide-react";
 import PayFastButton from "../components/PayFastButton";
 import { hashPin, generatePin, obfuscatePin, deobfuscatePin } from "../lib/security";
@@ -44,12 +49,26 @@ import {
   AreaChart,
   Area
 } from "recharts";
-import { format, subDays, startOfDay, endOfDay } from "date-fns";
-import { toast } from "sonner";
+import { format, subDays, startOfDay, endOfDay, isSameDay } from "date-fns";
+import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
+import { useActiveService } from "../hooks/useActiveService";
+import SetupWizard from "../components/SetupWizard";
+import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+
+const HelpTooltip = ({ text }: { text: string }) => (
+  <div className="group relative inline-block ml-1">
+    <AlertCircle className="h-3.5 w-3.5 text-gray-400 cursor-help hover:text-primary transition-colors" />
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded-lg shadow-xl z-50 text-center leading-tight">
+      {text}
+      <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-gray-900" />
+    </div>
+  </div>
+);
 
 export default function AdminDashboard() {
   const { user, role, userData } = useAuth();
+  const { activeService, loading: serviceLoading } = useActiveService();
   const [searchParams] = useSearchParams();
   const [rooms, setRooms] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -57,8 +76,10 @@ export default function AdminDashboard() {
   const [children, setChildren] = useState<any[]>([]);
   const [guardians, setGuardians] = useState<any[]>([]);
   const [membershipRequests, setMembershipRequests] = useState<any[]>([]);
+  const [events, setEvents] = useState<any[]>([]);
+  const [services, setServices] = useState<any[]>([]);
   const [showRoomModal, setShowRoomModal] = useState(false);
-  const [newRoom, setNewRoom] = useState({ name: "", capacity: "", minAge: "", maxAge: "" });
+  const [newRoom, setNewRoom] = useState({ name: "", capacity: "20", minAge: "0", maxAge: "12" });
   const [loading, setLoading] = useState(false);
   const [reportRange, setReportRange] = useState({ start: format(subDays(new Date(), 30), "yyyy-MM-dd"), end: format(new Date(), "yyyy-MM-dd") });
   const [searchTerm, setSearchTerm] = useState("");
@@ -74,18 +95,20 @@ export default function AdminDashboard() {
   const [churchSecurity, setChurchSecurity] = useState<any>(null);
   const [showPin, setShowPin] = useState(false);
   const [regeneratingPin, setRegeneratingPin] = useState(false);
+  const [selectedHistoricalEvent, setSelectedHistoricalEvent] = useState<string>("");
+  const [selectedHistoricalService, setSelectedHistoricalService] = useState<string>("");
+  const [analyticsTimeRange, setAnalyticsTimeRange] = useState<number>(30); // days
+  const [showDeletedItems, setShowDeletedItems] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [triggeringEmergency, setTriggeringEmergency] = useState(false);
 
   useEffect(() => {
     const paymentStatus = searchParams.get("payment");
     if (paymentStatus === "success") {
-      toast.success("Payment successful! Your subscription is being processed.", {
-        description: "It may take a few minutes for your status to update.",
-        duration: 6000
-      });
+      showSuccessToast("Payment successful!", "Your subscription is being processed. It may take a few minutes for your status to update.");
     } else if (paymentStatus === "cancel") {
-      toast.error("Payment cancelled.", {
-        description: "Your subscription was not updated."
-      });
+      showErrorToast("Payment cancelled.");
     }
   }, [searchParams]);
 
@@ -110,6 +133,8 @@ export default function AdminDashboard() {
       const unsubGuardians = subscribeToCollection("guardians", constraints, setGuardians);
       const unsubInvitations = subscribeToCollection("invitations", constraints, setInvitations);
       const unsubRequests = subscribeToCollection("membershipRequests", constraints, setMembershipRequests);
+      const unsubEvents = subscribeToCollection("events", constraints, setEvents);
+      const unsubServices = subscribeToCollection("services", constraints, setServices);
 
       return () => {
         unsubRooms();
@@ -119,6 +144,8 @@ export default function AdminDashboard() {
         unsubGuardians();
         unsubInvitations();
         unsubRequests();
+        unsubEvents();
+        unsubServices();
       };
     }
   }, [role, userData?.churchId]);
@@ -135,15 +162,16 @@ export default function AdminDashboard() {
       await updateDocument("membershipRequests", request.id, { status: "approved", updatedAt: new Date().toISOString() });
       await updateDocument("users", request.userId, { 
         churchId: userData.churchId, 
+        churchSlug: userData.churchSlug,
         role, 
         roles,
         status: "approved",
         updatedAt: new Date().toISOString()
       });
-      toast.success(`Approved ${request.userName} as ${role}`);
+      showSuccessToast("Request Approved", `Approved ${request.userName} as ${role}`);
     } catch (error) {
       console.error("Approve Request Error:", error);
-      toast.error("Failed to approve request");
+      showErrorToast(error);
     }
   };
 
@@ -151,10 +179,10 @@ export default function AdminDashboard() {
     try {
       await updateDocument("membershipRequests", request.id, { status: "rejected", updatedAt: new Date().toISOString() });
       await updateDocument("users", request.userId, { status: "rejected", updatedAt: new Date().toISOString() });
-      toast.success(`Rejected ${request.userName}`);
+      showSuccessToast("Request Rejected", `Rejected ${request.userName}`);
     } catch (error) {
       console.error("Reject Request Error:", error);
-      toast.error("Failed to reject request");
+      showErrorToast(error);
     }
   };
 
@@ -171,11 +199,12 @@ export default function AdminDashboard() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
-      toast.success("Room created successfully!");
+      showSuccessToast("Room Created", "The room has been added successfully.");
       setShowRoomModal(false);
-      setNewRoom({ name: "", capacity: "", minAge: "", maxAge: "" });
+      setNewRoom({ name: "", capacity: "20", minAge: "0", maxAge: "12" });
     } catch (err) {
       console.error(err);
+      showErrorToast(err);
     } finally {
       setLoading(false);
     }
@@ -183,50 +212,48 @@ export default function AdminDashboard() {
 
   const [invitations, setInvitations] = useState<any[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
-  const [newUser, setNewUser] = useState({ firstName: "", lastName: "", email: "", role: "parent", gender: "", cellNumber: "" });
+  const [newUser, setNewUser] = useState({ firstName: "", lastName: "", email: "", role: "volunteer", gender: "Other", cellNumber: "" });
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userData?.churchId) {
-      toast.error("Church ID missing. Please contact support.");
+      showErrorToast("Church ID missing. Please contact support.");
       return;
     }
     setLoading(true);
     try {
-      const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch("/api/invite-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          email: newUser.email,
+          firstName: newUser.firstName,
+          lastName: newUser.lastName,
+          role: newUser.role
+        })
+      });
 
-      const roles = [newUser.role];
-      if (newUser.role === "admin") roles.push("volunteer");
-      if (newUser.role === "master_admin") {
-        if (!roles.includes("admin")) roles.push("admin");
-        if (!roles.includes("volunteer")) roles.push("volunteer");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to send invitation");
       }
 
-      await addDocument("invitations", {
-        email: newUser.email.toLowerCase().trim(),
-        firstName: newUser.firstName,
-        lastName: newUser.lastName,
-        role: newUser.role,
-        roles,
-        churchId: userData.churchId,
-        status: "pending",
-        token,
-        expiresAt: expiresAt.toISOString(),
-        invitedBy: user?.uid
-      });
+      const result = await response.json();
       
-      const inviteLink = `${window.location.origin}/accept-invite?token=${token}`;
-      console.log("Invitation Link:", inviteLink);
+      if (result.emailError) {
+        showSuccessToast("Invitation created!", `Email failed to send, but you can share this link: ${result.inviteLink}`);
+      } else {
+        showSuccessToast("Invitation sent!", `An email has been sent to ${newUser.email}`);
+      }
       
-      toast.success(`Invitation created! Link: ${inviteLink}`, {
-        duration: 10000,
-      });
       setShowUserModal(false);
-      setNewUser({ firstName: "", lastName: "", email: "", role: "parent", gender: "", cellNumber: "" });
-    } catch (err) {
-      toast.error("Failed to create invitation");
+      setNewUser({ firstName: "", lastName: "", email: "", role: "volunteer", gender: "Other", cellNumber: "" });
+    } catch (err: any) {
+      showErrorToast(err.message || "Failed to create invitation");
       console.error(err);
     } finally {
       setLoading(false);
@@ -236,9 +263,9 @@ export default function AdminDashboard() {
   const handleToggleDeactivation = async (userId: string, currentStatus: boolean) => {
     try {
       await updateDocument("users", userId, { deactivated: !currentStatus });
-      toast.success(currentStatus ? "User activated!" : "User deactivated!");
+      showSuccessToast(currentStatus ? "User activated!" : "User deactivated!");
     } catch (err) {
-      toast.error("Failed to update status");
+      showErrorToast("Failed to update status");
     }
   };
 
@@ -252,12 +279,12 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       await removeDocument("rooms", roomToDelete.id);
-      toast.success("Room deleted successfully!");
+      showSuccessToast("Room deleted successfully!");
       setShowDeleteRoomModal(false);
       setRoomToDelete(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to delete room");
+      showErrorToast("Failed to delete room");
     } finally {
       setLoading(false);
     }
@@ -276,12 +303,12 @@ export default function AdminDashboard() {
         maxAge: Number(editingRoom.maxAge),
         updatedAt: new Date().toISOString()
       });
-      toast.success("Room updated successfully!");
+      showSuccessToast("Room updated successfully!");
       setShowEditRoomModal(false);
       setEditingRoom(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update room");
+      showErrorToast("Failed to update room");
     } finally {
       setLoading(false);
     }
@@ -297,12 +324,12 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       await removeDocument("users", userToDelete.id);
-      toast.success("User deleted successfully!");
+      showSuccessToast("User deleted successfully!");
       setShowDeleteUserModal(false);
       setUserToDelete(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to delete user");
+      showErrorToast("Failed to delete user");
     } finally {
       setLoading(false);
     }
@@ -326,12 +353,12 @@ export default function AdminDashboard() {
         roles,
         updatedAt: new Date().toISOString()
       });
-      toast.success("User updated successfully!");
+      showSuccessToast("User updated successfully!");
       setShowEditUserModal(false);
       setEditingUser(null);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update user");
+      showErrorToast("Failed to update user");
     } finally {
       setLoading(false);
     }
@@ -358,11 +385,11 @@ export default function AdminDashboard() {
         pinLastUpdatedAt: null
       });
       
-      toast.success("New Admin Override PIN generated!");
+      showSuccessToast("New Admin Override PIN generated!");
       setShowPin(true); // Show it once generated
     } catch (err) {
       console.error(err);
-      toast.error("Failed to generate new PIN");
+      showErrorToast("Failed to generate new PIN");
     } finally {
       setRegeneratingPin(false);
     }
@@ -378,14 +405,16 @@ export default function AdminDashboard() {
     });
 
     if (filteredCheckins.length === 0) {
-      toast.error("No data found for the selected range");
+      showErrorToast("No data found for the selected range");
       return;
     }
 
-    const headers = ["Child Name", "Room", "Check-In Time", "Check-Out Time", "Status", "Guardian", "Volunteer"];
+    const headers = ["Child Name", "Room", "Event", "Service", "Check-In Time", "Check-Out Time", "Status", "Guardian", "Volunteer"];
     const rows = filteredCheckins.map(c => [
       c.childName,
       c.roomName,
+      c.eventName || "N/A",
+      c.serviceName || "N/A",
       c.checkInTime ? format(new Date(c.checkInTime), "yyyy-MM-dd HH:mm") : "",
       c.checkOutTime ? format(new Date(c.checkOutTime), "yyyy-MM-dd HH:mm") : "",
       c.status,
@@ -407,10 +436,152 @@ export default function AdminDashboard() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success("Report generated successfully!");
+    showSuccessToast("Report generated successfully!");
+  };
+
+  const handleTriggerEmergency = async () => {
+    if (!user || !userData?.churchId) return;
+    
+    setTriggeringEmergency(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch("/api/emergency-alert", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          churchId: userData.churchId,
+          adminId: user.uid
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to trigger emergency alert");
+      }
+
+      showSuccessToast("Emergency alerts triggered successfully", "All parents of checked-in children have been notified.");
+      setShowEmergencyModal(false);
+    } catch (err: any) {
+      showErrorToast(err.message);
+    } finally {
+      setTriggeringEmergency(false);
+    }
+  };
+
+  const exportAllData = async () => {
+    if (!userData?.churchId) return;
+    setExporting(true);
+    try {
+      const collections = [
+        { name: "children", data: children },
+        { name: "guardians", data: guardians },
+        { name: "rooms", data: rooms },
+        { name: "events", data: events },
+        { name: "services", data: services },
+        { name: "checkins", data: checkins },
+        { name: "users", data: users }
+      ];
+
+      for (const col of collections) {
+        if (col.data.length === 0) continue;
+        
+        const headers = Object.keys(col.data[0]).filter(k => typeof col.data[0][k] !== 'object');
+        const rows = col.data.map(item => headers.map(h => String(item[h] || "").replace(/,/g, ";")));
+        
+        const csvContent = [
+          headers.join(","),
+          ...rows.map(r => r.join(","))
+        ].join("\n");
+
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `full_backup_${col.name}_${format(new Date(), "yyyyMMdd")}.csv`);
+        link.style.visibility = "hidden";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      await logAudit({
+        action: "full_data_export",
+        category: "admin",
+        details: { timestamp: new Date().toISOString() },
+        churchId: userData.churchId,
+        userId: user?.uid || ""
+      });
+
+      showSuccessToast("All data exported successfully!");
+    } catch (err) {
+      console.error(err);
+      showErrorToast("Failed to export data");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleRestore = async (path: string, id: string, name: string) => {
+    try {
+      await restoreDocument(path, id);
+      showSuccessToast(`${name} restored successfully!`);
+      
+      await logAudit({
+        action: "restore_document",
+        category: "admin",
+        details: { path, id, name },
+        churchId: userData.churchId,
+        userId: user?.uid || ""
+      });
+    } catch (err) {
+      console.error(err);
+      showErrorToast("Failed to restore item");
+    }
   };
 
   // Analytics Data
+  const last30Days = Array.from({ length: analyticsTimeRange }).map((_, i) => {
+    const date = subDays(new Date(), i);
+    const dayStr = format(date, "MMM d");
+    const count = checkins?.filter(c => {
+      const checkinDate = new Date(c.checkInTime);
+      return isSameDay(checkinDate, date);
+    })?.length || 0;
+    return { name: dayStr, count };
+  }).reverse();
+
+  const serviceComparison = services.filter(s => !s.deleted).map(service => {
+    const count = checkins.filter(c => c.serviceId === service.id).length;
+    return { name: service.name, count };
+  }).filter(s => s.count > 0);
+
+  const roomUtilization = rooms.filter(r => !r.deleted).map(room => {
+    const currentCount = checkins.filter(c => c.roomId === room.id && c.status === "checked-in").length;
+    const capacity = parseInt(room.capacity) || 1;
+    const percentage = Math.min(Math.round((currentCount / capacity) * 100), 100);
+    return { name: room.name, value: percentage, count: currentCount, capacity };
+  });
+
+  const historicalCheckins = checkins.filter(c => {
+    if (selectedHistoricalEvent && c.eventId !== selectedHistoricalEvent) return false;
+    if (selectedHistoricalService && c.serviceId !== selectedHistoricalService) return false;
+    return true;
+  });
+
+  const volunteerActivity = users.filter(u => u.roles?.includes("volunteer") || u.role === "volunteer").map(v => {
+    const checkinsHandled = checkins.filter(c => c.volunteerId === v.id).length;
+    const checkoutsHandled = checkins.filter(c => c.checkOutVolunteerId === v.id).length;
+    return {
+      name: `${v.firstName} ${v.lastName}`,
+      totalActions: checkinsHandled + checkoutsHandled,
+      checkins: checkinsHandled,
+      checkouts: checkoutsHandled
+    };
+  }).sort((a, b) => b.totalActions - a.totalActions);
+
   const last7Days = Array.from({ length: 7 }).map((_, i) => {
     const date = subDays(new Date(), i);
     const dayStr = format(date, "MMM d");
@@ -421,18 +592,88 @@ export default function AdminDashboard() {
     return { name: dayStr, count };
   }).reverse();
 
+  const recentActivity = [...checkins]
+    .sort((a, b) => new Date(b.updatedAt || b.checkInTime).getTime() - new Date(a.updatedAt || a.checkInTime).getTime())
+    .slice(0, 5);
+
   const roomAttendance = rooms?.map(room => ({
     name: room.name,
-    count: checkins?.filter(c => c.roomId === room.id && c.status === "checked-in")?.length || 0,
+    count: checkins?.filter(c => 
+      c.roomId === room.id && 
+      c.status === "checked-in" &&
+      (!activeService || c.serviceId === activeService.id)
+    )?.length || 0,
     capacity: room.capacity
   })) || [];
+
+  const Building2 = (props: any) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
+  );
 
   if (role !== "admin") {
     return <div className="text-center py-12">Access denied. Admin permissions required.</div>;
   }
 
+  if (serviceLoading && !churchData) {
+    return <DashboardSkeleton />;
+  }
+
   return (
     <div className="space-y-12 pb-24">
+      {/* Setup Wizard for new churches */}
+      {!churchData?.setupCompleted && userData?.churchId && (
+        <SetupWizard 
+          churchId={userData.churchId} 
+          onComplete={() => {
+            // The subscription to churchData will automatically update the UI
+            showSuccessToast("Setup complete!");
+          }} 
+        />
+      )}
+
+      {/* Setup Progress Tracker */}
+      {churchData?.setupCompleted && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[
+            { label: "Rooms", count: rooms.filter(r => !r.deleted).length, icon: Building2, link: "#rooms-section", min: 1 },
+            { label: "Services", count: services.filter(s => !s.deleted).length, icon: Clock, link: "#services-section", min: 1 },
+            { label: "Children", count: children.filter(c => !c.deleted).length, icon: Users, link: "#children-section", min: 1 },
+            { label: "Volunteers", count: users.filter(u => u.role === "volunteer" || u.roles?.includes("volunteer")).length, icon: UserPlus, link: "#users-section", min: 1 }
+          ].some(item => item.count < item.min) && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="col-span-full bg-white dark:bg-gray-900 p-6 rounded-3xl border border-primary/20 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                  <h3 className="font-bold text-gray-900 dark:text-white">Getting Started Checklist</h3>
+                </div>
+                <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded-full uppercase">Action Required</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: "Create Rooms", count: rooms.filter(r => !r.deleted).length, icon: Building2, min: 1, desc: "Define your classrooms" },
+                  { label: "Set Services", count: services.filter(s => !s.deleted).length, icon: Clock, min: 1, desc: "Schedule your meeting times" },
+                  { label: "Add Children", count: children.filter(c => !c.deleted).length, icon: Users, min: 1, desc: "Register your first family" },
+                  { label: "Invite Team", count: users.filter(u => u.role === "volunteer" || u.roles?.includes("volunteer")).length, icon: UserPlus, min: 1, desc: "Bring your volunteers onboard" }
+                ].map((item, i) => (
+                  <div key={i} className={`p-4 rounded-2xl border transition-all ${item.count >= item.min ? 'bg-green-50/50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30' : 'bg-gray-50 dark:bg-gray-800 border-gray-100 dark:border-gray-700'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <item.icon className={`h-5 w-5 ${item.count >= item.min ? 'text-green-600' : 'text-gray-400'}`} />
+                      {item.count >= item.min ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <div className="h-4 w-4 rounded-full border-2 border-gray-200" />}
+                    </div>
+                    <p className="font-bold text-sm text-gray-900 dark:text-white">{item.label}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{item.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </div>
+      )}
+
       {/* Subscription Status Banner */}
       {churchData?.status === "trialing" && (
         <motion.div 
@@ -495,11 +736,61 @@ export default function AdminDashboard() {
 
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Control Center</h1>
-          <p className="text-gray-500 dark:text-gray-400">System-wide management and analytics</p>
+          <div className="flex items-center space-x-3">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Admin Control Center</h1>
+            {churchData?.name && (
+              <span className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-3 py-1 rounded-full text-sm font-bold border border-primary/20 dark:border-primary/30">
+                {churchData.name}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center space-x-2">
+            <p className="text-gray-500 dark:text-gray-400">System-wide management and analytics</p>
+            {activeService ? (
+              <span className="flex items-center space-x-1 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                <CheckCircle2 className="h-3 w-3" />
+                <span>{activeService.name} Active</span>
+              </span>
+            ) : (
+              <span className="flex items-center space-x-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                <AlertCircle className="h-3 w-3" />
+                <span>No Active Service</span>
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-3">
-          <div className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2">
+          <button
+            onClick={() => setShowEmergencyModal(true)}
+            className="bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2 hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none"
+          >
+            <AlertTriangle className="h-4 w-4" />
+            <span>Emergency Alert</span>
+            <HelpTooltip text="Instantly notify all active volunteers and admins of an emergency situation." />
+          </button>
+          <button 
+            onClick={exportAllData}
+            disabled={exporting}
+            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2 disabled:opacity-50"
+          >
+            <Download className="h-4 w-4" />
+            <span>{exporting ? "Exporting..." : "Export All Data"}</span>
+          </button>
+          <Link 
+            to="/admin/events"
+            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2"
+          >
+            <Calendar className="h-4 w-4" />
+            <span>Manage Events</span>
+          </Link>
+          <Link 
+            to="/admin/settings"
+            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2"
+          >
+            <Settings className="h-4 w-4" />
+            <span>Church Settings</span>
+          </Link>
+          <div className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2">
             <Shield className="h-4 w-4" />
             <span>Admin Mode Active</span>
           </div>
@@ -564,11 +855,11 @@ export default function AdminDashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {[
-          { label: "Total Parents", value: users?.filter(u => u.role === "parent")?.length || 0, icon: <Users className="h-6 w-6 text-blue-600 dark:text-blue-400" />, color: "bg-blue-50 dark:bg-blue-900/20" },
-          { label: "Total Children", value: children?.length || 0, icon: <TrendingUp className="h-6 w-6 text-green-600 dark:text-green-400" />, color: "bg-green-50 dark:bg-green-900/20" },
+          { label: "Total Parents", value: users?.filter(u => u.role === "parent")?.length || 0, icon: <Users className="h-6 w-6 text-primary dark:text-primary/80" />, color: "bg-primary/10 dark:bg-primary/20" },
+          { label: "Total Children", value: children?.filter(c => !c.deleted)?.length || 0, icon: <TrendingUp className="h-6 w-6 text-green-600 dark:text-green-400" />, color: "bg-green-50 dark:bg-green-900/20" },
+          { label: "Active Service Attendance", value: activeService ? checkins?.filter(c => c.serviceId === activeService.id && c.status === "checked-in")?.length || 0 : "N/A", icon: <CheckCircle2 className="h-6 w-6 text-purple-600 dark:text-purple-400" />, color: "bg-purple-50 dark:bg-purple-900/20" },
           { label: "Active Guardians", value: guardians?.filter(g => g.active)?.length || 0, icon: <Shield className="h-6 w-6 text-purple-600 dark:text-purple-400" />, color: "bg-purple-50 dark:bg-purple-900/20" },
-          { label: "Inactive Guardians", value: guardians?.filter(g => !g.active)?.length || 0, icon: <Shield className="h-6 w-6 text-gray-600 dark:text-gray-400" />, color: "bg-gray-50 dark:bg-gray-800" },
-          { label: "Total Rooms", value: rooms?.length || 0, icon: <LayoutDashboard className="h-6 w-6 text-orange-600 dark:text-orange-400" />, color: "bg-orange-50 dark:bg-orange-900/20" },
+          { label: "Total Rooms", value: rooms?.filter(r => !r.deleted)?.length || 0, icon: <LayoutDashboard className="h-6 w-6 text-orange-600 dark:text-orange-400" />, color: "bg-orange-50 dark:bg-orange-900/20" },
           { label: "Staff/Volunteers", value: users?.filter(u => u.role !== "parent")?.length || 0, icon: <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />, color: "bg-red-50 dark:bg-red-900/20" }
         ].map((stat, idx) => (
           <div key={idx} className="bg-white dark:bg-gray-900 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 flex items-center space-x-4">
@@ -587,7 +878,7 @@ export default function AdminDashboard() {
       <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-bold text-gray-900 dark:text-white">Generate Attendance Report</h3>
-          <Calendar className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+          <Calendar className="h-6 w-6 text-primary dark:text-primary/80" />
         </div>
         <div className="flex flex-col md:flex-row items-end gap-4">
           <div className="flex-1 space-y-1">
@@ -596,7 +887,7 @@ export default function AdminDashboard() {
               type="date" 
               value={reportRange.start}
               onChange={(e) => setReportRange({ ...reportRange, start: e.target.value })}
-              className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+              className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
             />
           </div>
           <div className="flex-1 space-y-1">
@@ -605,12 +896,12 @@ export default function AdminDashboard() {
               type="date" 
               value={reportRange.end}
               onChange={(e) => setReportRange({ ...reportRange, end: e.target.value })}
-              className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+              className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
             />
           </div>
           <button 
             onClick={generateReport}
-            className="bg-blue-600 text-white px-8 py-2 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"
+            className="bg-primary text-white px-8 py-2 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
           >
             Generate CSV Report
           </button>
@@ -618,56 +909,484 @@ export default function AdminDashboard() {
       </div>
 
       {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white">Attendance History (Last 7 Days)</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={last7Days}>
-                <defs>
-                  <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-gray-800" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1f2937', color: '#fff' }}
-                  itemStyle={{ color: '#fff' }}
-                />
-                <Area type="monotone" dataKey="count" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
-              </AreaChart>
-            </ResponsiveContainer>
+      {/* Advanced Analytics Section */}
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
+              <TrendingUp className="h-6 w-6 text-primary dark:text-primary/80" />
+            </div>
+            <div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Advanced Analytics</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">In-depth attendance trends and comparisons</p>
+            </div>
+          </div>
+          <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
+            {[7, 30, 90].map((days) => (
+              <button
+                key={days}
+                onClick={() => setAnalyticsTimeRange(days)}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                  analyticsTimeRange === days 
+                    ? "bg-white dark:bg-gray-700 text-primary shadow-sm" 
+                    : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                }`}
+              >
+                {days} Days
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white">Current Room Occupancy</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={roomAttendance}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-gray-800" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1f2937', color: '#fff' }}
-                  itemStyle={{ color: '#fff' }}
-                />
-                <Bar dataKey="count" fill="#2563eb" radius={[4, 4, 0, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Attendance Trend Chart */}
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+            <div className="flex items-center justify-between">
+              <h4 className="text-lg font-bold text-gray-900 dark:text-white">Attendance Trend</h4>
+              <span className="text-xs font-bold text-primary dark:text-primary/80 bg-primary/10 dark:bg-primary/20 px-2 py-1 rounded-lg">
+                Last {analyticsTimeRange} Days
+              </span>
+            </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={last30Days}>
+                  <defs>
+                    <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-gray-800" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1f2937', color: '#fff' }}
+                    itemStyle={{ color: '#fff' }}
+                  />
+                  <Area type="monotone" dataKey="count" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Service Comparison Chart */}
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+            <h4 className="text-lg font-bold text-gray-900 dark:text-white">Service Comparison</h4>
+            <div className="h-64">
+              {serviceComparison.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={serviceComparison} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" className="dark:stroke-gray-800" />
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} width={100} />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1f2937', color: '#fff' }}
+                      itemStyle={{ color: '#fff' }}
+                    />
+                    <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={20} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-gray-400 italic text-sm">
+                  No service data available
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Room Utilization */}
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6 lg:col-span-2">
+            <h4 className="text-lg font-bold text-gray-900 dark:text-white">Room Utilization & Capacity</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {roomUtilization.map((room) => (
+                <div key={room.name} className="space-y-3">
+                  <div className="flex justify-between items-end">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900 dark:text-white">{room.name}</p>
+                      <p className="text-xs text-gray-500">{room.count} / {room.capacity} children</p>
+                    </div>
+                    <span className={`text-xs font-bold ${
+                      room.value > 90 ? "text-red-500" : room.value > 70 ? "text-orange-500" : "text-green-500"
+                    }`}>
+                      {room.value}%
+                    </span>
+                  </div>
+                  <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${room.value}%` }}
+                      className={`h-full rounded-full ${
+                        room.value > 90 ? "bg-red-500" : room.value > 70 ? "bg-orange-500" : "bg-green-500"
+                      }`}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Historical Attendance Analysis Section */}
+      <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-purple-50 dark:bg-purple-900/20 rounded-2xl flex items-center justify-center">
+              <Calendar className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+            </div>
+            <div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Historical Analysis</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Filter and analyze past attendance records</p>
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={selectedHistoricalEvent}
+              onChange={(e) => setSelectedHistoricalEvent(e.target.value)}
+              className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-purple-500 outline-none"
+            >
+              <option value="">All Events</option>
+              {events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(event => (
+                <option key={event.id} value={event.id}>
+                  {event.name} ({format(new Date(event.date), "MMM d")})
+                </option>
+              ))}
+            </select>
+            
+            <select
+              value={selectedHistoricalService}
+              onChange={(e) => setSelectedHistoricalService(e.target.value)}
+              className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-purple-500 outline-none"
+            >
+              <option value="">All Services</option>
+              {services.filter(s => !selectedHistoricalEvent || s.eventId === selectedHistoricalEvent).map(service => (
+                <option key={service.id} value={service.id}>
+                  {service.name}
+                </option>
+              ))}
+            </select>
+
+            <button 
+              onClick={() => {
+                setSelectedHistoricalEvent("");
+                setSelectedHistoricalService("");
+              }}
+              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+              title="Clear Filters"
+            >
+              <RefreshCw className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-purple-50 dark:bg-purple-900/10 p-6 rounded-2xl border border-purple-100 dark:border-purple-900/20">
+            <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-1">Total Attendees</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">{historicalCheckins.length}</p>
+          </div>
+          <div className="bg-primary/10 dark:bg-primary/20 p-6 rounded-2xl border border-primary/20 dark:border-primary/30">
+            <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase tracking-wider mb-1">Unique Children</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">
+              {new Set(historicalCheckins.map(c => c.childId)).size}
+            </p>
+          </div>
+          <div className="bg-green-50 dark:bg-green-900/10 p-6 rounded-2xl border border-green-100 dark:border-green-900/20">
+            <p className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">Avg. Per Service</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">
+              {historicalCheckins.length > 0 ? Math.round(historicalCheckins.length / (new Set(historicalCheckins.map(c => c.serviceId)).size || 1)) : 0}
+            </p>
+          </div>
+          <div className="bg-orange-50 dark:bg-orange-900/10 p-6 rounded-2xl border border-orange-100 dark:border-orange-900/20">
+            <p className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Peak Attendance</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">
+              {Math.max(...roomUtilization.map(r => r.count), 0)}
+            </p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gray-100 dark:border-gray-800">
+                <th className="py-4 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Child</th>
+                <th className="py-4 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Event / Service</th>
+                <th className="py-4 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Room</th>
+                <th className="py-4 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Check-In</th>
+                <th className="py-4 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+              {historicalCheckins.slice(0, 10).map((record) => (
+                <tr key={record.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                  <td className="py-4 px-4">
+                    <p className="font-bold text-gray-900 dark:text-white">{record.childName}</p>
+                  </td>
+                  <td className="py-4 px-4">
+                    <p className="text-sm text-gray-700 dark:text-gray-300">{record.eventName}</p>
+                    <p className="text-xs text-gray-500">{record.serviceName}</p>
+                  </td>
+                  <td className="py-4 px-4">
+                    <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-lg">
+                      {record.roomName}
+                    </span>
+                  </td>
+                  <td className="py-4 px-4 text-sm text-gray-500">
+                    {format(new Date(record.checkInTime), "MMM d, HH:mm")}
+                  </td>
+                  <td className="py-4 px-4">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      record.status === "checked-in" ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-600"
+                    }`}>
+                      {record.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {historicalCheckins.length === 0 && (
+            <div className="py-12 text-center">
+              <p className="text-gray-400 dark:text-gray-500 italic">No records found for the selected filters</p>
+            </div>
+          )}
+          {historicalCheckins.length > 10 && (
+            <div className="py-4 text-center">
+              <p className="text-xs text-gray-500">Showing latest 10 of {historicalCheckins.length} records. Use CSV export for full data.</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Volunteer Activity Section */}
+      <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-green-50 dark:bg-green-900/20 rounded-2xl flex items-center justify-center">
+              <Shield className="h-6 w-6 text-green-600 dark:text-green-400" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Volunteer Activity</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Tracking check-in/out actions by staff</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {volunteerActivity.slice(0, 8).map((v) => (
+            <div key={v.name} className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700">
+              <p className="font-bold text-gray-900 dark:text-white truncate">{v.name}</p>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Actions</span>
+                <span className="text-sm font-bold text-primary">{v.totalActions}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[10px]">
+                <span className="text-gray-500">Check-ins: {v.checkins}</span>
+                <span className="text-gray-500">Check-outs: {v.checkouts}</span>
+              </div>
+              <div className="mt-3 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-green-500 rounded-full" 
+                  style={{ width: `${Math.min((v.totalActions / (Math.max(...volunteerActivity.map(va => va.totalActions)) || 1)) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
+          {volunteerActivity.length === 0 && (
+            <div className="col-span-full py-8 text-center text-gray-400 italic text-sm">
+              No volunteer activity recorded yet
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Recent Activity Section */}
+      <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
+              <Clock className="h-6 w-6 text-primary dark:text-primary/80" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Recent Activity</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Latest check-ins and check-outs</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowDeletedItems(!showDeletedItems)}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+              showDeletedItems 
+                ? "bg-red-50 text-red-600 border border-red-100" 
+                : "bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100"
+            }`}
+          >
+            <History className="h-4 w-4" />
+            <span>{showDeletedItems ? "Hide Deleted Items" : "Recently Deleted"}</span>
+          </button>
+        </div>
+        
+        {showDeletedItems ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {/* Deleted Children */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-gray-400 uppercase tracking-wider flex items-center space-x-2">
+                  <Users className="h-4 w-4" />
+                  <span>Deleted Children</span>
+                </h4>
+                <div className="space-y-2">
+                  {children.filter(c => c.deleted).map(child => (
+                    <div key={child.id} className="p-3 bg-red-50/50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</p>
+                        <p className="text-[10px] text-gray-500">Deleted: {child.deletedAt ? format(new Date(child.deletedAt), "MMM d, HH:mm") : "N/A"}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRestore("children", child.id, `${child.firstName} ${child.lastName}`)}
+                        className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                        title="Restore"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {children.filter(c => c.deleted).length === 0 && (
+                    <p className="text-xs text-gray-400 italic">No deleted children</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Deleted Rooms */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-gray-400 uppercase tracking-wider flex items-center space-x-2">
+                  <LayoutDashboard className="h-4 w-4" />
+                  <span>Deleted Rooms</span>
+                </h4>
+                <div className="space-y-2">
+                  {rooms.filter(r => r.deleted).map(room => (
+                    <div key={room.id} className="p-3 bg-red-50/50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">{room.name}</p>
+                        <p className="text-[10px] text-gray-500">Deleted: {room.deletedAt ? format(new Date(room.deletedAt), "MMM d, HH:mm") : "N/A"}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRestore("rooms", room.id, room.name)}
+                        className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                        title="Restore"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {rooms.filter(r => r.deleted).length === 0 && (
+                    <p className="text-xs text-gray-400 italic">No deleted rooms</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Deleted Events/Services */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-gray-400 uppercase tracking-wider flex items-center space-x-2">
+                  <Calendar className="h-4 w-4" />
+                  <span>Deleted Events & Services</span>
+                </h4>
+                <div className="space-y-2">
+                  {events.filter(e => e.deleted).map(event => (
+                    <div key={event.id} className="p-3 bg-red-50/50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">{event.name}</p>
+                        <p className="text-[10px] text-gray-500">Event • Deleted: {event.deletedAt ? format(new Date(event.deletedAt), "MMM d, HH:mm") : "N/A"}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRestore("events", event.id, event.name)}
+                        className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                        title="Restore"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {services.filter(s => s.deleted).map(service => (
+                    <div key={service.id} className="p-3 bg-red-50/50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/20 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">{service.name}</p>
+                        <p className="text-[10px] text-gray-500">Service • Deleted: {service.deletedAt ? format(new Date(service.deletedAt), "MMM d, HH:mm") : "N/A"}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRestore("services", service.id, service.name)}
+                        className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                        title="Restore"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {events.filter(e => e.deleted).length === 0 && services.filter(s => s.deleted).length === 0 && (
+                    <p className="text-xs text-gray-400 italic">No deleted events or services</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {recentActivity.map((activity) => (
+            <div key={activity.id} className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className={`h-2 w-2 rounded-full ${activity.status === "checked-in" ? "bg-green-500" : "bg-orange-500"}`} />
+                  <p className="text-sm font-bold text-gray-900 dark:text-white">{activity.childName}</p>
+                </div>
+                <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">
+                  {format(new Date(activity.updatedAt || activity.checkInTime), "HH:mm")}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 text-[10px]">
+                <div className="space-y-1">
+                  <p className="text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">
+                    {activity.status === "checked-in" ? "Checked In By" : "Picked Up By"}
+                  </p>
+                  <p className="text-gray-700 dark:text-gray-300 font-medium">
+                    {activity.status === "checked-in" ? activity.checkedInBy : activity.guardianName}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">Volunteer</p>
+                  <p className="text-gray-700 dark:text-gray-300 font-medium truncate">
+                    {activity.status === "checked-in" ? activity.volunteerName : activity.checkOutVolunteerName}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1">
+                <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                  {activity.status === "checked-in" ? "Assigned to " : "Released from "}
+                  <span className="font-bold text-primary dark:text-primary/80">{activity.roomName}</span>
+                </p>
+                {activity.eventName && (
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                    {activity.eventName} • {activity.serviceName}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+          {recentActivity.length === 0 && (
+            <div className="col-span-full py-12 text-center">
+              <p className="text-gray-400 dark:text-gray-500 italic">No recent activity found</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
 
       {/* Subscription Management Section */}
       <div id="subscription-section" className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="h-12 w-12 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center">
-              <CreditCard className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+            <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
+              <CreditCard className="h-6 w-6 text-primary dark:text-primary/80" />
             </div>
             <div>
               <h3 className="text-xl font-bold text-gray-900 dark:text-white">Subscription & Billing</h3>
@@ -695,7 +1414,7 @@ export default function AdminDashboard() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Price</p>
-                  <p className="text-2xl font-bold text-blue-600">
+                  <p className="text-2xl font-bold text-primary">
                     {churchData?.plan === "professional" ? "R999" : churchData?.plan === "growth" ? "R499" : "R249"}
                     <span className="text-sm text-gray-500 font-normal">/mo</span>
                   </p>
@@ -710,8 +1429,8 @@ export default function AdminDashboard() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/30">
-                <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">Users Limit</p>
+              <div className="p-4 bg-primary/10 dark:bg-primary/20 rounded-xl border border-primary/20 dark:border-primary/30">
+                <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase mb-1">Users Limit</p>
                 <p className="text-lg font-bold text-gray-900 dark:text-white">
                   {users.length} / {churchData?.plan === "professional" ? "Unlimited" : churchData?.plan === "growth" ? "50" : "20"}
                 </p>
@@ -765,11 +1484,14 @@ export default function AdminDashboard() {
           <div className="space-y-4">
             <div className="p-6 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700">
               <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin Override PIN</span>
+                <span className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider flex items-center">
+                  Admin Override PIN
+                  <HelpTooltip text="This 4-digit PIN allows authorized team members to manually check out children if their QR code is unavailable." />
+                </span>
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => setShowPin(!showPin)}
-                    className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                    className="p-2 text-gray-400 hover:text-primary transition-colors"
                     title={showPin ? "Hide PIN" : "Show PIN"}
                   >
                     {showPin ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -812,7 +1534,7 @@ export default function AdminDashboard() {
                 "Volunteers can use the PIN but cannot see it here"
               ].map((text, i) => (
                 <li key={i} className="flex items-start space-x-3 text-sm text-gray-600 dark:text-gray-400">
-                  <div className="h-1.5 w-1.5 bg-blue-600 rounded-full mt-1.5 shrink-0" />
+                  <div className="h-1.5 w-1.5 bg-primary rounded-full mt-1.5 shrink-0" />
                   <span>{text}</span>
                 </li>
               ))}
@@ -827,13 +1549,13 @@ export default function AdminDashboard() {
             <h3 className="text-xl font-bold text-gray-900 dark:text-white">Room Management</h3>
             <button
               onClick={() => setShowRoomModal(true)}
-              className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-colors"
+              className="bg-primary text-white p-2 rounded-lg hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-5 w-5" />
             </button>
           </div>
           <div className="divide-y divide-gray-50 dark:divide-gray-800">
-            {rooms?.map((room) => (
+            {rooms?.length > 0 ? rooms.map((room) => (
               <div key={room.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                 <div>
                   <p className="font-bold text-gray-900 dark:text-white">{room.name}</p>
@@ -845,7 +1567,7 @@ export default function AdminDashboard() {
                       setEditingRoom(room);
                       setShowEditRoomModal(true);
                     }}
-                    className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                    className="p-2 text-gray-400 hover:text-primary transition-colors"
                   >
                     <Edit2 className="h-4 w-4" />
                   </button>
@@ -857,7 +1579,23 @@ export default function AdminDashboard() {
                   </button>
                 </div>
               </div>
-            ))}
+            )) : (
+              <div className="p-12 text-center space-y-4">
+                <div className="h-16 w-16 bg-gray-50 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto">
+                  <Building2 className="h-8 w-8 text-gray-300" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-bold text-gray-900 dark:text-white">No rooms created yet</p>
+                  <p className="text-sm text-gray-500 max-w-[200px] mx-auto">Create your first room to start assigning children.</p>
+                </div>
+                <button
+                  onClick={() => setShowRoomModal(true)}
+                  className="text-primary font-bold text-sm hover:underline"
+                >
+                  + Add First Room
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -868,7 +1606,7 @@ export default function AdminDashboard() {
               <h3 className="text-xl font-bold text-gray-900 dark:text-white">User Management</h3>
               <button
                 onClick={() => setShowUserModal(true)}
-                className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-colors"
+                className="bg-primary text-white p-2 rounded-lg hover:bg-primary/90 transition-colors"
               >
                 <UserPlus className="h-5 w-5" />
               </button>
@@ -880,12 +1618,19 @@ export default function AdminDashboard() {
                 placeholder="Search users by name, email or ID..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white text-sm"
+                className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white text-sm"
               />
             </div>
           </div>
           <div className="divide-y divide-gray-50 dark:divide-gray-800 max-h-[600px] overflow-y-auto">
             {users?.filter(u => {
+              const search = searchTerm.toLowerCase();
+              const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase();
+              const name = (u.name || '').toLowerCase();
+              const email = (u.email || '').toLowerCase();
+              const idNumber = (u.idNumber || '').toLowerCase();
+              return fullName.includes(search) || name.includes(search) || email.includes(search) || idNumber.includes(search);
+            }).length > 0 ? users?.filter(u => {
               const search = searchTerm.toLowerCase();
               const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase();
               const name = (u.name || '').toLowerCase();
@@ -925,7 +1670,7 @@ export default function AdminDashboard() {
                       setEditingUser(u);
                       setShowEditUserModal(true);
                     }}
-                    className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                    className="p-2 text-gray-400 hover:text-primary transition-colors"
                     title="Edit User"
                   >
                     <Edit2 className="h-4 w-4" />
@@ -946,7 +1691,23 @@ export default function AdminDashboard() {
                   </button>
                 </div>
               </div>
-            ))}
+            )) : (
+              <div className="p-12 text-center space-y-4">
+                <div className="h-16 w-16 bg-gray-50 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto">
+                  <UserPlus className="h-8 w-8 text-gray-300" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-bold text-gray-900 dark:text-white">No users found</p>
+                  <p className="text-sm text-gray-500 max-w-[200px] mx-auto">Invite your team or search for existing members.</p>
+                </div>
+                <button
+                  onClick={() => setShowUserModal(true)}
+                  className="text-primary font-bold text-sm hover:underline"
+                >
+                  + Invite First Member
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -966,7 +1727,7 @@ export default function AdminDashboard() {
                     type="text"
                     value={newUser.firstName}
                     onChange={(e) => setNewUser({ ...newUser, firstName: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -976,7 +1737,7 @@ export default function AdminDashboard() {
                     type="text"
                     value={newUser.lastName}
                     onChange={(e) => setNewUser({ ...newUser, lastName: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -986,7 +1747,7 @@ export default function AdminDashboard() {
                   type="text"
                   value={(newUser as any).idNumber || ""}
                   onChange={(e) => setNewUser({ ...newUser, idNumber: e.target.value } as any)}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
               <div className="space-y-1">
@@ -996,7 +1757,7 @@ export default function AdminDashboard() {
                   type="email"
                   value={newUser.email}
                   onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1005,7 +1766,7 @@ export default function AdminDashboard() {
                   <select
                     value={newUser.role}
                     onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   >
                     <option value="parent">Parent</option>
                     <option value="volunteer">Volunteer</option>
@@ -1017,7 +1778,7 @@ export default function AdminDashboard() {
                   <select
                     value={newUser.gender}
                     onChange={(e) => setNewUser({ ...newUser, gender: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   >
                     <option value="">Select</option>
                     <option value="Male">Male</option>
@@ -1028,7 +1789,7 @@ export default function AdminDashboard() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"
+                className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
               >
                 {loading ? "Creating..." : "Create User"}
               </button>
@@ -1052,7 +1813,7 @@ export default function AdminDashboard() {
                     type="text"
                     value={editingUser.firstName || ""}
                     onChange={(e) => setEditingUser({ ...editingUser, firstName: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1062,7 +1823,7 @@ export default function AdminDashboard() {
                     type="text"
                     value={editingUser.lastName || ""}
                     onChange={(e) => setEditingUser({ ...editingUser, lastName: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -1072,7 +1833,7 @@ export default function AdminDashboard() {
                   type="text"
                   value={editingUser.idNumber || ""}
                   onChange={(e) => setEditingUser({ ...editingUser, idNumber: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1081,7 +1842,7 @@ export default function AdminDashboard() {
                   <select
                     value={editingUser.role}
                     onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   >
                     <option value="parent">Parent</option>
                     <option value="volunteer">Volunteer</option>
@@ -1093,7 +1854,7 @@ export default function AdminDashboard() {
                   <select
                     value={editingUser.gender || ""}
                     onChange={(e) => setEditingUser({ ...editingUser, gender: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   >
                     <option value="">Select</option>
                     <option value="Male">Male</option>
@@ -1104,7 +1865,7 @@ export default function AdminDashboard() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"
+                className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
               >
                 {loading ? "Updating..." : "Update User"}
               </button>
@@ -1127,7 +1888,7 @@ export default function AdminDashboard() {
                   type="text"
                   value={editingRoom.name}
                   onChange={(e) => setEditingRoom({ ...editingRoom, name: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1140,7 +1901,7 @@ export default function AdminDashboard() {
                     pattern="[0-9]*"
                     value={editingRoom.capacity}
                     onChange={(e) => setEditingRoom({ ...editingRoom, capacity: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1152,7 +1913,7 @@ export default function AdminDashboard() {
                     pattern="[0-9]*"
                     value={editingRoom.minAge}
                     onChange={(e) => setEditingRoom({ ...editingRoom, minAge: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1164,18 +1925,54 @@ export default function AdminDashboard() {
                     pattern="[0-9]*"
                     value={editingRoom.maxAge}
                     onChange={(e) => setEditingRoom({ ...editingRoom, maxAge: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"
+                className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
               >
                 {loading ? "Updating..." : "Update Room"}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Emergency Alert Confirmation Modal */}
+      {showEmergencyModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowEmergencyModal(false)} />
+          <div className="relative bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md p-8 space-y-6">
+            <div className="h-16 w-16 bg-red-100 dark:bg-red-900/30 rounded-2xl flex items-center justify-center mx-auto">
+              <AlertTriangle className="h-8 w-8 text-red-600 dark:text-red-400" />
+            </div>
+            
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Trigger Emergency Alert?</h2>
+              <p className="text-gray-500 dark:text-gray-400">
+                This will instantly send email notifications to <strong>all parents</strong> of children currently checked in. Use only in actual emergencies.
+              </p>
+            </div>
+
+            <div className="flex flex-col space-y-3">
+              <button
+                onClick={handleTriggerEmergency}
+                disabled={triggeringEmergency}
+                className="w-full bg-red-600 text-white p-4 rounded-2xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none disabled:opacity-50"
+              >
+                {triggeringEmergency ? "Sending Alerts..." : "Yes, Trigger Alert Now"}
+              </button>
+              <button
+                onClick={() => setShowEmergencyModal(false)}
+                disabled={triggeringEmergency}
+                className="w-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 p-4 rounded-2xl font-bold hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1195,7 +1992,7 @@ export default function AdminDashboard() {
                   value={newRoom.name}
                   onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })}
                   placeholder="e.g. Nursery, Pre-K"
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1209,7 +2006,7 @@ export default function AdminDashboard() {
                     value={newRoom.capacity}
                     onChange={(e) => setNewRoom({ ...newRoom, capacity: e.target.value })}
                     placeholder="20"
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1222,7 +2019,7 @@ export default function AdminDashboard() {
                     value={newRoom.minAge}
                     onChange={(e) => setNewRoom({ ...newRoom, minAge: e.target.value })}
                     placeholder="0"
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1235,14 +2032,14 @@ export default function AdminDashboard() {
                     value={newRoom.maxAge}
                     onChange={(e) => setNewRoom({ ...newRoom, maxAge: e.target.value })}
                     placeholder="2"
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 dark:shadow-none"
+                className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
               >
                 {loading ? "Creating..." : "Create Room"}
               </button>

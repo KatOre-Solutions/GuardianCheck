@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 export default function Home() {
   const features = [
     {
-      icon: <QrCode className="h-6 w-6 text-blue-600" />,
+      icon: <QrCode className="h-6 w-6 text-primary" />,
       title: "QR Code Check-In",
       description: "Fast and secure check-in using unique QR codes for every child."
     },
@@ -65,13 +65,13 @@ export default function Home() {
             transition={{ duration: 0.6 }}
             className="space-y-8"
           >
-            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
-              <Star className="h-4 w-4 text-blue-600" />
-              <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">Trusted by 500+ Churches</span>
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30">
+              <Star className="h-4 w-4 text-primary" />
+              <span className="text-xs font-bold text-primary uppercase tracking-wider">Trusted by 500+ Churches</span>
             </div>
             <h1 className="text-5xl lg:text-7xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight">
               Secure Child Check-In <br />
-              <span className="text-blue-600 dark:text-blue-400">for Your Church</span>
+              <span className="text-primary dark:text-primary/70">for Your Church</span>
             </h1>
             <p className="text-xl text-gray-600 dark:text-gray-400 max-w-lg leading-relaxed">
               GuardianCheck provides a simple, secure, and scalable platform to manage child drop-off and pickup, giving parents peace of mind and volunteers more time to serve.
@@ -79,14 +79,14 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row gap-4">
               <Link
                 to="/register-church"
-                className="bg-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 dark:shadow-blue-900/20 flex items-center justify-center space-x-2"
+                className="bg-primary text-white px-8 py-4 rounded-xl font-semibold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none flex items-center justify-center space-x-2"
               >
                 <span>Start 14-Day Free Trial</span>
                 <ArrowRight className="h-5 w-5" />
               </Link>
               <Link
                 to="/login"
-                className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white border-2 border-gray-100 dark:border-gray-800 px-8 py-4 rounded-xl font-semibold hover:border-blue-600 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all flex items-center justify-center"
+                className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white border-2 border-gray-100 dark:border-gray-800 px-8 py-4 rounded-xl font-semibold hover:border-primary dark:hover:border-primary/50 hover:text-primary dark:hover:text-primary/70 transition-all flex items-center justify-center"
               >
                 Login
               </Link>
@@ -99,7 +99,7 @@ export default function Home() {
             transition={{ duration: 0.8 }}
             className="relative"
           >
-            <div className="aspect-square rounded-3xl bg-blue-50 dark:bg-blue-900/10 overflow-hidden shadow-2xl border-8 border-white dark:border-gray-800">
+            <div className="aspect-square rounded-3xl bg-primary/5 dark:bg-primary/10 overflow-hidden shadow-2xl border-8 border-white dark:border-gray-800">
               <img
                 src="https://picsum.photos/seed/church/800/800"
                 alt="Church Child Check-In"
@@ -136,7 +136,7 @@ export default function Home() {
               whileInView={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
               viewport={{ once: true }}
-              className="p-8 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-blue-200 dark:hover:border-blue-500/30 hover:shadow-xl transition-all group"
+              className="p-8 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-primary/30 dark:hover:border-primary/30 hover:shadow-xl transition-all group"
             >
               <div className="h-12 w-12 rounded-xl bg-gray-50 dark:bg-gray-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                 {feature.icon}
@@ -167,7 +167,7 @@ export default function Home() {
               viewport={{ once: true }}
               className={`relative p-8 rounded-3xl border ${
                 plan.highlight 
-                  ? "bg-blue-600 border-blue-600 text-white shadow-2xl shadow-blue-200 dark:shadow-none" 
+                  ? "bg-primary text-white shadow-2xl shadow-primary/10 dark:shadow-none" 
                   : "bg-white dark:bg-gray-900 border-gray-100 dark:border-gray-800 text-gray-900 dark:text-white"
               }`}
             >
@@ -179,16 +179,16 @@ export default function Home() {
               <div className="space-y-6">
                 <div>
                   <h3 className="text-xl font-bold">{plan.name}</h3>
-                  <p className={`text-sm ${plan.highlight ? "text-blue-100" : "text-gray-500"}`}>{plan.description}</p>
+                  <p className={`text-sm ${plan.highlight ? "text-primary/70" : "text-gray-500"}`}>{plan.description}</p>
                 </div>
                 <div className="flex items-baseline space-x-1">
                   <span className="text-4xl font-bold">{plan.price}</span>
-                  <span className={`text-sm ${plan.highlight ? "text-blue-100" : "text-gray-500"}`}>/month</span>
+                  <span className={`text-sm ${plan.highlight ? "text-primary/70" : "text-gray-500"}`}>/month</span>
                 </div>
                 <ul className="space-y-4">
                   {plan.features.map((f, i) => (
                     <li key={i} className="flex items-center space-x-3 text-sm">
-                      <CheckCircle2 className={`h-5 w-5 ${plan.highlight ? "text-blue-200" : "text-blue-600"}`} />
+                      <CheckCircle2 className={`h-5 w-5 ${plan.highlight ? "text-primary/70" : "text-primary"}`} />
                       <span>{f}</span>
                     </li>
                   ))}
@@ -197,7 +197,7 @@ export default function Home() {
                   to="/register-church"
                   className={`w-full py-4 rounded-xl font-bold text-center block transition-all ${
                     plan.highlight 
-                      ? "bg-white text-blue-600 hover:bg-blue-50" 
+                      ? "bg-white text-primary hover:bg-primary/10" 
                       : "bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90"
                   }`}
                 >
@@ -214,12 +214,12 @@ export default function Home() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-8">
             <h2 className="text-4xl font-bold text-gray-900 dark:text-white leading-tight">
-              Built for the <span className="text-blue-600">South African Church</span>
+              Built for the <span className="text-primary">South African Church</span>
             </h2>
             <div className="space-y-6">
               <div className="flex items-start space-x-4">
                 <div className="h-10 w-10 rounded-xl bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center shrink-0">
-                  <Zap className="h-5 w-5 text-blue-600" />
+                  <Zap className="h-5 w-5 text-primary" />
                 </div>
                 <div>
                   <h4 className="font-bold text-gray-900 dark:text-white">Fast & Reliable</h4>
@@ -228,7 +228,7 @@ export default function Home() {
               </div>
               <div className="flex items-start space-x-4">
                 <div className="h-10 w-10 rounded-xl bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center shrink-0">
-                  <Globe className="h-5 w-5 text-blue-600" />
+                  <Globe className="h-5 w-5 text-primary" />
                 </div>
                 <div>
                   <h4 className="font-bold text-gray-900 dark:text-white">Local Payments</h4>
@@ -237,7 +237,7 @@ export default function Home() {
               </div>
               <div className="flex items-start space-x-4">
                 <div className="h-10 w-10 rounded-xl bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center shrink-0">
-                  <Heart className="h-5 w-5 text-blue-600" />
+                  <Heart className="h-5 w-5 text-primary" />
                 </div>
                 <div>
                   <h4 className="font-bold text-gray-900 dark:text-white">Mission Focused</h4>
@@ -260,14 +260,14 @@ export default function Home() {
       </section>
 
       {/* CTA Section */}
-      <section className="bg-blue-600 rounded-3xl p-12 text-center space-y-8">
+      <section className="bg-primary rounded-3xl p-12 text-center space-y-8">
         <h2 className="text-4xl font-bold text-white">Ready to Secure Your Children's Ministry?</h2>
-        <p className="text-blue-100 text-xl max-w-2xl mx-auto">
+        <p className="text-white/70 text-xl max-w-2xl mx-auto">
           Join hundreds of churches using GuardianCheck to provide a safe and welcoming environment for families.
         </p>
         <Link
           to="/register-church"
-          className="inline-block bg-white text-blue-600 px-10 py-4 rounded-xl font-bold text-lg hover:bg-blue-50 transition-colors shadow-xl"
+          className="inline-block bg-white text-primary px-10 py-4 rounded-xl font-bold text-lg hover:bg-white/90 transition-colors shadow-xl"
         >
           Start Your Free Trial Now
         </Link>

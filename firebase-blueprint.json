@@ -19,15 +19,40 @@
     },
     "church": {
       "title": "Church",
-      "description": "Church organization details",
+      "description": "Church organization details and SaaS configuration",
       "type": "object",
       "properties": {
         "name": { "type": "string" },
+        "slug": { "type": "string", "description": "Unique URL-friendly identifier" },
         "address": { "type": "string" },
         "adminEmail": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "branding": {
+          "type": "object",
+          "properties": {
+            "logoUrl": { "type": "string" },
+            "primaryColor": { "type": "string" },
+            "secondaryColor": { "type": "string" }
+          }
+        },
+        "subscription": {
+          "type": "object",
+          "properties": {
+            "tier": { "type": "string", "enum": ["free", "pro", "enterprise"] },
+            "status": { "type": "string", "enum": ["active", "past_due", "canceled"] }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "totalChildren": { "type": "number" },
+            "activeCheckins": { "type": "number" },
+            "totalVolunteers": { "type": "number" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["name", "adminEmail"]
+      "required": ["name", "slug", "adminEmail"]
     },
     "membershipRequest": {
       "title": "MembershipRequest",
@@ -155,6 +180,56 @@
         "darkMode": { "type": "boolean" }
       },
       "required": ["uid", "email", "status"]
+    },
+    "policyAcceptance": {
+      "title": "PolicyAcceptance",
+      "description": "Summary of user's latest policy acceptance",
+      "type": "object",
+      "properties": {
+        "lastAcceptedVersion": { "type": "string" },
+        "lastAcceptedAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["compliant", "outdated"] }
+      },
+      "required": ["lastAcceptedVersion", "lastAcceptedAt", "status"]
+    },
+    "policyAcceptanceHistory": {
+      "title": "PolicyAcceptanceHistory",
+      "description": "Immutable audit record of a specific policy acceptance",
+      "type": "object",
+      "properties": {
+        "version": { "type": "string" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "churchId": { "type": "string" },
+        "roleAtTime": { "type": "string" },
+        "legalContext": {
+          "type": "object",
+          "properties": {
+            "policyHash": { "type": "string" },
+            "agreementType": { "type": "string", "enum": ["Operator_Agreement", "Privacy_Notice"] }
+          }
+        },
+        "forensicData": {
+          "type": "object",
+          "properties": {
+            "userAgent": { "type": "string" },
+            "ipMasked": { "type": "string" },
+            "traceId": { "type": "string" }
+          }
+        },
+        "acceptanceMethod": { "type": "string" }
+      },
+      "required": ["version", "acceptedAt", "churchId", "roleAtTime", "legalContext"]
+    },
+    "churchPolicyAcceptance": {
+      "title": "ChurchPolicyAcceptance",
+      "description": "Organization-level acceptance of Data Processing Agreement",
+      "type": "object",
+      "properties": {
+        "acceptedBy": { "type": "string" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "policyVersion": { "type": "string" }
+      },
+      "required": ["acceptedBy", "acceptedAt", "policyVersion"]
     }
   },
   "firestore": {
@@ -165,6 +240,9 @@
     "/guardians": { "schema": "guardian", "description": "Authorized guardians for children" },
     "/rooms": { "schema": "room", "description": "Rooms or groups for children" },
     "/checkins": { "schema": "checkIn", "description": "Check-in and check-out records" },
-    "/invitations": { "schema": "invitation", "description": "Secure invitations for new users" }
+    "/invitations": { "schema": "invitation", "description": "Secure invitations for new users" },
+    "/policy_acceptance/{uid}": { "schema": "policyAcceptance", "description": "User policy acceptance summary" },
+    "/policy_acceptance/{uid}/history/{versionId}": { "schema": "policyAcceptanceHistory", "description": "Immutable policy acceptance audit trail" },
+    "/church_policy_acceptance/{churchId}": { "schema": "churchPolicyAcceptance", "description": "Church-level DPA acceptance" }
   }
 }

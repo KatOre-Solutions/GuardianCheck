@@ -1,42 +1,84 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from "react-router-dom";
-import { Shield, User, LogOut, LayoutDashboard, QrCode, ClipboardCheck, Users, Settings, Home as HomeIcon } from "lucide-react";
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Outlet } from "react-router-dom";
+import { Shield, User, LogOut, LayoutDashboard, QrCode, ClipboardCheck, Users, Settings, Home as HomeIcon, Calendar } from "lucide-react";
 import { auth } from "./lib/firebase";
 import { useAuth } from "./hooks/useAuth";
-import { ErrorBoundary } from "./components/ErrorBoundary";
+import ErrorBoundary from "./components/ErrorBoundary";
+import NetworkStatus from "./components/NetworkStatus";
 import { Toaster } from "sonner";
+import { TenantProvider, useTenant } from "./contexts/TenantContext";
+import { ChurchLogo } from "./components/ChurchLogo";
+
 import Home from "./pages/Home";
 import Login from "./pages/Login";
-import ParentDashboard from "./pages/ParentDashboard";
-import VolunteerDashboard from "./pages/VolunteerDashboard";
-import AdminDashboard from "./pages/AdminDashboard";
+import RegisterChurch from "./pages/RegisterChurch";
+import AcceptInvite from "./pages/AcceptInvite";
 import ProfileCompletion from "./pages/ProfileCompletion";
 import PendingApproval from "./pages/PendingApproval";
 import Rejected from "./pages/Rejected";
-import MasterAdminDashboard from "./pages/MasterAdminDashboard";
-import AcceptInvite from "./pages/AcceptInvite";
 import Profile from "./pages/Profile";
-import RegisterChurch from "./pages/RegisterChurch";
+import ParentDashboard from "./pages/ParentDashboard";
+import VolunteerDashboard from "./pages/VolunteerDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import EventsServices from "./pages/EventsServices";
+import MasterAdminDashboard from "./pages/MasterAdminDashboard";
+import ChurchSettings from "./pages/ChurchSettings";
+import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
+import { PolicyGuard } from "./components/PolicyGuard";
+
+function DashboardRedirect() {
+  const { userData, roles, loading } = useAuth();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    if (!loading) {
+      if (!userData) {
+        navigate("/login");
+      } else {
+        const slug = userData.churchSlug;
+        if (roles.includes("master_admin")) navigate("/master-admin");
+        else if (slug) {
+          if (roles.includes("admin")) navigate(`/${slug}/admin`);
+          else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer`);
+          else if (roles.includes("parent")) navigate(`/${slug}/parent`);
+          else navigate(`/${slug}`);
+        } else {
+          navigate("/");
+        }
+      }
+    }
+  }, [userData, roles, loading, navigate]);
+
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+    </div>
+  );
+}
 
 function Navigation() {
-  const { user, roles } = useAuth();
+  const { user, roles, userData } = useAuth();
+  const { church } = useTenant();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
     await auth.signOut();
-    navigate("/");
+    navigate(church ? `/${church.slug}` : "/");
   };
 
   const hasRole = (role: string) => roles.includes(role as any);
+  const churchPrefix = church ? `/${church.slug}` : "";
 
   return (
     <nav className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex items-center">
-            <Link to="/" className="flex items-center space-x-2">
-              <Shield className="h-8 w-8 text-blue-600" />
-              <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">GuardianCheck</span>
+            <Link to={churchPrefix || "/"} className="flex items-center space-x-2">
+              <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
+              <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
+                {church?.name || "GuardianCheck"}
+              </span>
             </Link>
           </div>
 
@@ -44,32 +86,46 @@ function Navigation() {
             {user ? (
               <>
                 {hasRole("master_admin") && (
-                  <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                  <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
                     <LayoutDashboard className="h-4 w-4" />
-                    <span className="hidden sm:inline">Master Admin</span>
+                    <span className="hidden sm:inline">Platform Admin</span>
                   </Link>
                 )}
-                {hasRole("admin") && (
-                  <Link to="/admin" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                    <Settings className="h-4 w-4" />
-                    <span className="hidden sm:inline">Admin</span>
-                  </Link>
-                )}
-                {(hasRole("admin") || hasRole("volunteer") || hasRole("master_admin")) && (
-                  <Link to="/volunteer" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                    <ClipboardCheck className="h-4 w-4" />
-                    <span className="hidden sm:inline">Volunteer</span>
-                  </Link>
-                )}
-                {(hasRole("admin") || hasRole("parent") || hasRole("master_admin")) && (
-                  <Link to="/parent" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                    <HomeIcon className="h-4 w-4" />
-                    <span className="hidden sm:inline">Parent</span>
-                  </Link>
+                {church && (
+                  <>
+                    {(hasRole("admin") || hasRole("master_admin")) && (
+                      <>
+                        <Link to={`${churchPrefix}/admin`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                          <LayoutDashboard className="h-4 w-4" />
+                          <span className="hidden sm:inline">Admin</span>
+                        </Link>
+                        <Link to={`${churchPrefix}/admin/settings`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                          <Settings className="h-4 w-4" />
+                          <span className="hidden sm:inline">Settings</span>
+                        </Link>
+                        <Link to={`${churchPrefix}/admin/events`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                          <Calendar className="h-4 w-4" />
+                          <span className="hidden sm:inline">Events</span>
+                        </Link>
+                      </>
+                    )}
+                    {(hasRole("admin") || hasRole("volunteer") || hasRole("master_admin")) && (
+                      <Link to={`${churchPrefix}/volunteer`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <ClipboardCheck className="h-4 w-4" />
+                        <span className="hidden sm:inline">Volunteer</span>
+                      </Link>
+                    )}
+                    {(hasRole("admin") || hasRole("parent") || hasRole("master_admin")) && (
+                      <Link to={`${churchPrefix}/parent`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <HomeIcon className="h-4 w-4" />
+                        <span className="hidden sm:inline">Parent</span>
+                      </Link>
+                    )}
+                  </>
                 )}
                 <Link
                   to="/profile"
-                  className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+                  className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
                 >
                   <User className="h-4 w-4" />
                   <span className="hidden sm:inline">Profile</span>
@@ -84,8 +140,8 @@ function Navigation() {
               </>
             ) : (
               <Link
-                to="/login"
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                to={church ? `${churchPrefix}/login` : "/login"}
+                className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
               >
                 Login
               </Link>
@@ -98,34 +154,41 @@ function Navigation() {
 }
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) {
-  const { user, role, roles, status, loading } = useAuth();
+  const { user, role, roles, status, loading, userData } = useAuth();
+  const { church, loading: tenantLoading } = useTenant();
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (!loading) {
+    if (!loading && !tenantLoading) {
       if (!user) {
-        navigate("/login");
-      } else if (status === "incomplete_profile" || !status) {
+        navigate(church ? `/${church.slug}/login` : "/login");
+      } else if (status === "incomplete_profile") {
+        // Only redirect if status is explicitly "incomplete_profile"
+        // If status is null, we might still be loading the document or it's being created
         navigate("/complete-profile");
       } else if (status === "pending") {
         navigate("/pending-approval");
       } else if (status === "rejected") {
         navigate("/rejected");
+      } else if (church && userData?.churchId !== church.id && !roles.includes("master_admin")) {
+        // Cross-tenant access prevention
+        const userChurchSlug = userData?.churchSlug || "dashboard";
+        navigate(`/${userChurchSlug}`);
       } else if (roles.length > 0 && !allowedRoles.some(r => roles.includes(r as any))) {
-        // Redirect to their appropriate dashboard if they try to access a forbidden one
+        const churchPrefix = church ? `/${church.slug}` : "";
         if (roles.includes("master_admin")) navigate("/master-admin");
-        else if (roles.includes("admin")) navigate("/admin");
-        else if (roles.includes("volunteer")) navigate("/volunteer");
-        else if (roles.includes("parent")) navigate("/parent");
+        else if (roles.includes("admin")) navigate(`${churchPrefix}/admin`);
+        else if (roles.includes("volunteer")) navigate(`${churchPrefix}/volunteer`);
+        else if (roles.includes("parent")) navigate(`${churchPrefix}/parent`);
         else navigate("/");
       }
     }
-  }, [user, role, roles, status, loading, navigate, allowedRoles]);
+  }, [user, role, roles, status, loading, tenantLoading, navigate, allowedRoles, church, userData]);
 
-  if (loading) {
+  if (loading || tenantLoading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
       </div>
     );
   }
@@ -134,66 +197,140 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   return user && hasAccess ? <>{children}</> : null;
 }
 
+function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Navigation />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {children}
+      </main>
+    </>
+  );
+}
+
+function TenantLayout() {
+  const { church, loading, error } = useTenant();
+
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (error || !church) {
+    return (
+      <Layout>
+        <div className="p-12 text-center space-y-4">
+          <div className="h-20 w-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto">
+            <Shield className="h-10 w-10 text-red-600 dark:text-red-400" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Church Not Found</h2>
+          <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+            The church you are looking for doesn't exist or the link is incorrect. 
+            Please check the URL or contact your church administrator.
+          </p>
+          <Link to="/" className="inline-block text-primary font-bold hover:underline">
+            Go to GuardianCheck Home
+          </Link>
+        </div>
+      </Layout>
+    );
+  }
+
+  return (
+    <Layout>
+      <Outlet />
+    </Layout>
+  );
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <Router>
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
-          <Navigation />
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <TenantProvider>
+          <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
             <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/register-church" element={<RegisterChurch />} />
-              <Route path="/accept-invite" element={<AcceptInvite />} />
-              <Route path="/complete-profile" element={<ProfileCompletion />} />
-              <Route path="/pending-approval" element={<PendingApproval />} />
-              <Route path="/rejected" element={<Rejected />} />
-              <Route 
-                path="/profile" 
-                element={
-                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
-                    <Profile />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/parent" 
-                element={
+              {/* Global Routes - These take precedence over dynamic :churchSlug */}
+              <Route path="/" element={<Layout><Home /></Layout>} />
+              <Route path="/login" element={<Layout><Login /></Layout>} />
+              <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
+              <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
+              <Route path="/complete-profile" element={<Layout><ProfileCompletion /></Layout>} />
+              <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
+              <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
+              <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
+              
+              {/* Generic Role Redirects */}
+              <Route path="/admin" element={<DashboardRedirect />} />
+              <Route path="/volunteer" element={<DashboardRedirect />} />
+              <Route path="/parent" element={<DashboardRedirect />} />
+
+              <Route path="/profile" element={
+                <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
+                  <PolicyGuard>
+                    <Layout><Profile /></Layout>
+                  </PolicyGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/master-admin" element={
+                <ProtectedRoute allowedRoles={["master_admin"]}>
+                  <PolicyGuard>
+                    <Layout><MasterAdminDashboard /></Layout>
+                  </PolicyGuard>
+                </ProtectedRoute>
+              } />
+
+              {/* Tenant Routes */}
+              <Route path="/:churchSlug" element={<TenantLayout />}>
+                <Route index element={<Home />} />
+                <Route path="login" element={<Login />} />
+                <Route path="parent" element={
                   <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
-                    <ParentDashboard />
+                    <PolicyGuard>
+                      <ParentDashboard />
+                    </PolicyGuard>
                   </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/volunteer" 
-                element={
+                } />
+                <Route path="volunteer" element={
                   <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer"]}>
-                    <VolunteerDashboard />
+                    <PolicyGuard>
+                      <VolunteerDashboard />
+                    </PolicyGuard>
                   </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/admin" 
-                element={
-                  <ProtectedRoute allowedRoles={["admin"]}>
-                    <AdminDashboard />
+                } />
+                <Route path="admin" element={
+                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                    <PolicyGuard>
+                      <AdminDashboard />
+                    </PolicyGuard>
                   </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/master-admin" 
-                element={
-                  <ProtectedRoute allowedRoles={["master_admin"]}>
-                    <MasterAdminDashboard />
+                } />
+                <Route path="admin/settings" element={
+                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                    <PolicyGuard>
+                      <ChurchSettings />
+                    </PolicyGuard>
                   </ProtectedRoute>
-                } 
-              />
+                } />
+                <Route path="admin/events" element={
+                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                    <PolicyGuard>
+                      <EventsServices />
+                    </PolicyGuard>
+                  </ProtectedRoute>
+                } />
+              </Route>
             </Routes>
-          </main>
-          <Toaster position="top-right" richColors />
-        </div>
+            <Toaster position="top-right" richColors />
+            <NetworkStatus />
+          </div>
+        </TenantProvider>
       </Router>
     </ErrorBoundary>
   );
 }
+
+// Remove the old TenantRoutes and GlobalRoutes functions

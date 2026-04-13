@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
@@ -12,13 +12,15 @@ import {
 } from "firebase/auth";
 import { Shield, Mail, Lock, ArrowRight, User, CheckCircle2, AlertCircle, Key, Loader2, Eye, EyeOff } from "lucide-react";
 import { auth } from "../lib/firebase";
-import { getDocument, setDocument, updateDocument } from "../lib/firestore";
-import { toast } from "sonner";
-import { getAuthErrorMessage } from "../lib/utils";
+import { getDocument, setDocument, updateDocument, logAudit } from "../lib/firestore";
+import { showErrorToast, showSuccessToast, getHumanReadableError } from "../lib/error-handler";
+import { useTenant } from "../contexts/TenantContext";
+import { ChurchLogo } from "../components/ChurchLogo";
 
 type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
 
 export default function Login() {
+  const { church } = useTenant();
   const [mode, setMode] = useState<AuthMode>("signin");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +62,20 @@ export default function Login() {
 
           let userDoc = await getDocument("users", updatedUser.uid) as any;
           
+          // Fallback for missing churchSlug
+          if (userDoc && userDoc.churchId && !userDoc.churchSlug) {
+            try {
+              const churchDoc = await getDocument("churches", userDoc.churchId) as any;
+              if (churchDoc?.slug) {
+                userDoc.churchSlug = churchDoc.slug;
+                // Update the user document to include the slug for future logins
+                await updateDocument("users", updatedUser.uid, { churchSlug: churchDoc.slug });
+              }
+            } catch (err) {
+              console.error("Failed to fetch church slug fallback:", err);
+            }
+          }
+          
           // If user exists but doc is missing (e.g. interrupted signup), create it
           if (!userDoc && updatedUser.email) {
             const isMasterAdmin = updatedUser.email === "oreutlwilediutlwileng@gmail.com";
@@ -70,12 +86,30 @@ export default function Login() {
               email: updatedUser.email,
               firstName: namesRef.current.firstName || fName || "",
               lastName: namesRef.current.lastName || lNameParts.join(" ") || "",
-              role: isMasterAdmin ? "master_admin" : null,
+              role: isMasterAdmin ? "master_admin" : "parent",
+              roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : ["parent"],
+              churchId: church?.id || null,
+              churchSlug: church?.slug || null,
               status: isMasterAdmin ? "approved" : "incomplete_profile",
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             };
             await setDocument("users", updatedUser.uid, userDoc);
+            
+            // Update Firebase Auth profile if names are available
+            if (userDoc.firstName && userDoc.lastName) {
+              await updateProfile(updatedUser, {
+                displayName: `${userDoc.firstName} ${userDoc.lastName}`
+              });
+            }
+            
+            await logAudit({
+              action: "user_signup_auto_create",
+              category: "security",
+              details: { email: updatedUser.email, role: userDoc.role },
+              userId: updatedUser.uid,
+              churchId: church?.id
+            });
           }
 
           if (userDoc?.mustChangePassword) {
@@ -85,20 +119,22 @@ export default function Login() {
           }
 
           if (userDoc) {
+            const churchPrefix = userDoc.churchSlug ? `/${userDoc.churchSlug}` : "";
+            
             if (userDoc.status === "incomplete_profile") navigate("/complete-profile");
             else if (userDoc.status === "pending") navigate("/pending-approval");
             else if (userDoc.status === "rejected") navigate("/rejected");
             else if (userDoc.role === "master_admin") navigate("/master-admin");
-            else if (userDoc.role === "admin") navigate("/admin");
-            else if (userDoc.role === "volunteer") navigate("/volunteer");
-            else if (userDoc.role === "parent") navigate("/parent");
+            else if (userDoc.role === "admin") navigate(`${churchPrefix}/admin`);
+            else if (userDoc.role === "volunteer") navigate(`${churchPrefix}/volunteer`);
+            else if (userDoc.role === "parent") navigate(`${churchPrefix}/parent`);
             else navigate("/");
           }
         } catch (err: any) {
           console.error("Auth state change error:", err);
-          const msg = getAuthErrorMessage(err);
-          setError(msg);
-          toast.error(msg);
+          const { message } = getHumanReadableError(err);
+          setError(message);
+          showErrorToast(err);
         } finally {
           setLoading(false);
         }
@@ -135,11 +171,21 @@ export default function Login() {
           lastName,
           photoUrl,
           phone,
-          role: isMasterAdmin ? "master_admin" : null,
-          roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : [],
+          role: isMasterAdmin ? "master_admin" : "parent",
+          roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : ["parent"],
+          churchId: church?.id || null,
+          churchSlug: church?.slug || null,
           status: isMasterAdmin ? "approved" : "incomplete_profile",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
+        });
+
+        await logAudit({
+          action: "google_signup",
+          category: "security",
+          details: { email: user.email },
+          userId: user.uid,
+          churchId: church?.id
         });
       } else {
         // Update missing info
@@ -162,9 +208,9 @@ export default function Login() {
       }
     } catch (err: any) {
       console.error(err);
-      const msg = getAuthErrorMessage(err);
-      setError(msg);
-      toast.error(msg);
+      const { message } = getHumanReadableError(err);
+      setError(message);
+      showErrorToast(err);
     } finally {
       setLoading(false);
     }
@@ -210,23 +256,33 @@ export default function Login() {
           email: email,
           firstName: firstName,
           lastName: lastName,
-          role: null,
-          roles: [],
+          role: "parent",
+          roles: ["parent"],
+          churchId: church?.id || null,
+          churchSlug: church?.slug || null,
           status: "incomplete_profile",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
+
+        await logAudit({
+          action: "email_signup",
+          category: "security",
+          details: { email },
+          userId: result.user.uid,
+          churchId: church?.id
+        });
         
         setMode("verify");
-        toast.success("Account created! Please check your email for verification.");
+        showSuccessToast("Account created!", "Please check your email for verification.");
       } else if (mode === "signin") {
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err: any) {
       console.error(err);
-      const msg = getAuthErrorMessage(err);
-      setError(msg);
-      toast.error(msg);
+      const { message } = getHumanReadableError(err);
+      setError(message);
+      showErrorToast(err);
     } finally {
       setLoading(false);
     }
@@ -238,12 +294,12 @@ export default function Login() {
     setError(null);
     try {
       await sendPasswordResetEmail(auth, email);
-      toast.success("Password reset link sent to your email!");
+      showSuccessToast("Password reset link sent!", "Please check your email.");
       setMode("signin");
     } catch (err: any) {
-      const msg = getAuthErrorMessage(err);
-      setError(msg);
-      toast.error(msg);
+      const { message } = getHumanReadableError(err);
+      setError(message);
+      showErrorToast(err);
     } finally {
       setLoading(false);
     }
@@ -267,12 +323,12 @@ export default function Login() {
     try {
       await updatePassword(auth.currentUser, newPassword);
       await updateDocument("users", auth.currentUser.uid, { mustChangePassword: false });
-      toast.success("Password updated successfully!");
+      showSuccessToast("Password updated!", "You can now sign in with your new password.");
       navigate("/");
     } catch (err: any) {
-      const msg = getAuthErrorMessage(err);
-      setError(msg);
-      toast.error(msg);
+      const { message } = getHumanReadableError(err);
+      setError(message);
+      showErrorToast(err);
     } finally {
       setLoading(false);
     }
@@ -282,7 +338,7 @@ export default function Login() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="flex flex-col items-center space-y-4">
-          <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+          <Loader2 className="h-12 w-12 text-primary animate-spin" />
           <p className="text-gray-500 dark:text-gray-400 font-medium">Authenticating...</p>
         </div>
       </div>
@@ -293,8 +349,8 @@ export default function Login() {
     return (
       <div className="min-h-[80vh] flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white dark:bg-gray-900 rounded-3xl shadow-xl p-8 text-center space-y-6 border border-gray-100 dark:border-gray-800">
-          <div className="mx-auto h-20 w-20 bg-blue-50 dark:bg-blue-900/20 rounded-full flex items-center justify-center">
-            <Mail className="h-10 w-10 text-blue-600 dark:text-blue-400" />
+          <div className="mx-auto h-20 w-20 bg-primary/10 dark:bg-primary/20 rounded-full flex items-center justify-center">
+            <Mail className="h-10 w-10 text-primary dark:text-primary/80" />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 dark:text-white">Verify Your Email</h2>
           <p className="text-gray-500 dark:text-gray-400">
@@ -311,19 +367,19 @@ export default function Login() {
                 try {
                   await auth.currentUser?.reload();
                   if (auth.currentUser?.emailVerified) {
-                    toast.success("Email verified! Redirecting...");
+                    showSuccessToast("Email verified!", "Redirecting...");
                     window.location.reload();
                   } else {
-                    toast.error("Email not yet verified. Please check your inbox.");
+                    showErrorToast("Email not yet verified. Please check your inbox.");
                   }
                 } catch (e) {
-                  toast.error("Failed to refresh status. Please try again.");
+                  showErrorToast("Failed to refresh status. Please try again.");
                 } finally {
                   setLoading(false);
                 }
               }}
               disabled={loading}
-              className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-50"
+              className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-all disabled:opacity-50"
             >
               {loading ? "Checking..." : "I've Verified My Email"}
             </button>
@@ -333,16 +389,16 @@ export default function Login() {
                 setLoading(true);
                 try {
                   await sendEmailVerification(auth.currentUser);
-                  toast.success("Verification email resent! Please check your inbox.");
+                  showSuccessToast("Verification email resent!", "Please check your inbox.");
                 } catch (e: any) {
-                  const msg = getAuthErrorMessage(e);
-                  toast.error(msg);
+                  const { message } = getHumanReadableError(e);
+                  showErrorToast(e);
                 } finally {
                   setLoading(false);
                 }
               }}
               disabled={loading}
-              className="w-full text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+              className="w-full text-primary dark:text-primary/80 font-semibold hover:underline"
             >
               Resend Verification Email
             </button>
@@ -386,7 +442,7 @@ export default function Login() {
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
                 <button
                   type="button"
@@ -410,7 +466,7 @@ export default function Login() {
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
                 <button
                   type="button"
@@ -423,7 +479,7 @@ export default function Login() {
             </div>
             <button 
               disabled={loading}
-              className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-50"
+              className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-all disabled:opacity-50"
             >
               {loading ? "Updating..." : "Update Password"}
             </button>
@@ -437,8 +493,13 @@ export default function Login() {
     <div className="min-h-[80vh] flex items-center justify-center p-4">
       <div className="max-w-md w-full space-y-8 p-8 bg-white dark:bg-gray-900 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-800">
         <div className="text-center space-y-2">
-          <div className="mx-auto h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center mb-4">
-            <Shield className="h-10 w-10 text-blue-600 dark:text-blue-400" />
+          <div className="mx-auto h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center mb-4">
+            <ChurchLogo 
+              logoUrl={church?.branding?.logoUrl} 
+              name={church?.name} 
+              className="h-10 w-10 object-contain"
+              fallbackClassName="h-10 w-10 text-primary dark:text-primary/80"
+            />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
             {mode === "signin" ? "Welcome Back" : mode === "signup" ? "Create Account" : "Reset Password"}
@@ -463,7 +524,7 @@ export default function Login() {
               <button
                 onClick={handleGoogleLogin}
                 disabled={loading}
-                className="w-full flex items-center justify-center space-x-3 bg-white dark:bg-gray-800 border-2 border-gray-100 dark:border-gray-700 p-4 rounded-xl font-semibold hover:border-blue-600 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all disabled:opacity-50 dark:text-white"
+                className="w-full flex items-center justify-center space-x-3 bg-white dark:bg-gray-800 border-2 border-gray-100 dark:border-gray-700 p-4 rounded-xl font-semibold hover:border-primary dark:hover:border-primary/80 hover:text-primary dark:hover:text-primary/80 transition-all disabled:opacity-50 dark:text-white"
               >
                 <img src="https://www.google.com/favicon.ico" alt="Google" className="h-5 w-5" />
                 <span>Continue with Google</span>
@@ -491,7 +552,7 @@ export default function Login() {
                     value={firstName}
                     onChange={e => setFirstName(e.target.value)}
                     placeholder="John"
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
                 <div className="space-y-1">
@@ -502,7 +563,7 @@ export default function Login() {
                     value={lastName}
                     onChange={e => setLastName(e.target.value)}
                     placeholder="Doe"
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
               </div>
@@ -518,7 +579,7 @@ export default function Login() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="name@church.com"
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
             </div>
@@ -532,7 +593,7 @@ export default function Login() {
                       <button 
                         type="button"
                         onClick={() => setMode("forgot")}
-                        className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                        className="text-xs font-semibold text-primary dark:text-primary/80 hover:underline"
                       >
                         Forgot Password?
                       </button>
@@ -546,7 +607,7 @@ export default function Login() {
                       value={password}
                       onChange={e => setPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                      className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     />
                     <button
                       type="button"
@@ -574,7 +635,7 @@ export default function Login() {
                         value={confirmPassword}
                         onChange={e => setConfirmPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        className="w-full pl-12 pr-12 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                       />
                       <button
                         type="button"
@@ -591,7 +652,7 @@ export default function Login() {
 
             <button 
               disabled={loading}
-              className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-blue-700 transition-all disabled:opacity-50 shadow-lg shadow-blue-100 dark:shadow-none"
+              className="w-full bg-primary text-white p-4 rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-primary/90 transition-all disabled:opacity-50 shadow-lg shadow-primary/10 dark:shadow-none"
             >
               <span>
                 {loading ? "Processing..." : 
@@ -608,14 +669,14 @@ export default function Login() {
           {mode === "signin" ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Don't have an account?{" "}
-              <button onClick={() => setMode("signup")} className="text-blue-600 dark:text-blue-400 font-bold hover:underline">
+              <button onClick={() => setMode("signup")} className="text-primary dark:text-primary/80 font-bold hover:underline">
                 Sign Up
               </button>
             </p>
           ) : (
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Already have an account?{" "}
-              <button onClick={() => setMode("signin")} className="text-blue-600 dark:text-blue-400 font-bold hover:underline">
+              <button onClick={() => setMode("signin")} className="text-primary dark:text-primary/80 font-bold hover:underline">
                 Sign In
               </button>
             </p>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter } from "lucide-react";
 import { getChurches, addDocument, removeDocument, getCollection, updateDocument, subscribeToCollection } from "../lib/firestore";
-import { toast } from "sonner";
+import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion, AnimatePresence } from "motion/react";
 import { format, isAfter, parseISO } from "date-fns";
 import { where } from "firebase/firestore";
@@ -42,7 +42,7 @@ export default function MasterAdminDashboard() {
             role: "master_admin",
             updatedAt: new Date().toISOString()
           });
-          toast.success("Roles synchronized successfully!");
+          showSuccessToast("Roles synchronized successfully!");
         } catch (error) {
           console.error("Failed to sync roles:", error);
         }
@@ -80,7 +80,7 @@ export default function MasterAdminDashboard() {
 
     } catch (error) {
       console.error(error);
-      toast.error("Failed to load dashboard data");
+      showErrorToast("Failed to load dashboard data");
     }
   }
 
@@ -125,10 +125,10 @@ export default function MasterAdminDashboard() {
         status: "approved",
         updatedAt: new Date().toISOString()
       });
-      toast.success(`Approved ${request.userName} as ${role}`);
+      showSuccessToast(`Approved ${request.userName} as ${role}`);
       loadData();
     } catch (error) {
-      toast.error("Failed to approve request");
+      showErrorToast("Failed to approve request");
     }
   };
 
@@ -136,10 +136,10 @@ export default function MasterAdminDashboard() {
     try {
       await updateDocument("membershipRequests", request.id, { status: "rejected", updatedAt: new Date().toISOString() });
       await updateDocument("users", request.userId, { status: "rejected", updatedAt: new Date().toISOString() });
-      toast.success(`Rejected ${request.userName}`);
+      showSuccessToast(`Rejected ${request.userName}`);
       loadData();
     } catch (error) {
-      toast.error("Failed to reject request");
+      showErrorToast("Failed to reject request");
     }
   };
 
@@ -152,12 +152,12 @@ export default function MasterAdminDashboard() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
-      toast.success("Church added successfully!");
+      showSuccessToast("Church added successfully!");
       setShowAddModal(false);
       setNewChurch({ name: "", address: "", adminEmail: "", plan: "starter" });
       loadData();
     } catch (error) {
-      toast.error("Failed to add church");
+      showErrorToast("Failed to add church");
     }
   };
 
@@ -165,18 +165,18 @@ export default function MasterAdminDashboard() {
     if (!churchToDelete) return;
     try {
       await removeDocument("churches", churchToDelete.id);
-      toast.success("Church deleted");
+      showSuccessToast("Church deleted");
       setChurchToDelete(null);
       loadData();
     } catch (error) {
-      toast.error("Failed to delete church");
+      showErrorToast("Failed to delete church");
     }
   };
 
   if (loading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+        <Loader2 className="h-12 w-12 text-primary animate-spin" />
       </div>
     );
   }
@@ -190,7 +190,7 @@ export default function MasterAdminDashboard() {
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-bold flex items-center space-x-2 hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 dark:shadow-none"
+          className="bg-primary text-white px-8 py-4 rounded-2xl font-bold flex items-center space-x-2 hover:bg-primary/90 transition-all shadow-xl shadow-primary/10 dark:shadow-none"
         >
           <Plus className="h-5 w-5" />
           <span>Provision New Church</span>
@@ -200,7 +200,7 @@ export default function MasterAdminDashboard() {
       {/* Platform Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         {[
-          { label: "Total Churches", value: platformStats.totalChurches, icon: <ChurchIcon className="h-6 w-6 text-blue-600" />, color: "bg-blue-50" },
+          { label: "Total Churches", value: platformStats.totalChurches, icon: <ChurchIcon className="h-6 w-6 text-primary" />, color: "bg-primary/10" },
           { label: "Total Users", value: platformStats.totalUsers, icon: <Users className="h-6 w-6 text-purple-600" />, color: "bg-purple-50" },
           { label: "Total Children", value: platformStats.totalChildren, icon: <Baby className="h-6 w-6 text-green-600" />, color: "bg-green-50" },
           { label: "Active Trials", value: platformStats.activeTrials, icon: <TrendingUp className="h-6 w-6 text-orange-600" />, color: "bg-orange-50" },
@@ -227,7 +227,7 @@ export default function MasterAdminDashboard() {
       {pendingRequests.length > 0 && (
         <section className="space-y-6">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center space-x-2">
-            <Users className="h-6 w-6 text-blue-600" />
+            <Users className="h-6 w-6 text-primary" />
             <span>Pending Platform Access Requests</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -242,7 +242,7 @@ export default function MasterAdminDashboard() {
                   <div>
                     <h3 className="font-bold text-gray-900 dark:text-white">{request.userName}</h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400">{request.userEmail}</p>
-                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+                    <p className="text-xs text-primary dark:text-primary/70 mt-1 font-medium">
                       Target Church: {churches.find(c => c.id === request.churchId)?.name || "Unknown"}
                     </p>
                   </div>
@@ -250,7 +250,7 @@ export default function MasterAdminDashboard() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => handleApproveRequest(request, "admin")}
-                    className="flex-1 bg-blue-600 text-white py-2 px-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors"
+                    className="flex-1 bg-primary text-white py-2 px-3 rounded-xl text-xs font-bold hover:bg-primary/90 transition-colors"
                   >
                     Approve Admin
                   </button>
@@ -285,13 +285,13 @@ export default function MasterAdminDashboard() {
                 placeholder="Search churches..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm"
               />
             </div>
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="px-4 py-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm"
             >
               <option value="all">All Statuses</option>
               <option value="trialing">Trialing</option>
@@ -316,8 +316,8 @@ export default function MasterAdminDashboard() {
                 className="bg-white dark:bg-gray-900 rounded-[2rem] p-8 shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-xl transition-all group"
               >
                 <div className="flex justify-between items-start mb-6">
-                  <div className="h-14 w-14 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <ChurchIcon className="h-7 w-7 text-blue-600 dark:text-blue-400" />
+                  <div className="h-14 w-14 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <ChurchIcon className="h-7 w-7 text-primary dark:text-primary/70" />
                   </div>
                   <div className="flex items-center space-x-2">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
@@ -348,7 +348,7 @@ export default function MasterAdminDashboard() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <Calendar className="h-4 w-4 shrink-0" />
-                    <span>Plan: <span className="font-bold text-blue-600 uppercase">{church.plan || "Starter"}</span></span>
+                    <span>Plan: <span className="font-bold text-primary uppercase">{church.plan || "Starter"}</span></span>
                   </div>
                   {church.lastPaymentDate && (
                     <div className="flex items-center space-x-2 text-xs text-green-600 font-medium">
@@ -357,7 +357,7 @@ export default function MasterAdminDashboard() {
                     </div>
                   )}
                   {church.nextBillingDate && (
-                    <div className="flex items-center space-x-2 text-xs text-blue-600 font-medium">
+                    <div className="flex items-center space-x-2 text-xs text-primary dark:text-primary/70 font-medium">
                       <Calendar className="h-4 w-4 shrink-0" />
                       <span>Next Bill: {format(parseISO(church.nextBillingDate), "MMM dd, yyyy")}</span>
                     </div>
@@ -414,7 +414,7 @@ export default function MasterAdminDashboard() {
                     type="text"
                     value={newChurch.name}
                     onChange={e => setNewChurch({ ...newChurch, name: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="Grace Community Church"
                   />
                 </div>
@@ -425,7 +425,7 @@ export default function MasterAdminDashboard() {
                     type="text"
                     value={newChurch.address}
                     onChange={e => setNewChurch({ ...newChurch, address: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="123 Faith St, City"
                   />
                 </div>
@@ -436,7 +436,7 @@ export default function MasterAdminDashboard() {
                     type="email"
                     value={newChurch.adminEmail}
                     onChange={e => setNewChurch({ ...newChurch, adminEmail: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                     placeholder="admin@church.com"
                   />
                 </div>
@@ -445,7 +445,7 @@ export default function MasterAdminDashboard() {
                   <select
                     value={newChurch.plan}
                     onChange={e => setNewChurch({ ...newChurch, plan: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   >
                     <option value="starter">Starter (R249)</option>
                     <option value="growth">Growth (R499)</option>
@@ -462,7 +462,7 @@ export default function MasterAdminDashboard() {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 px-4 py-3 rounded-xl font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none"
+                    className="flex-1 px-4 py-3 rounded-xl font-bold bg-primary text-white hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none"
                   >
                     Create Church
                   </button>
