@@ -7,7 +7,7 @@ import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { addMonths, format, parseISO } from "date-fns";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import { EmailService } from "./emailService.js";
 import { v4 as uuidv4 } from "uuid";
@@ -217,7 +217,7 @@ app.use((req, res, next) => {
 
 // Rate Limiting
 const keyGenerator = (req: any) => {
-  return req.user?.uid || req.ip;
+  return req.user?.uid || ipKeyGenerator(req.ip);
 };
 
 const generalLimiter = rateLimit({
@@ -244,7 +244,7 @@ const sensitiveLimiter = rateLimit({
 const registrationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5, // Strict IP-based limit for registration
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
   message: { error: "Too many registration attempts. Please try again in an hour." }
 });
 
@@ -303,6 +303,11 @@ const InviteUserSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   role: z.enum(["parent", "volunteer", "admin", "master_admin"])
+});
+
+const AcceptInviteSchema = z.object({
+  token: z.string().length(64),
+  password: z.string().min(6)
 });
 
 const RegisterChurchSchema = z.object({
@@ -497,22 +502,60 @@ function generateSignature(data: any, passphrase?: string) {
 }
 
 // Firestore Cost Optimization Helpers
+/**
+ * Ownership validation rules per collection.
+ * This allows the system to scale as new data models are introduced.
+ */
+const OWNERSHIP_CONFIG: Record<string, { 
+  validate: (doc: any, churchId: string) => boolean 
+}> = {
+  // For the churches collection, the document ID itself is the churchId
+  churches: {
+    validate: (doc, churchId) => doc.id === churchId
+  },
+  // Default fallback for standard tenant-owned collections (children, volunteers, etc.)
+  default: {
+    validate: (doc, churchId) => doc.data()?.churchId === churchId
+  }
+};
+
+/**
+ * Enhanced document fetcher with multi-tenant isolation and caching.
+ * @throws {Error} 403 Forbidden if ownership validation fails.
+ */
 async function getCachedDoc(req: any, collection: string, id: string, churchId: string) {
+  // 1. Check Cache
   const cacheKey = `${collection}_${id}_${churchId}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
+  // 2. Fetch from Firestore
   const doc = await db.collection(collection).doc(id).get();
   req.firestoreOps.reads++;
   
-  if (doc.exists) {
-    const data = doc.data();
-    if (data.churchId === churchId) {
-      cache.set(cacheKey, data);
-      return data;
-    }
+  // 3. Handle Missing Data
+  if (!doc.exists) {
+    return null;
   }
-  return null;
+
+  // 4. Ownership Validation
+  const rule = OWNERSHIP_CONFIG[collection] || OWNERSHIP_CONFIG.default;
+  const isAuthorized = rule.validate(doc, churchId);
+
+  if (!isAuthorized) {
+    console.warn(`SECURITY ALERT: Unauthorized access attempt by church ${churchId} on ${collection}/${id}`);
+    
+    const error: any = new Error("Access Denied: You do not have permission to access this resource.");
+    error.status = 403;
+    error.code = "FORBIDDEN";
+    error.traceId = req.traceId;
+    throw error;
+  }
+
+  // 5. Cache and Return
+  const data = doc.data();
+  cache.set(cacheKey, data);
+  return data;
 }
 
 async function startServer() {
@@ -938,6 +981,142 @@ async function startServer() {
     } catch (error: any) {
       console.error("Invitation error:", error.message);
       res.status(500).json({ error: "Internal server error", traceId: req.traceId });
+    }
+  });
+
+  // Accept Invitation Endpoint
+  app.post("/api/accept-invite", sensitiveLimiter, validate(AcceptInviteSchema), async (req, res) => {
+    const { token, password } = req.body;
+
+    try {
+      // 1. Find and Validate Invitation
+      const inviteQuery = await db.collection("invitations")
+        .where("token", "==", token)
+        .where("status", "==", "pending")
+        .limit(1)
+        .get();
+      req.firestoreOps.reads++;
+
+      if (inviteQuery.empty) {
+        return res.status(404).json({ error: "Invalid or already used invitation." });
+      }
+
+      const inviteDoc = inviteQuery.docs[0];
+      const inviteData = inviteDoc.data();
+
+      // 2. Check Expiry
+      if (new Date(inviteData.expiresAt) < new Date()) {
+        await inviteDoc.ref.update({ status: "expired" });
+        req.firestoreOps.writes++;
+        return res.status(400).json({ error: "This invitation has expired." });
+      }
+
+      // 3. Create Auth User
+      const userRecord = await getAuth().createUser({
+        email: inviteData.email,
+        password: password,
+        displayName: `${inviteData.firstName} ${inviteData.lastName}`,
+        emailVerified: false
+      });
+
+      // 4. Atomic Transaction: Create User Doc and Update Invite
+      await db.runTransaction(async (transaction) => {
+        // Create User Document
+        const userRef = db.collection("users").doc(userRecord.uid);
+        transaction.set(userRef, {
+          uid: userRecord.uid,
+          email: inviteData.email,
+          firstName: inviteData.firstName,
+          lastName: inviteData.lastName,
+          role: inviteData.role,
+          roles: inviteData.roles || [inviteData.role],
+          churchId: inviteData.churchId,
+          churchSlug: inviteData.churchSlug,
+          status: "approved",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+
+        // Mark Invitation as Accepted
+        transaction.update(inviteDoc.ref, {
+          status: "accepted",
+          acceptedAt: new Date().toISOString(),
+          acceptedBy: userRecord.uid,
+          updatedAt: new Date().toISOString()
+        });
+      });
+      req.firestoreOps.writes += 2;
+
+      // 5. Log Audit
+      await db.collection("audit_logs").add({
+        churchId: inviteData.churchId,
+        userId: userRecord.uid,
+        action: "invitation_accepted",
+        category: "auth",
+        details: { role: inviteData.role, email: inviteData.email },
+        timestamp: new Date().toISOString(),
+        source: "server"
+      });
+      req.firestoreOps.writes++;
+
+      // 6. Send Verification Email
+      // We'll let the client handle this via Firebase Auth to use the built-in service
+      // which is already configured for the project.
+
+      res.json({ 
+        success: true, 
+        message: "Account created successfully. Redirecting to verification...",
+        userId: userRecord.uid
+      });
+    } catch (error: any) {
+      console.error("Accept invite failed:", error.message);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Validate Invitation Endpoint
+  app.get("/api/validate-invite", generalLimiter, async (req, res) => {
+    const { token } = req.query;
+
+    if (!token || typeof token !== "string" || token.length !== 64) {
+      return res.status(400).json({ error: "Invalid token format." });
+    }
+
+    try {
+      const inviteQuery = await db.collection("invitations")
+        .where("token", "==", token)
+        .where("status", "==", "pending")
+        .limit(1)
+        .get();
+      req.firestoreOps.reads++;
+
+      if (inviteQuery.empty) {
+        return res.status(404).json({ error: "Invitation not found or already used." });
+      }
+
+      const inviteDoc = inviteQuery.docs[0];
+      const inviteData = inviteDoc.data();
+
+      // Check Expiry
+      if (new Date(inviteData.expiresAt) < new Date()) {
+        await inviteDoc.ref.update({ status: "expired" });
+        req.firestoreOps.writes++;
+        return res.status(400).json({ error: "This invitation has expired." });
+      }
+
+      // Return only necessary public info
+      res.json({
+        id: inviteDoc.id,
+        email: inviteData.email,
+        firstName: inviteData.firstName,
+        lastName: inviteData.lastName,
+        role: inviteData.role,
+        churchName: inviteData.churchName || inviteData.churchSlug,
+        churchId: inviteData.churchId
+      });
+    } catch (error: any) {
+      console.error("Validate invite failed:", error.message);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 

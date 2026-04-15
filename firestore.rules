@@ -160,6 +160,18 @@ service cloud.firestore {
              (isAdmin() || isMasterAdmin());
     }
 
+    function isValidInvitation(data) {
+      return data.keys().hasAll(['email', 'firstName', 'lastName', 'role', 'churchId', 'status', 'token', 'expiresAt']) &&
+             isValidEmail(data.email) &&
+             data.firstName is string && data.firstName.size() < 100 &&
+             data.lastName is string && data.lastName.size() < 100 &&
+             data.role in ['parent', 'volunteer', 'admin', 'master_admin'] &&
+             data.churchId is string && data.churchId.size() < 128 &&
+             data.status in ['pending', 'accepted', 'expired'] &&
+             data.token is string && data.token.size() == 64 &&
+             data.expiresAt is string;
+    }
+
     match /users/{userId} {
       allow read: if isAuthenticated() && (
         request.auth.uid == userId || 
@@ -375,18 +387,28 @@ service cloud.firestore {
     }
 
     match /invitations/{invitationId} {
-      // Allow token lookup for unauthenticated users via list with limit 1 and token filter
-      allow list: if request.query.limit == 1 && 'token' in request.query.filters;
+      // Layer 1: Access Lockdown
+      // Only Admins can list or read invitations directly.
+      // Recipients use the /api/validate-invite endpoint.
+      allow list: if isMasterAdmin() || (isAdmin() && getUserData().churchId != null);
+      allow get: if isMasterAdmin() || 
+                   (isAuthenticated() && (
+                     request.auth.token.email == resource.data.email || 
+                     (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId)
+                   ));
+
+      // Layer 3: Write Protection
+      allow create: if (isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId)) && 
+                    isValidInvitation(request.resource.data);
       
-      allow read: if isAuthenticated() && (
-        isMasterAdmin() || 
-        request.auth.token.email == resource.data.email || 
-        (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId)
-      );
-      allow create: if isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId);
+      // Single-use enforcement and role lockdown
       allow update: if isMasterAdmin() || 
-                    (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId) ||
-                    (isAuthenticated() && request.auth.token.email == resource.data.email && request.resource.data.status == 'accepted');
+                    (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && isValidInvitation(request.resource.data)) ||
+                    (isAuthenticated() && request.auth.token.email == resource.data.email && 
+                     resource.data.status == 'pending' &&
+                     request.resource.data.status == 'accepted' && 
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy', 'updatedAt']) &&
+                     isValidInvitation(request.resource.data));
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
     }
 

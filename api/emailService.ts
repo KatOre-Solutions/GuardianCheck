@@ -407,4 +407,69 @@ export class EmailService {
       throw error;
     }
   }
+
+  async sendVerificationEmail(email: string, firstName: string, verificationLink: string) {
+    if (!this.db) {
+      console.error("Cannot send verification email: Database not initialized.");
+      return;
+    }
+
+    try {
+      const escapedFirstName = he.escape(firstName);
+      const subject = `Verify your email for GuardianCheck`;
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px; }
+            .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { padding: 20px; }
+            .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+            .footer { font-size: 12px; color: #999; text-align: center; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Email Verification</h1>
+            </div>
+            <div class="content">
+              <p>Hello ${escapedFirstName},</p>
+              <p>Thank you for joining GuardianCheck. Please verify your email address to access your account features.</p>
+              <div style="text-align: center;">
+                <a href="${verificationLink}" class="button">Verify Email Address</a>
+              </div>
+              <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+              <p style="word-break: break-all; font-size: 12px; color: #666;">${verificationLink}</p>
+            </div>
+            <div class="footer">
+              <p>&copy; ${new Date().getFullYear()} GuardianCheck. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      await this.transporter.sendMail({
+        from: `"GuardianCheck" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
+        to: email,
+        subject: subject,
+        html: html,
+      });
+
+      await this.logEmail({
+        churchId: "system",
+        recipientEmail: email,
+        eventType: "verification",
+        status: "success"
+      });
+
+      console.log(`Verification email sent to ${email}`);
+    } catch (error: any) {
+      console.error(`Failed to send verification email to ${email}:`, error.message);
+      throw error;
+    }
+  }
 }

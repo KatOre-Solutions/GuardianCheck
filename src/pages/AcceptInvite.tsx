@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+import { signInWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth } from "../lib/firebase";
-import { getInvitationByToken, setDocument, updateDocument } from "../lib/firestore";
+import { getInvitationByToken } from "../lib/firestore";
 import { Shield, Lock, User, Mail, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
@@ -59,40 +59,28 @@ export default function AcceptInvite() {
 
     setSubmitting(true);
     try {
-      // 1. Create Auth User
-      const userCredential = await createUserWithEmailAndPassword(auth, invitation.email, password);
-      const user = userCredential.user;
-
-      // 2. Send Verification Email
-      await sendEmailVerification(user);
-
-      // 3. Create User Document in Firestore
-      await setDocument("users", user.uid, {
-        uid: user.uid,
-        email: invitation.email,
-        firstName: invitation.firstName,
-        lastName: invitation.lastName,
-        role: invitation.role,
-        roles: invitation.roles || [invitation.role],
-        churchId: invitation.churchId,
-        churchSlug: invitation.churchSlug,
-        status: "approved",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      const response = await fetch("/api/accept-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password })
       });
 
-      // 4. Update Invitation Status
-      await updateDocument("invitations", invitation.id, {
-        status: "accepted",
-        acceptedAt: new Date().toISOString(),
-        acceptedBy: user.uid
-      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to accept invitation");
+      }
 
-      showSuccessToast("Account created! Please verify your email.");
+      // 2. Sign in the user so we can send the verification email
+      const userCredential = await signInWithEmailAndPassword(auth, invitation.email, password);
+      
+      // 3. Send Verification Email using Firebase's built-in service
+      await sendEmailVerification(userCredential.user);
+
+      showSuccessToast("Account created!", "Please check your email to verify your account.");
       navigate("/login");
     } catch (err: any) {
       console.error(err);
-      showErrorToast(err);
+      showErrorToast(err.message || "An unexpected error occurred");
     } finally {
       setSubmitting(false);
     }

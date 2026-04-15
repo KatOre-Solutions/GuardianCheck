@@ -211,14 +211,17 @@ export async function getUserByEmail(email: string) {
 
 export async function getInvitationByToken(token: string) {
   try {
-    const colRef = collection(db, "invitations");
-    const q = query(colRef, where("token", "==", token), where("status", "==", "pending"), limit(1));
-    const querySnapshot = await getDocs(q);
-    if (querySnapshot.empty) return null;
-    const doc = querySnapshot.docs[0];
-    return { id: doc.id, ...doc.data() };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, "invitations");
+    const response = await fetch(`/api/validate-invite?token=${token}`);
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to validate invitation");
+    }
+    
+    return data;
+  } catch (error: any) {
+    console.error("Invitation validation failed:", error.message);
+    throw error;
   }
 }
 

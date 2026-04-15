@@ -27,7 +27,7 @@ import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 
 function DashboardRedirect() {
-  const { userData, roles, loading } = useAuth();
+  const { user, userData, roles, loading } = useAuth();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -35,6 +35,12 @@ function DashboardRedirect() {
       if (!userData) {
         navigate("/login");
       } else {
+        // Force verification for password users
+        if (!user?.emailVerified && user?.providerData.some(p => p.providerId === "password")) {
+          navigate("/login");
+          return;
+        }
+
         const slug = userData.churchSlug;
         if (roles.includes("master_admin")) navigate("/master-admin");
         else if (slug) {
@@ -68,6 +74,7 @@ function Navigation() {
 
   const hasRole = (role: string) => roles.includes(role as any);
   const churchPrefix = church ? `/${church.slug}` : "";
+  const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
 
   return (
     <nav className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
@@ -85,51 +92,55 @@ function Navigation() {
           <div className="flex items-center space-x-4">
             {user ? (
               <>
-                {hasRole("master_admin") && (
-                  <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                    <LayoutDashboard className="h-4 w-4" />
-                    <span className="hidden sm:inline">Platform Admin</span>
-                  </Link>
-                )}
-                {church && (
+                {isEmailVerified && (
                   <>
-                    {(hasRole("admin") || hasRole("master_admin")) && (
+                    {hasRole("master_admin") && (
+                      <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                        <LayoutDashboard className="h-4 w-4" />
+                        <span className="hidden sm:inline">Platform Admin</span>
+                      </Link>
+                    )}
+                    {church && (
                       <>
-                        <Link to={`${churchPrefix}/admin`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                          <LayoutDashboard className="h-4 w-4" />
-                          <span className="hidden sm:inline">Admin</span>
-                        </Link>
-                        <Link to={`${churchPrefix}/admin/settings`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                          <Settings className="h-4 w-4" />
-                          <span className="hidden sm:inline">Settings</span>
-                        </Link>
-                        <Link to={`${churchPrefix}/admin/events`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                          <Calendar className="h-4 w-4" />
-                          <span className="hidden sm:inline">Events</span>
-                        </Link>
+                        {(hasRole("admin") || hasRole("master_admin")) && (
+                          <>
+                            <Link to={`${churchPrefix}/admin`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                              <LayoutDashboard className="h-4 w-4" />
+                              <span className="hidden sm:inline">Admin</span>
+                            </Link>
+                            <Link to={`${churchPrefix}/admin/settings`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                              <Settings className="h-4 w-4" />
+                              <span className="hidden sm:inline">Settings</span>
+                            </Link>
+                            <Link to={`${churchPrefix}/admin/events`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                              <Calendar className="h-4 w-4" />
+                              <span className="hidden sm:inline">Events</span>
+                            </Link>
+                          </>
+                        )}
+                        {(hasRole("admin") || hasRole("volunteer") || hasRole("master_admin")) && (
+                          <Link to={`${churchPrefix}/volunteer`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                            <ClipboardCheck className="h-4 w-4" />
+                            <span className="hidden sm:inline">Volunteer</span>
+                          </Link>
+                        )}
+                        {(hasRole("admin") || hasRole("parent") || hasRole("master_admin")) && (
+                          <Link to={`${churchPrefix}/parent`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                            <HomeIcon className="h-4 w-4" />
+                            <span className="hidden sm:inline">Parent</span>
+                          </Link>
+                        )}
                       </>
                     )}
-                    {(hasRole("admin") || hasRole("volunteer") || hasRole("master_admin")) && (
-                      <Link to={`${churchPrefix}/volunteer`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <ClipboardCheck className="h-4 w-4" />
-                        <span className="hidden sm:inline">Volunteer</span>
-                      </Link>
-                    )}
-                    {(hasRole("admin") || hasRole("parent") || hasRole("master_admin")) && (
-                      <Link to={`${churchPrefix}/parent`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <HomeIcon className="h-4 w-4" />
-                        <span className="hidden sm:inline">Parent</span>
-                      </Link>
-                    )}
+                    <Link
+                      to="/profile"
+                      className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+                    >
+                      <User className="h-4 w-4" />
+                      <span className="hidden sm:inline">Profile</span>
+                    </Link>
                   </>
                 )}
-                <Link
-                  to="/profile"
-                  className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
-                >
-                  <User className="h-4 w-4" />
-                  <span className="hidden sm:inline">Profile</span>
-                </Link>
                 <button
                   onClick={handleLogout}
                   className="text-gray-600 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
@@ -161,6 +172,9 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   React.useEffect(() => {
     if (!loading && !tenantLoading) {
       if (!user) {
+        navigate(church ? `/${church.slug}/login` : "/login");
+      } else if (!user.emailVerified && user.providerData.some(p => p.providerId === "password")) {
+        // Force verification for password users
         navigate(church ? `/${church.slug}/login` : "/login");
       } else if (status === "incomplete_profile") {
         // Only redirect if status is explicitly "incomplete_profile"
