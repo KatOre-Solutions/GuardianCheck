@@ -2,6 +2,16 @@ import nodemailer from "nodemailer";
 import { format } from "date-fns";
 import he from "he";
 
+// Global Server-side Logger for EmailService
+const isDev = String(process.env.VITE_DEV_MODE).toLowerCase() === "true";
+const logger = {
+  log: (...args: any[]) => isDev && console.log(...args),
+  info: (...args: any[]) => isDev && console.info(...args),
+  warn: (...args: any[]) => isDev && console.warn(...args),
+  error: (...args: any[]) => isDev && console.error(...args),
+  debug: (...args: any[]) => isDev && console.debug(...args),
+};
+
 interface EmailOptions {
   to: string;
   subject: string;
@@ -28,7 +38,7 @@ export class EmailService {
   constructor(db: any) {
     this.db = db;
     if (!db) {
-      console.warn("EmailService initialized without database. Logging will be disabled.");
+      logger.warn("EmailService initialized without database. Logging will be disabled.");
     }
     
     // Configure transporter
@@ -49,7 +59,7 @@ export class EmailService {
       await this.transporter.verify();
       return true;
     } catch (error) {
-      console.error("SMTP Verification failed:", error);
+      logger.error("SMTP Verification failed:", error);
       return false;
     }
   }
@@ -408,16 +418,16 @@ export class EmailService {
         }
       });
 
-      console.log(`Invitation email sent to ${email}`);
+      logger.log(`Invitation email sent to ${email}`);
     } catch (error: any) {
-      console.error(`Failed to send invitation email to ${email}:`, error.message);
+      logger.error(`Failed to send invitation email to ${email}:`, error.message);
       throw error;
     }
   }
 
   async sendVerificationEmail(email: string, firstName: string, churchName: string, verificationLink: string) {
     if (!this.db) {
-      console.error("Cannot send verification email: Database not initialized.");
+      logger.error("Cannot send verification email: Database not initialized.");
       return;
     }
 
@@ -475,9 +485,9 @@ export class EmailService {
         status: "success"
       });
 
-      console.log(`Verification email sent to ${email}`);
+      logger.log(`Verification email sent to ${email}`);
     } catch (error: any) {
-      console.error(`Failed to send verification email to ${email}:`, error.message);
+      logger.error(`Failed to send verification email to ${email}:`, error.message);
       throw error;
     }
   }

@@ -102,6 +102,13 @@ export default function AdminDashboard() {
   const [exporting, setExporting] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [triggeringEmergency, setTriggeringEmergency] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<string>("");
+
+  useEffect(() => {
+    if (churchData?.plan) {
+      setSelectedPlan(churchData.plan.toLowerCase());
+    }
+  }, [churchData?.plan]);
 
   useEffect(() => {
     const paymentStatus = searchParams.get("payment");
@@ -686,22 +693,38 @@ export default function AdminDashboard() {
               <Zap className="h-6 w-6 text-white" />
             </div>
             <div>
-              <p className="font-bold">Free Trial Active</p>
-              <p className="text-sm text-orange-50/80">
-                Your trial ends on {churchData.trialEndsAt ? format(new Date(churchData.trialEndsAt), "MMMM d, yyyy") : "N/A"}. 
-                Upgrade now to ensure uninterrupted service.
-              </p>
+              {searchParams.get("payment") === "success" ? (
+                <>
+                  <p className="font-bold flex items-center">
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Subscription Syncing...
+                  </p>
+                  <p className="text-sm text-orange-50/80">
+                    We've received your payment! Updating your dashboard status now.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-bold">Free Trial Active</p>
+                  <p className="text-sm text-orange-50/80">
+                    Your trial ends on {churchData.subscription?.trialEndsAt ? format(new Date(churchData.subscription.trialEndsAt), "MMMM d, yyyy") : "N/A"}. 
+                    Upgrade now to ensure uninterrupted service.
+                  </p>
+                </>
+              )}
             </div>
           </div>
-          <button 
-            onClick={() => {
-              const subSection = document.getElementById('subscription-section');
-              subSection?.scrollIntoView({ behavior: 'smooth' });
-            }}
-            className="bg-white text-orange-600 px-6 py-2 rounded-xl font-bold text-sm hover:bg-orange-50 transition-colors"
-          >
-            Upgrade Plan
-          </button>
+          {searchParams.get("payment") !== "success" && (
+            <button 
+              onClick={() => {
+                const subSection = document.getElementById('subscription-section');
+                subSection?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="bg-white text-orange-600 px-6 py-2 rounded-xl font-bold text-sm hover:bg-orange-50 transition-colors"
+            >
+              Upgrade Plan
+            </button>
+          )}
         </motion.div>
       )}
 
@@ -1407,15 +1430,32 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl border border-gray-100 dark:border-gray-700">
-              <div className="flex justify-between items-start mb-4">
+              <div className="flex justify-between items-start mb-6">
                 <div>
-                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Current Plan</p>
-                  <h4 className="text-3xl font-bold text-gray-900 dark:text-white uppercase">{churchData?.plan || "Starter"}</h4>
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Plan Management</p>
+                  <div className="flex gap-2 mt-2">
+                    {["starter", "growth", "professional"].map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setSelectedPlan(p)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all ${
+                          selectedPlan === p 
+                            ? "bg-primary text-white shadow-md shadow-primary/20 scale-105" 
+                            : "bg-white dark:bg-gray-800 text-gray-500 border border-gray-100 dark:border-gray-700 hover:border-primary/50"
+                        }`}
+                      >
+                        {p}
+                        {churchData?.plan === p && (
+                          <span className="ml-1 text-[8px] bg-white/20 px-1 rounded-full">Current</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Price</p>
                   <p className="text-2xl font-bold text-primary">
-                    {churchData?.plan === "professional" ? "R999" : churchData?.plan === "growth" ? "R499" : "R249"}
+                    {selectedPlan === "professional" ? "R999" : selectedPlan === "growth" ? "R499" : "R249"}
                     <span className="text-sm text-gray-500 font-normal">/mo</span>
                   </p>
                 </div>
@@ -1452,9 +1492,9 @@ export default function AdminDashboard() {
               </p>
               <PayFastButton 
                 churchId={userData?.churchId || ""} 
-                plan={churchData?.plan || "starter"} 
-                amount={churchData?.plan === "professional" ? 999 : churchData?.plan === "growth" ? 499 : 249}
-                itemName={`GuardianCheck ${churchData?.plan || "Starter"} Subscription`}
+                plan={selectedPlan || "starter"} 
+                amount={selectedPlan === "professional" ? 999 : selectedPlan === "growth" ? 499 : 249}
+                itemName={`GuardianCheck ${selectedPlan || "Starter"} Subscription`}
                 mPaymentId={`SUB-${userData?.churchId}-${Date.now()}`}
               />
               <p className="text-[10px] text-center text-gray-400 mt-4">

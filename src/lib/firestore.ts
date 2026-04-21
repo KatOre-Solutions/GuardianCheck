@@ -20,6 +20,7 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "./firebase";
 import { getHumanReadableError, showErrorToast } from "./error-handler";
+import { logger } from "./logger";
 
 export enum OperationType {
   CREATE = 'create',
@@ -52,7 +53,7 @@ export interface FirestoreErrorInfo {
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const humanError = getHumanReadableError(error);
   
-  const isDevMode = import.meta.env.VITE_DEV_MODE === 'true';
+  const isDevMode = logger.isDevEnabled();
   
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -76,22 +77,11 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   // SECURE LOGGING: Strip sensitive data in production
   if (isDevMode) {
     console.group('Firestore Error [DEV]');
-    console.error('Operation:', operationType);
-    console.error('Path:', path);
-    console.error('Error Details:', errInfo);
+    logger.error('Operation:', operationType);
+    logger.error('Path:', path);
+    logger.error('Error Details:', errInfo);
     console.groupEnd();
-  } else {
-    // Only log the basics for security - NO USER DATA (UID, Email) in production console logs
-    const safeInfo = {
-      error: "Missing or insufficient permissions.", 
-      operation: operationType,
-      path: path,
-      traceId: (error as any)?.code || 'standard-trace'
-    };
-    console.error('Firestore Permission Error: Access Denied. Check your role or document ownership.');
-    // We intentionally don't JSON.stringify everything here if the user is worried about path leaking,
-    // but the task ID/code is needed for debugging.
-  }
+  } 
   
   // Log critical errors to audit logs for monitoring
   if (operationType === OperationType.WRITE || operationType === OperationType.CREATE || operationType === OperationType.UPDATE) {

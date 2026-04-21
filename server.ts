@@ -15,6 +15,17 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 
+// Global Server-side Logger
+const isDev = String(process.env.VITE_DEV_MODE).toLowerCase() === "true";
+const logger = {
+  log: (...args: any[]) => isDev && console.log(...args),
+  info: (...args: any[]) => isDev && console.info(...args),
+  warn: (...args: any[]) => isDev && console.warn(...args),
+  error: (...args: any[]) => isDev && console.error(...args),
+  debug: (...args: any[]) => isDev && console.debug(...args),
+  isDevEnabled: () => isDev
+};
+
 // TTL Cache for Firestore reads (60 seconds default)
 const cache = new NodeCache({ stdTTL: 60, checkperiod: 120 });
 
@@ -35,10 +46,10 @@ let firebaseConfig: any;
 try {
   firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
   if (!firebaseConfig.projectId) {
-    console.error("firebase-applet-config.json is missing projectId");
+    logger.error("firebase-applet-config.json is missing projectId");
   }
 } catch (error) {
-  console.error("Failed to read firebase-applet-config.json:", error);
+  logger.error("Failed to read firebase-applet-config.json:", error);
   firebaseConfig = {};
 }
 
@@ -1209,94 +1220,87 @@ async function startServer() {
   // PayFast ITN Webhook
   app.post("/api/payfast-itn", async (req, res) => {
     const data = req.body;
-    console.log("PayFast ITN Received:", JSON.stringify(data, null, 2));
+    
+    // 1. QUICK ACKNOWLEDGEMENT
+    // Acknowledge receipt immediately to prevent PayFast timeout/cURL errors
+    res.status(200).send("OK");
 
-    try {
-      // 1. Validate Signature
-      const passphrase = process.env.PAYFAST_PASSPHRASE;
-      const signature = generateSignature(data, passphrase);
-      
-      if (signature !== data.signature) {
-        console.error(`Invalid PayFast Signature. Calculated: ${signature}, Received: ${data.signature}`);
-        return res.status(400).send("Invalid Signature");
-      }
-
-      console.log("PayFast Signature Validated.");
-
-      // 2. Ping-back to PayFast to verify data
-      const isDevMode = process.env.VITE_DEV_MODE === "true";
-      const sandbox = isDevMode || process.env.PAYFAST_SANDBOX === "true";
-      const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
-      const validateUrl = `https://${pfHost}/eng/query/validate`;
-      
-      console.log(`Pinging back to PayFast for validation: ${validateUrl}`);
-      
-      const params = new URLSearchParams();
-      Object.keys(data).forEach(key => params.append(key, data[key]));
-      
-      const validationResponse = await axios.post(validateUrl, params.toString());
-      
-      if (validationResponse.data !== "VALID") {
-        console.error("PayFast Data Validation Failed:", validationResponse.data);
-        return res.status(400).send("Validation Failed");
-      }
-
-      console.log("PayFast Data Validation Successful.");
-
-      // 3. Process Payment
-      if (data.payment_status === "COMPLETE") {
-        const churchId = data.custom_str1;
-        const plan = data.custom_str2;
+    // 2. BACKGROUND PROCESSING
+    (async () => {
+      const traceId = uuidv4().substring(0, 8);
+      try {
+        logger.log(`[ITN_${traceId}] Background processing started.`);
         
-        console.log(`Processing COMPLETE payment for Church: ${churchId}, Plan: ${plan}`);
+        const sandbox = String(process.env.VITE_PAYFAST_SANDBOX).toLowerCase() === "true";
         
-        if (!churchId) {
-          console.error("Missing churchId in ITN data");
-          return res.status(400).send("Missing churchId");
+        // Validate Signature
+        const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
+        const signature = generateSignature(data, passphrase);
+        
+        if (signature !== data.signature) {
+          logger.error(`[ITN_${traceId}] Invalid Signature.`);
+          return;
         }
 
-        const churchRef = db.collection("churches").doc(churchId);
-        const churchDoc = await churchRef.get();
+        // Ping-back verification
+        const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
+        const validateUrl = `https://${pfHost}/eng/query/validate`;
+        const params = new URLSearchParams();
+        Object.keys(data).forEach(key => params.append(key, data[key]));
+        
+        const validationResponse = await axios.post(validateUrl, params.toString());
+        if (validationResponse.data !== "VALID") {
+          logger.error(`[ITN_${traceId}] Validation Failed: ${validationResponse.data}`);
+          return;
+        }
 
-        if (churchDoc.exists) {
-          const now = new Date();
-          const nextBilling = addMonths(now, 1);
+        // Action: COMPLETE payment
+        if (data.payment_status === "COMPLETE") {
+          const churchId = data.custom_str1;
+          const plan = data.custom_str2;
+          
+          if (!churchId) {
+            logger.error(`[ITN_${traceId}] Missing churchId.`);
+            return;
+          }
 
-          console.log(`Updating church ${churchId} to active status.`);
+          const churchRef = db.collection("churches").doc(churchId);
+          const churchDoc = await churchRef.get();
 
-          await churchRef.update({
-            status: "active",
-            plan: plan || churchDoc.data()?.plan || "starter",
-            lastPaymentDate: now.toISOString(),
-            nextBillingDate: nextBilling.toISOString(),
-            updatedAt: now.toISOString(),
-            payfast_m_payment_id: data.m_payment_id,
-            payfast_pf_payment_id: data.pf_payment_id
-          });
+          if (churchDoc.exists) {
+            const now = new Date();
+            const nextBilling = addMonths(now, 1);
 
-          // Log transaction
-          await db.collection("transactions").add({
-            churchId,
-            amount: data.amount_gross,
-            plan,
-            payfast_pf_payment_id: data.pf_payment_id,
-            status: "complete",
-            createdAt: now.toISOString()
-          });
+            await churchRef.update({
+              status: "active",
+              plan: plan || churchDoc.data()?.plan || "starter",
+              lastPaymentDate: now.toISOString(),
+              nextBillingDate: nextBilling.toISOString(),
+              updatedAt: now.toISOString(),
+              payfast_m_payment_id: data.m_payment_id,
+              payfast_pf_payment_id: data.pf_payment_id
+            });
 
-          console.log(`Church ${churchId} subscription updated to active successfully.`);
+            await db.collection("transactions").add({
+              churchId,
+              amount: data.amount_gross,
+              plan,
+              payfast_pf_payment_id: data.pf_payment_id,
+              status: "complete",
+              createdAt: now.toISOString()
+            });
+
+            logger.log(`[ITN_${traceId}] Church ${churchId} updated successfully.`);
+          } else {
+            logger.error(`[ITN_${traceId}] Church doc not found: ${churchId}`);
+          }
         } else {
-          console.error(`Church document not found: ${churchId}`);
+          logger.log(`[ITN_${traceId}] Status is not COMPLETE: ${data.payment_status}`);
         }
-      } else {
-        console.log(`Payment status is not COMPLETE: ${data.payment_status}`);
+      } catch (error: any) {
+        logger.error(`[ITN_${traceId}] Critical error:`, error.message);
       }
-
-      res.status(200).send("OK");
-    } catch (error: any) {
-      console.error("Error processing PayFast ITN:", error.message, error.stack);
-      res.status(500).send("Internal Error");
-    }
+    })();
   });
 
   // Church Registration Endpoint

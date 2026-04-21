@@ -1,5 +1,6 @@
 import React from "react";
 import { CreditCard, Loader2 } from "lucide-react";
+import { logger } from "../lib/logger";
 
 interface PayFastButtonProps {
   amount: number;
@@ -16,25 +17,67 @@ export default function PayFastButton({
   mPaymentId, 
   churchId, 
   plan,
-  isSandbox = true 
+  isSandbox: explicitSandbox
 }: PayFastButtonProps) {
-  // These should come from environment variables
-  const merchantId = (import.meta as any).env.VITE_PAYFAST_MERCHANT_ID || "10000100";
-  const merchantKey = (import.meta as any).env.VITE_PAYFAST_MERCHANT_KEY || "46f0cd694581a";
-  const isSandboxEnv = (import.meta as any).env.VITE_PAYFAST_SANDBOX === "true";
+  // Config from environment variables
+  const envMerchantId = import.meta.env.VITE_PAYFAST_MERCHANT_ID;
+  const envMerchantKey = import.meta.env.VITE_PAYFAST_MERCHANT_KEY;
+  const isSandboxEnv = String(import.meta.env.VITE_PAYFAST_SANDBOX).toLowerCase() === "true";
   
-  const baseUrl = (isSandbox || isSandboxEnv)
+  // Use explicit prop if provided, otherwise fallback to env config
+  const isSandbox = explicitSandbox !== undefined ? explicitSandbox : isSandboxEnv;
+
+  // Final credentials Logic:
+  // If sandbox is TRUE, strictly use the provided sandbox keys and IGNORE environment variables.
+  // If sandbox is FALSE, use the keys from the environment variables (Live mode).
+  let merchantId: string;
+  let merchantKey: string;
+
+  if (isSandbox) {
+    merchantId = "10047420";
+    merchantKey = "t83mgmlr0c29k";
+  } else {
+    merchantId = envMerchantId || "";
+    merchantKey = envMerchantKey || "";
+  }
+  
+  const baseUrl = isSandbox
     ? "https://sandbox.payfast.co.za/eng/process" 
     : "https://www.payfast.co.za/eng/process";
 
-  // Use the current origin or a configured APP_URL for the notify_url
-  const appUrl = (import.meta as any).env.VITE_APP_URL || window.location.origin;
+  // Debugging info
+  React.useEffect(() => {
+    if (logger.isDevEnabled()) {
+      logger.log("PAYFAST SECURITY CHECK:", {
+        ENVIRONMENT: isSandbox ? "SANDBOX" : "LIVE",
+        FINAL_MERCHANT_ID: merchantId,
+        TARGET_URL: baseUrl,
+        VITE_PAYFAST_SANDBOX_RAW: import.meta.env.VITE_PAYFAST_SANDBOX
+      });
+    }
+  }, [isSandbox, baseUrl, merchantId]);
+
+  // Configuration warning for developers
+  const isMissingConfig = !merchantId || !merchantKey;
+
+  const appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
   const returnUrl = `${window.location.origin}/admin?payment=success&plan=${plan}`;
   const cancelUrl = `${window.location.origin}/admin?payment=cancel`;
   const notifyUrl = `${appUrl}/api/payfast-itn`;
 
+  if (isMissingConfig) {
+    return (
+      <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-100 dark:border-orange-900/30 rounded-xl">
+        <p className="text-sm text-orange-700 dark:text-orange-400 font-medium flex items-start gap-2">
+          <Loader2 className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>Payment configuration missing. Please set VITE_PAYFAST_MERCHANT_ID and MERCHANT_KEY in your environment secrets.</span>
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <form action={baseUrl} method="post">
+    <form action={baseUrl} method="post" target="_blank" rel="noopener noreferrer">
       <input type="hidden" name="merchant_id" value={merchantId} />
       <input type="hidden" name="merchant_key" value={merchantKey} />
       <input type="hidden" name="return_url" value={returnUrl} />

@@ -48,14 +48,17 @@ function DashboardRedirect() {
         }
 
         const slug = userData.churchSlug;
-        if (roles.includes("master_admin")) navigate("/master-admin");
-        else if (slug) {
-          if (roles.includes("admin")) navigate(`/${slug}/admin`);
-          else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer`);
-          else if (roles.includes("parent")) navigate(`/${slug}/parent`);
-          else navigate(`/${slug}`);
+        const search = window.location.search; // Preserve query params like ?payment=success
+
+        if (roles.includes("master_admin")) {
+          navigate(`/master-admin${search}`);
+        } else if (slug) {
+          if (roles.includes("admin")) navigate(`/${slug}/admin${search}`);
+          else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer${search}`);
+          else if (roles.includes("parent")) navigate(`/${slug}/parent${search}`);
+          else navigate(`/${slug}${search}`);
         } else {
-          navigate("/");
+          navigate(`/${search}`);
         }
       }
     }
