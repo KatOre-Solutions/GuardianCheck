@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { signInWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { getInvitationByToken } from "../lib/firestore";
 import { Shield, Lock, User, Mail, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
@@ -70,11 +70,8 @@ export default function AcceptInvite() {
         throw new Error(data.error || "Failed to accept invitation");
       }
 
-      // 2. Sign in the user so we can send the verification email
-      const userCredential = await signInWithEmailAndPassword(auth, invitation.email, password);
-      
-      // 3. Send Verification Email using Firebase's built-in service
-      await sendEmailVerification(userCredential.user);
+      // 2. Sign in the user automatically so they see the verification screen immediately
+      await signInWithEmailAndPassword(auth, invitation.email, password);
 
       showSuccessToast("Account created!", "Please check your email to verify your account.");
       navigate("/login");
@@ -110,6 +107,30 @@ export default function AcceptInvite() {
           className="w-full bg-gray-900 dark:bg-white dark:text-gray-900 text-white py-3 rounded-xl font-bold hover:opacity-90 transition-opacity"
         >
           Back to Login
+        </button>
+      </div>
+    );
+  }
+
+  // Check if user is already logged in as someone else
+  if (auth.currentUser && invitation && auth.currentUser.email !== invitation.email) {
+    return (
+      <div className="max-w-md mx-auto mt-12 p-8 bg-white dark:bg-gray-900 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-800 text-center space-y-6">
+        <div className="h-16 w-16 bg-amber-50 dark:bg-amber-900/20 rounded-2xl flex items-center justify-center mx-auto">
+          <AlertCircle className="h-8 w-8 text-amber-600 dark:text-amber-400" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Session Conflict</h2>
+          <p className="text-gray-500 dark:text-gray-400">
+            You are currently logged in as <span className="font-bold text-gray-900 dark:text-white">{auth.currentUser.email}</span>. 
+            To accept this invitation for <span className="font-bold text-gray-900 dark:text-white">{invitation.email}</span>, please logout first.
+          </p>
+        </div>
+        <button 
+          onClick={() => auth.signOut().then(() => window.location.reload())}
+          className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-all"
+        >
+          Logout and Continue
         </button>
       </div>
     );

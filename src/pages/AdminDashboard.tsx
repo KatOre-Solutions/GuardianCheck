@@ -212,7 +212,7 @@ export default function AdminDashboard() {
 
   const [invitations, setInvitations] = useState<any[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
-  const [newUser, setNewUser] = useState({ firstName: "", lastName: "", email: "", role: "volunteer", gender: "Other", cellNumber: "" });
+  const [newUser, setNewUser] = useState({ firstName: "", lastName: "", email: "", role: "volunteer" });
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,7 +251,7 @@ export default function AdminDashboard() {
       }
       
       setShowUserModal(false);
-      setNewUser({ firstName: "", lastName: "", email: "", role: "volunteer", gender: "Other", cellNumber: "" });
+      setNewUser({ firstName: "", lastName: "", email: "", role: "volunteer" });
     } catch (err: any) {
       showErrorToast(err.message || "Failed to create invitation");
       console.error(err);
@@ -1628,15 +1628,13 @@ export default function AdminDashboard() {
               const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase();
               const name = (u.name || '').toLowerCase();
               const email = (u.email || '').toLowerCase();
-              const idNumber = (u.idNumber || '').toLowerCase();
-              return fullName.includes(search) || name.includes(search) || email.includes(search) || idNumber.includes(search);
+              return fullName.includes(search) || name.includes(search) || email.includes(search);
             }).length > 0 ? users?.filter(u => {
               const search = searchTerm.toLowerCase();
               const fullName = `${u.firstName || ''} ${u.lastName || ''}`.toLowerCase();
               const name = (u.name || '').toLowerCase();
               const email = (u.email || '').toLowerCase();
-              const idNumber = (u.idNumber || '').toLowerCase();
-              return fullName.includes(search) || name.includes(search) || email.includes(search) || idNumber.includes(search);
+              return fullName.includes(search) || name.includes(search) || email.includes(search);
             }).map((u) => (
               <div key={u.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                 <div className="flex items-center space-x-4">
@@ -1652,9 +1650,6 @@ export default function AdminDashboard() {
                       {u.firstName ? `${u.firstName} ${u.lastName}` : (u.name || u.email)}
                     </p>
                     <div className="flex flex-col space-y-1">
-                      {u.idNumber && (
-                        <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono">ID: {u.idNumber}</p>
-                      )}
                       <div className="flex items-center space-x-2">
                         <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${u.deactivated ? 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400'}`}>
                           {u.deactivated ? 'Deactivated' : 'Active'}
@@ -1742,15 +1737,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">ID Number</label>
-                <input
-                  type="text"
-                  value={(newUser as any).idNumber || ""}
-                  onChange={(e) => setNewUser({ ...newUser, idNumber: e.target.value } as any)}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                />
-              </div>
-              <div className="space-y-1">
                 <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Email Address</label>
                 <input
                   required
@@ -1760,31 +1746,16 @@ export default function AdminDashboard() {
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Role</label>
-                  <select
-                    value={newUser.role}
-                    onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                  >
-                    <option value="parent">Parent</option>
-                    <option value="volunteer">Volunteer</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Gender</label>
-                  <select
-                    value={newUser.gender}
-                    onChange={(e) => setNewUser({ ...newUser, gender: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                  >
-                    <option value="">Select</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                  </select>
-                </div>
+              <div className="space-y-1">
+                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Role</label>
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                >
+                  <option value="volunteer">Volunteer</option>
+                  <option value="admin">Admin</option>
+                </select>
               </div>
               <button
                 type="submit"
@@ -1827,15 +1798,6 @@ export default function AdminDashboard() {
                   />
                 </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">ID Number</label>
-                <input
-                  type="text"
-                  value={editingUser.idNumber || ""}
-                  onChange={(e) => setEditingUser({ ...editingUser, idNumber: e.target.value })}
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                />
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Role</label>
@@ -1850,16 +1812,13 @@ export default function AdminDashboard() {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Gender</label>
-                  <select
-                    value={editingUser.gender || ""}
-                    onChange={(e) => setEditingUser({ ...editingUser, gender: e.target.value })}
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Cell Number</label>
+                  <input
+                    type="tel"
+                    value={editingUser.cellNumber || ""}
+                    onChange={(e) => setEditingUser({ ...editingUser, cellNumber: e.target.value })}
                     className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                  >
-                    <option value="">Select</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                  </select>
+                  />
                 </div>
               </div>
               <button

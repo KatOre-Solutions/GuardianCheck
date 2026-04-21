@@ -5,7 +5,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
-import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, CreditCard, Calendar } from "lucide-react";
+import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 
@@ -26,7 +26,7 @@ export default function ParentDashboard() {
   const [guardianToDelete, setGuardianToDelete] = useState<any>(null);
   const [newChild, setNewChild] = useState({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
-  const [newGuardian, setNewGuardian] = useState({ firstName: "", lastName: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
+  const [newGuardian, setNewGuardian] = useState({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -355,7 +355,7 @@ export default function ParentDashboard() {
         });
         showSuccessToast("New guardian added successfully!");
       }
-      setNewGuardian({ firstName: "", lastName: "", phone: "", relationship: "Mother", idNumber: "", photoUrl: "" });
+      setNewGuardian({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
     } catch (err) {
       console.error(err);
       showErrorToast("Failed to add guardian");
@@ -705,24 +705,8 @@ export default function ParentDashboard() {
                           ))}
                         </select>
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">ID Number</label>
-                        <div className="relative">
-                          <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <input
-                            required
-                            type="tel"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            placeholder="ID Number"
-                            value={newGuardian.idNumber}
-                            onChange={(e) => setNewGuardian({ ...newGuardian, idNumber: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                          />
-                        </div>
                       </div>
                     </div>
-                  </div>
 
                   <button
                     type="submit"
@@ -760,9 +744,6 @@ export default function ParentDashboard() {
                                 )}
                               </div>
                               <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">{guardian.relationship} • {guardian.phone}</p>
-                              {guardian.idNumber && (
-                                <p className="text-[10px] text-gray-400 dark:text-gray-500">ID: {guardian.idNumber}</p>
-                              )}
                             </div>
                           </div>
                           <div className="flex items-center space-x-1">

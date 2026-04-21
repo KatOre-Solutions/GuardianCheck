@@ -207,6 +207,11 @@ export class EmailService {
     `;
   }
 
+  private sanitizeSenderName(name: string): string {
+    // Remove characters that could be used for header injection
+    return name.replace(/[\r\n\t]/g, "").replace(/["\\]/g, "");
+  }
+
   async sendNotification(churchId: string, childId: string, data: NotificationData) {
     if (!this.db) {
       console.error("Cannot send notification: Database not initialized.");
@@ -257,12 +262,13 @@ export class EmailService {
 
       const html = this.generateTemplate(data);
       const subject = `${data.churchName} - ${data.childName} ${data.eventType === 'check-in' ? 'Checked In' : 'Checked Out'}`;
+      const senderName = this.sanitizeSenderName(`${data.churchName} via GuardianCheck`);
 
       // 2. Send emails
       for (const email of uniqueRecipients) {
         try {
           await this.transporter.sendMail({
-            from: `"Church Check-In" <${process.env.SMTP_FROM || "noreply@churchcheckin.com"}>`,
+            from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
             to: email,
             subject: data.eventType === 'emergency' ? `URGENT: ${subject}` : subject,
             html: html,
@@ -346,6 +352,7 @@ export class EmailService {
       const escapedRole = he.escape(data.role);
 
       const subject = `Invitation to join ${escapedChurchName} on GuardianCheck`;
+      const senderName = this.sanitizeSenderName(`${data.churchName} via GuardianCheck`);
       const html = `
         <!DOCTYPE html>
         <html>
@@ -355,7 +362,7 @@ export class EmailService {
             .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px; }
             .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
             .content { padding: 20px; }
-            .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+            .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
             .footer { font-size: 12px; color: #999; text-align: center; margin-top: 20px; }
           </style>
         </head>
@@ -384,7 +391,7 @@ export class EmailService {
       `;
 
       await this.transporter.sendMail({
-        from: `"GuardianCheck" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
+        from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
         to: email,
         subject: subject,
         html: html,
@@ -408,7 +415,7 @@ export class EmailService {
     }
   }
 
-  async sendVerificationEmail(email: string, firstName: string, verificationLink: string) {
+  async sendVerificationEmail(email: string, firstName: string, churchName: string, verificationLink: string) {
     if (!this.db) {
       console.error("Cannot send verification email: Database not initialized.");
       return;
@@ -416,7 +423,9 @@ export class EmailService {
 
     try {
       const escapedFirstName = he.escape(firstName);
-      const subject = `Verify your email for GuardianCheck`;
+      const escapedChurchName = he.escape(churchName);
+      const subject = `Verify your email for ${escapedChurchName}`;
+      const senderName = this.sanitizeSenderName(`${churchName} via GuardianCheck`);
       const html = `
         <!DOCTYPE html>
         <html>
@@ -426,7 +435,7 @@ export class EmailService {
             .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px; }
             .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
             .content { padding: 20px; }
-            .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+            .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
             .footer { font-size: 12px; color: #999; text-align: center; margin-top: 20px; }
           </style>
         </head>
@@ -437,7 +446,7 @@ export class EmailService {
             </div>
             <div class="content">
               <p>Hello ${escapedFirstName},</p>
-              <p>Thank you for joining GuardianCheck. Please verify your email address to access your account features.</p>
+              <p>Thank you for joining <strong>${escapedChurchName}</strong> on GuardianCheck. Please verify your email address to access your account features.</p>
               <div style="text-align: center;">
                 <a href="${verificationLink}" class="button">Verify Email Address</a>
               </div>
@@ -453,7 +462,7 @@ export class EmailService {
       `;
 
       await this.transporter.sendMail({
-        from: `"GuardianCheck" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
+        from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
         to: email,
         subject: subject,
         html: html,

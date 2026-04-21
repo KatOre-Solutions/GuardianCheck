@@ -13,6 +13,8 @@ export default function ProfileCompletion() {
   const { church: tenantChurch } = useTenant();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [cellNumber, setCellNumber] = useState("");
+  const [dob, setDob] = useState("");
   const [selectedChurch, setSelectedChurch] = useState("");
   const [churches, setChurches] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -89,18 +91,39 @@ export default function ProfileCompletion() {
       showErrorToast("Please select a church");
       return;
     }
+    if (!cellNumber) {
+      showErrorToast("Please enter your cell number");
+      return;
+    }
+    
+    // South African Cell Number Validation (basic regex)
+    const saPhoneRegex = /^(?:(?:\+27)|0)[678]\d{8}$/;
+    const cleanPhone = cellNumber.replace(/[\s\-()]/g, "");
+    if (!saPhoneRegex.test(cleanPhone)) {
+      showErrorToast("Invalid South African cell number format. Please use 0123456789 or +27123456789");
+      return;
+    }
+
+    if (!dob) {
+      showErrorToast("Please enter your date of birth");
+      return;
+    }
 
     setLoading(true);
     try {
       const church = churches.find(c => c.id === selectedChurch);
+      // Auto-approve anyone completing their profile since they were either invited or signed up as a parent
+      const newStatus = "approved";
       
       // 1. Update user profile
       await updateDocument("users", user.uid, {
         firstName,
         lastName,
+        cellNumber: cleanPhone,
+        dob,
         churchId: selectedChurch,
         churchSlug: church?.slug,
-        status: "pending",
+        status: newStatus,
         updatedAt: new Date().toISOString()
       });
 
@@ -120,8 +143,11 @@ export default function ProfileCompletion() {
         updatedAt: new Date().toISOString()
       });
 
-      showSuccessToast("Profile updated and membership request sent!");
-      navigate("/pending-approval");
+      showSuccessToast(
+        "Profile completed!",
+        "Welcome to our church community."
+      );
+      navigate("/");
     } catch (error) {
       console.error("Failed to complete profile", error);
       showErrorToast(error);
@@ -201,6 +227,30 @@ export default function ProfileCompletion() {
                     <option key={church.id} value={church.id}>{church.name}</option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Cell Number</label>
+                <input
+                  required
+                  type="tel"
+                  value={cellNumber}
+                  onChange={e => setCellNumber(e.target.value)}
+                  placeholder="082 123 4567"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Date of Birth</label>
+                <input
+                  required
+                  type="date"
+                  value={dob}
+                  onChange={e => setDob(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                />
               </div>
             </div>
           </div>

@@ -11,6 +11,7 @@ export enum ErrorCode {
   AUTH_NETWORK_REQUEST_FAILED = "auth/network-request-failed",
   AUTH_EMAIL_ALREADY_IN_USE = "auth/email-already-in-use",
   AUTH_INVALID_EMAIL = "auth/invalid-email",
+  AUTH_INVALID_CREDENTIAL = "auth/invalid-credential",
   AUTH_WEAK_PASSWORD = "auth/weak-password",
   AUTH_TOO_MANY_REQUESTS = "auth/too-many-requests",
   AUTH_POPUP_CLOSED = "auth/popup-closed-by-user",
@@ -50,13 +51,13 @@ const ERROR_MAP: Record<string, ErrorMessage> = {
     actionable: "Ensure you are connected to the internet and try again.",
   },
   [ErrorCode.AUTH_USER_NOT_FOUND]: {
-    title: "Account Not Found",
-    message: "We couldn't find an account with that email address.",
-    actionable: "Double-check your spelling or register for a new account.",
+    title: "Invalid Credentials",
+    message: "Invalid email or password. Please check your details and try again.",
+    actionable: "Double-check your spelling or use the 'Forgot Password' link.",
   },
   [ErrorCode.AUTH_WRONG_PASSWORD]: {
-    title: "Incorrect Password",
-    message: "The password you entered is incorrect.",
+    title: "Invalid Credentials",
+    message: "Invalid email or password. Please check your details and try again.",
     actionable: "Please try again or use the 'Forgot Password' link to reset it.",
   },
   [ErrorCode.AUTH_NETWORK_REQUEST_FAILED]: {
@@ -70,9 +71,14 @@ const ERROR_MAP: Record<string, ErrorMessage> = {
     actionable: "Try signing in instead, or use a different email address.",
   },
   [ErrorCode.AUTH_INVALID_EMAIL]: {
-    title: "Invalid Email",
-    message: "The email address you entered is not valid.",
+    title: "Invalid Credentials",
+    message: "Invalid email or password. Please check your details and try again.",
     actionable: "Please enter a valid email address (e.g., name@example.com).",
+  },
+  [ErrorCode.AUTH_INVALID_CREDENTIAL]: {
+    title: "Invalid Credentials",
+    message: "Invalid email or password. Please check your details and try again.",
+    actionable: "Please try again or use the 'Forgot Password' link to reset it.",
   },
   [ErrorCode.AUTH_WEAK_PASSWORD]: {
     title: "Weak Password",

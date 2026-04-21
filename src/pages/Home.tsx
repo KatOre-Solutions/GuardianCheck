@@ -101,8 +101,8 @@ export default function Home() {
           >
             <div className="aspect-square rounded-3xl bg-primary/5 dark:bg-primary/10 overflow-hidden shadow-2xl border-8 border-white dark:border-gray-800">
               <img
-                src="https://picsum.photos/seed/church/800/800"
-                alt="Church Child Check-In"
+                src="https://images.unsplash.com/photo-1510511233900-1982d92bd835?auto=format&fit=crop&q=80&w=1200&h=1200"
+                alt="Secure Check-In Process"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
@@ -145,6 +145,44 @@ export default function Home() {
               <p className="text-gray-600 dark:text-gray-400 leading-relaxed">{feature.description}</p>
             </motion.div>
           ))}
+        </div>
+      </section>
+
+      {/* Notification Section */}
+      <section className="py-24">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+          <div className="order-2 lg:order-1 relative">
+            <div className="aspect-[16/9] rounded-3xl bg-gray-100 dark:bg-gray-800 overflow-hidden shadow-2xl">
+              <img 
+                src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=1200&h=675" 
+                alt="Real-time Mobile Notifications"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+          <div className="order-1 lg:order-2 space-y-6">
+            <h2 className="text-4xl font-bold text-gray-900 dark:text-white leading-tight">
+              Real-time Peace of Mind for <span className="text-primary italic">Parents</span>
+            </h2>
+            <p className="text-lg text-gray-600 dark:text-gray-400">
+              Parents receive instant mobile notifications when their child is checked in or moved between rooms. Full visibility, zero stress.
+            </p>
+            <ul className="space-y-4">
+              <li className="flex items-center space-x-3 text-gray-700 dark:text-gray-300">
+                <CheckCircle2 className="h-5 w-5 text-primary" />
+                <span>Instant Check-in alerts</span>
+              </li>
+              <li className="flex items-center space-x-3 text-gray-700 dark:text-gray-300">
+                <CheckCircle2 className="h-5 w-5 text-primary" />
+                <span>Room transfer notifications</span>
+              </li>
+              <li className="flex items-center space-x-3 text-gray-700 dark:text-gray-300">
+                <CheckCircle2 className="h-5 w-5 text-primary" />
+                <span>Secure pickup verification</span>
+              </li>
+            </ul>
+          </div>
         </div>
       </section>
 
@@ -249,12 +287,47 @@ export default function Home() {
           <div className="relative">
              <div className="aspect-video rounded-2xl bg-gray-200 dark:bg-gray-800 overflow-hidden shadow-xl">
                 <img 
-                  src="https://picsum.photos/seed/community/800/450" 
-                  alt="Community" 
+                  src="https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&q=80&w=1200&h=675" 
+                  alt="Classroom Management" 
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
                 />
              </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Admin Section */}
+      <section className="bg-gray-900 rounded-[3rem] p-12 lg:p-24 overflow-hidden relative">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/20 blur-[120px] rounded-full -mr-32 -mt-32" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center relative z-10">
+          <div className="space-y-8">
+            <h2 className="text-4xl font-bold text-white leading-tight">
+              Powerful Control for <span className="text-primary">Administrators</span>
+            </h2>
+            <p className="text-lg text-gray-400">
+              Manage your entire congregation from a single dashboard. Track metrics, manage rooms, and ensure security protocols are followed across every event.
+            </p>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                <p className="text-2xl font-bold text-white">100%</p>
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Compliance</p>
+              </div>
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                <p className="text-2xl font-bold text-white">Offline</p>
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Resilience</p>
+              </div>
+            </div>
+          </div>
+          <div className="relative">
+            <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+              <img 
+                src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=1200&h=675" 
+                alt="Admin Dashboard Integration" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
           </div>
         </div>
       </section>

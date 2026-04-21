@@ -81,6 +81,10 @@ export default function Login() {
             const isMasterAdmin = updatedUser.email === "oreutlwilediutlwileng@gmail.com";
             const [fName, ...lNameParts] = (updatedUser.displayName || "").split(" ");
             
+            // Determine church from context if available
+            const churchId = church?.id || null;
+            const churchSlug = church?.slug || null;
+
             userDoc = {
               uid: updatedUser.uid,
               email: updatedUser.email,
@@ -88,8 +92,8 @@ export default function Login() {
               lastName: namesRef.current.lastName || lNameParts.join(" ") || "",
               role: isMasterAdmin ? "master_admin" : "parent",
               roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : ["parent"],
-              churchId: church?.id || null,
-              churchSlug: church?.slug || null,
+              churchId,
+              churchSlug,
               status: isMasterAdmin ? "approved" : "incomplete_profile",
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
@@ -119,6 +123,14 @@ export default function Login() {
           }
 
           if (userDoc) {
+            // Check email verification for password users
+            const isPasswordUser = updatedUser.providerData.some(p => p.providerId === "password");
+            if (isPasswordUser && !updatedUser.emailVerified) {
+              setMode("verify");
+              setLoading(false);
+              return;
+            }
+
             const churchPrefix = userDoc.churchSlug ? `/${userDoc.churchSlug}` : "";
             
             if (userDoc.status === "incomplete_profile") navigate("/complete-profile");
@@ -164,6 +176,10 @@ export default function Login() {
       if (!userDoc) {
         const isMasterAdmin = user.email === "oreutlwilediutlwileng@gmail.com";
         
+        // Determine church from context if available
+        const churchId = church?.id || null;
+        const churchSlug = church?.slug || null;
+
         await setDocument("users", user.uid, {
           uid: user.uid,
           email: user.email,
@@ -173,8 +189,8 @@ export default function Login() {
           phone,
           role: isMasterAdmin ? "master_admin" : "parent",
           roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : ["parent"],
-          churchId: church?.id || null,
-          churchSlug: church?.slug || null,
+          churchId,
+          churchSlug,
           status: isMasterAdmin ? "approved" : "incomplete_profile",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -251,6 +267,10 @@ export default function Login() {
         await updateProfile(result.user, { displayName: `${firstName} ${lastName}` });
         await sendEmailVerification(result.user);
         
+        // Determine church from context if available
+        const churchId = church?.id || null;
+        const churchSlug = church?.slug || null;
+
         await setDocument("users", result.user.uid, {
           uid: result.user.uid,
           email: email,
@@ -258,8 +278,8 @@ export default function Login() {
           lastName: lastName,
           role: "parent",
           roles: ["parent"],
-          churchId: church?.id || null,
-          churchSlug: church?.slug || null,
+          churchId,
+          churchSlug,
           status: "incomplete_profile",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()

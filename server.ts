@@ -13,7 +13,7 @@ import { EmailService } from "./emailService.js";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import NodeCache from "node-cache";
-import { CURRENT_POLICY_VERSION } from "../src/constants/legalContent.js";
+import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 
 // TTL Cache for Firestore reads (60 seconds default)
 const cache = new NodeCache({ stdTTL: 60, checkperiod: 120 });
@@ -583,9 +583,18 @@ async function startServer() {
       }
     };
 
+    // Helper for timeout
+    const withTimeout = (promise: Promise<any>, ms: number) => {
+      let timeoutId: any;
+      const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("Timeout")), ms);
+      });
+      return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+    };
+
     try {
       if (db) {
-        await db.collection("health").doc("ping").set({ lastCheck: new Date().toISOString() });
+        await withTimeout(db.collection("health").doc("ping").set({ lastCheck: new Date().toISOString() }), 3000);
         req.firestoreOps.writes++;
         status.dependencies.firestore = "connected";
       } else {
@@ -598,7 +607,7 @@ async function startServer() {
     }
 
     try {
-      const emailReady = await emailService.verify();
+      const emailReady = await withTimeout(emailService.verify(), 3000);
       status.dependencies.email = emailReady ? "connected" : "disconnected";
       if (!emailReady) status.status = "degraded";
     } catch (e) {
@@ -1032,7 +1041,7 @@ async function startServer() {
           roles: inviteData.roles || [inviteData.role],
           churchId: inviteData.churchId,
           churchSlug: inviteData.churchSlug,
-          status: "approved",
+          status: "incomplete_profile",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
@@ -1060,12 +1069,23 @@ async function startServer() {
       req.firestoreOps.writes++;
 
       // 6. Send Verification Email
-      // We'll let the client handle this via Firebase Auth to use the built-in service
-      // which is already configured for the project.
+      try {
+        const verificationLink = await getAuth().generateEmailVerificationLink(inviteData.email, {
+          url: `${process.env.APP_URL || req.get("origin")}/login`
+        });
+        await emailService.sendVerificationEmail(
+          inviteData.email, 
+          inviteData.firstName, 
+          inviteData.churchName || "Your Church",
+          verificationLink
+        );
+      } catch (emailError) {
+        console.error("Failed to send verification email:", emailError);
+      }
 
       res.json({ 
         success: true, 
-        message: "Account created successfully. Redirecting to verification...",
+        message: "Account created successfully. Please check your email to verify your account.",
         userId: userRecord.uid
       });
     } catch (error: any) {
@@ -1204,7 +1224,8 @@ async function startServer() {
       console.log("PayFast Signature Validated.");
 
       // 2. Ping-back to PayFast to verify data
-      const sandbox = process.env.PAYFAST_SANDBOX === "true";
+      const isDevMode = process.env.VITE_DEV_MODE === "true";
+      const sandbox = isDevMode || process.env.PAYFAST_SANDBOX === "true";
       const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
       const validateUrl = `https://${pfHost}/eng/query/validate`;
       
@@ -1356,7 +1377,7 @@ async function startServer() {
         roles: ["admin", "volunteer"],
         churchId: churchRef.id,
         churchSlug: slug,
-        status: "approved",
+        status: "incomplete_profile",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         traceId: req.traceId
@@ -1432,9 +1453,7 @@ async function startServer() {
     });
   }
 
-  // Only listen if not on Vercel
-  if (!process.env.VERCEL) {
-    // Global error handler for all routes (must be last)
+  // Global error handler for all routes (must be last)
   app.use((err: any, req: any, res: any, next: any) => {
     console.error("Unhandled Error:", err);
     
@@ -1463,7 +1482,6 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  }
 }
 
 startServer();

@@ -5,7 +5,7 @@ import { updateProfile } from "firebase/auth";
 import { getDocument, updateDocument, deactivateUser } from "../lib/firestore";
 import { auth, storage } from "../lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { User, Mail, Phone, MapPin, CreditCard, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle, Loader2, ArrowLeft } from "lucide-react";
+import { User, Mail, Phone, MapPin, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle, Loader2, ArrowLeft, Calendar } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { useTenant } from "../contexts/TenantContext";
@@ -276,13 +276,13 @@ export default function Profile() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">ID Number</label>
+                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Date of Birth</label>
                 <div className="relative">
-                  <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                   <input
-                    type="text"
-                    value={profile?.idNumber || ""}
-                    onChange={e => setProfile({ ...profile, idNumber: e.target.value })}
+                    type="date"
+                    value={profile?.dob || ""}
+                    onChange={e => setProfile({ ...profile, dob: e.target.value })}
                     className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
@@ -310,19 +310,6 @@ export default function Profile() {
                     className="w-full pl-12 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Gender</label>
-                  <select
-                    value={profile?.gender || ""}
-                    onChange={e => setProfile({ ...profile, gender: e.target.value })}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                  >
-                  <option value="">Select Gender</option>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Other">Other</option>
-                </select>
               </div>
             </div>
 

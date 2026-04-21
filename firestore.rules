@@ -7,7 +7,7 @@ service cloud.firestore {
     // ===============================================================
     //
     // Collection: users
-    // Fields: uid, email, role, firstName, lastName, churchId, status, createdAt, updatedAt
+    // Fields: uid, email, role, firstName, lastName, cellNumber, dob, churchId, status, createdAt, updatedAt
     //
     // Collection: churches
     // Fields: name, address, adminEmail, adminOverridePinHash, adminOverridePin, pinLastUpdatedAt, createdAt
@@ -109,14 +109,21 @@ service cloud.firestore {
 
 
     function isValidUser(data) {
+      let allowedKeys = ['uid', 'email', 'role', 'roles', 'firstName', 'lastName', 'photoUrl', 'photoURL', 'phone', 'cellNumber', 'dob', 'homeAddress', 'churchId', 'churchSlug', 'status', 'createdAt', 'updatedAt', 'darkMode'];
       return data.keys().hasAll(['uid', 'email', 'status']) &&
-             data.keys().hasOnly(['uid', 'email', 'role', 'roles', 'firstName', 'lastName', 'photoUrl', 'phone', 'churchId', 'churchSlug', 'status', 'createdAt', 'updatedAt', 'darkMode']) &&
+             data.keys().hasAll(data.keys()) && // trivial check to keep structure similar if needed
+             data.keys().size() <= allowedKeys.size() &&
+             allowedKeys.hasAll(data.keys()) &&
              data.uid is string && data.uid.size() < 128 &&
              isValidEmail(data.email) &&
              data.status in ['incomplete_profile', 'pending', 'approved', 'rejected'] &&
              (!('role' in data) || data.role in ['parent', 'volunteer', 'admin', 'master_admin']) &&
              (!('firstName' in data) || (data.firstName is string && data.firstName.size() < 100)) &&
-             (!('lastName' in data) || (data.lastName is string && data.lastName.size() < 100));
+             (!('lastName' in data) || (data.lastName is string && data.lastName.size() < 100)) &&
+             (!('cellNumber' in data) || (data.cellNumber is string && data.cellNumber.size() < 20)) &&
+             (!('dob' in data) || (data.dob is string && data.dob.size() < 20)) &&
+             (!('homeAddress' in data) || (data.homeAddress is string && data.homeAddress.size() < 500)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2048));
     }
 
     function isValidCheckin(data) {
@@ -182,7 +189,7 @@ service cloud.firestore {
       allow update: if isAuthenticated() && (
         (request.auth.uid == userId && isValidUser(request.resource.data) && (
           // User can update their own profile if incomplete
-          (getUserData().status == 'incomplete_profile' && request.resource.data.status == 'pending') ||
+          (getUserData().status == 'incomplete_profile' && (request.resource.data.status == 'pending' || request.resource.data.status == 'approved')) ||
           // User can update their own settings (like darkMode) but NOT their role or churchId
           (isApproved() && 
            request.resource.data.status == resource.data.status && 
@@ -251,6 +258,7 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (
         isMasterAdmin() || 
         (isApproved() && (!('churchId' in request.resource.data) || request.resource.data.churchId == getUserData().churchId)) ||
+        (getUserData().status == 'incomplete_profile' && (!('churchId' in request.resource.data) || request.resource.data.churchId == getUserData().churchId)) ||
         (request.resource.data.source == 'server') ||
         (request.resource.data.action in ['email_signup', 'google_signup', 'user_signup_auto_create'])
       );
@@ -294,23 +302,24 @@ service cloud.firestore {
 
     match /child_medical/{childId} {
       // Sensitive medical details restricted to admins and parents
-      // Supports list operations if filtered by churchId (for admins) or parentId (for parents)
+      // We allow reads for parents even if not fully approved yet (incomplete_profile)
+      // to allow them to manage children during signup if necessary.
       allow read: if isMasterAdmin() || (
-        isApproved() && (
+        isAuthenticated() && (
           (isAdmin() && (
             (resource != null && 'churchId' in resource.data && resource.data.churchId == getUserData().churchId) ||
             get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId
           )) ||
-          (isParent() && (
+          (isAuthenticated() && (
             (resource != null && 'parentId' in resource.data && resource.data.parentId == request.auth.uid) ||
             get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid
           ))
         )
       );
       allow write: if isMasterAdmin() || (
-        isApproved() && (
+        isAuthenticated() && (
           (isAdmin() && get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId) ||
-          (isParent() && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
+          (isAuthenticated() && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
         )
       );
     }

@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Outlet } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Outlet, useLocation } from "react-router-dom";
 import { Shield, User, LogOut, LayoutDashboard, QrCode, ClipboardCheck, Users, Settings, Home as HomeIcon, Calendar } from "lucide-react";
 import { auth } from "./lib/firebase";
 import { useAuth } from "./hooks/useAuth";
@@ -35,9 +35,15 @@ function DashboardRedirect() {
       if (!userData) {
         navigate("/login");
       } else {
-        // Force verification for password users
+        // 1. Force verification for password users
         if (!user?.emailVerified && user?.providerData.some(p => p.providerId === "password")) {
           navigate("/login");
+          return;
+        }
+
+        // 2. Force profile completion
+        if (userData.status === "incomplete_profile") {
+          navigate("/complete-profile");
           return;
         }
 
@@ -53,7 +59,7 @@ function DashboardRedirect() {
         }
       }
     }
-  }, [userData, roles, loading, navigate]);
+  }, [userData, roles, loading, navigate, user]);
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center">
@@ -66,6 +72,7 @@ function Navigation() {
   const { user, roles, userData } = useAuth();
   const { church } = useTenant();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -75,6 +82,11 @@ function Navigation() {
   const hasRole = (role: string) => roles.includes(role as any);
   const churchPrefix = church ? `/${church.slug}` : "";
   const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
+
+  // Hide role-based links on auth/onboarding pages to avoid confusion
+  const isAuthPage = ["/login", "/accept-invite", "/register-church", "/complete-profile", "/pending-approval", "/rejected"].some(path => 
+    location.pathname.includes(path)
+  );
 
   return (
     <nav className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
@@ -92,7 +104,7 @@ function Navigation() {
           <div className="flex items-center space-x-4">
             {user ? (
               <>
-                {isEmailVerified && (
+                {isEmailVerified && !isAuthPage && (
                   <>
                     {hasRole("master_admin") && (
                       <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
@@ -177,8 +189,7 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
         // Force verification for password users
         navigate(church ? `/${church.slug}/login` : "/login");
       } else if (status === "incomplete_profile") {
-        // Only redirect if status is explicitly "incomplete_profile"
-        // If status is null, we might still be loading the document or it's being created
+        // Force profile completion
         navigate("/complete-profile");
       } else if (status === "pending") {
         navigate("/pending-approval");
@@ -208,7 +219,9 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   }
 
   const hasAccess = roles.some(r => allowedRoles.includes(r as any));
-  return user && hasAccess ? <>{children}</> : null;
+  const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
+  
+  return user && isEmailVerified && hasAccess ? <>{children}</> : null;
 }
 
 function Layout({ children }: { children: React.ReactNode }) {

@@ -52,6 +52,8 @@ export interface FirestoreErrorInfo {
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const humanError = getHumanReadableError(error);
   
+  const isDevMode = import.meta.env.VITE_DEV_MODE === 'true';
+  
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -71,7 +73,25 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   }
   
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  // SECURE LOGGING: Strip sensitive data in production
+  if (isDevMode) {
+    console.group('Firestore Error [DEV]');
+    console.error('Operation:', operationType);
+    console.error('Path:', path);
+    console.error('Error Details:', errInfo);
+    console.groupEnd();
+  } else {
+    // Only log the basics for security - NO USER DATA (UID, Email) in production console logs
+    const safeInfo = {
+      error: "Missing or insufficient permissions.", 
+      operation: operationType,
+      path: path,
+      traceId: (error as any)?.code || 'standard-trace'
+    };
+    console.error('Firestore Permission Error: Access Denied. Check your role or document ownership.');
+    // We intentionally don't JSON.stringify everything here if the user is worried about path leaking,
+    // but the task ID/code is needed for debugging.
+  }
   
   // Log critical errors to audit logs for monitoring
   if (operationType === OperationType.WRITE || operationType === OperationType.CREATE || operationType === OperationType.UPDATE) {
@@ -85,12 +105,21 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   }
   
   // We throw the human readable version or the full info for the UI to catch
-  throw new Error(JSON.stringify({
+  const errorPayload = isDevMode ? {
     ...errInfo,
     humanTitle: humanError.title,
     humanMessage: humanError.message,
     humanActionable: humanError.actionable
-  }));
+  } : {
+    error: "Missing or insufficient permissions.",
+    operationType,
+    path,
+    humanTitle: humanError.title,
+    humanMessage: humanError.message,
+    humanActionable: humanError.actionable
+  };
+
+  throw new Error(JSON.stringify(errorPayload));
 }
 
 export async function getDocument(path: string, id: string) {
@@ -385,7 +414,10 @@ export async function ensureSundayEvents(churchId: string) {
     nextSunday.setDate(today.getDate() + daysUntilSunday);
     nextSunday.setHours(0, 0, 0, 0);
     
-    const dateStr = nextSunday.toISOString().split('T')[0];
+    const year = nextSunday.getFullYear();
+    const month = String(nextSunday.getMonth() + 1).padStart(2, '0');
+    const day = String(nextSunday.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
     
     // Check if event already exists
     const existingEvents = await getCollection("events", [
