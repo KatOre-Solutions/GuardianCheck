@@ -480,6 +480,7 @@ export default function VolunteerDashboard() {
             status: "checked-in",
             qrCode: child.qrCode,
             checkedInBy: child.parentName || "Parent",
+            createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           });
         }

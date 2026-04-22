@@ -70,19 +70,34 @@ service cloud.firestore {
     function isApproved() {
       return isAuthenticated() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-             (getUserData().status == 'approved' || getUserData().status == 'pending');
+             (getUserData().status == 'approved' || getUserData().status == 'pending' || getUserData().status == 'incomplete_profile');
     }
 
     function isAdmin() {
-      return isApproved() && (getUserData().role == 'admin' || isMasterAdmin());
+      let data = getUserData();
+      return isApproved() && (
+        data.role == 'admin' || 
+        ('roles' in data && 'admin' in data.roles) || 
+        isMasterAdmin()
+      );
     }
 
     function isVolunteer() {
-      return isApproved() && (getUserData().role == 'volunteer' || isAdmin());
+      let data = getUserData();
+      return isApproved() && (
+        data.role == 'volunteer' || 
+        ('roles' in data && 'volunteer' in data.roles) || 
+        isAdmin()
+      );
     }
 
     function isParent() {
-      return isApproved() && (getUserData().role == 'parent' || isAdmin());
+      let data = getUserData();
+      return isApproved() && (
+        data.role == 'parent' || 
+        ('roles' in data && 'parent' in data.roles) || 
+        isAdmin()
+      );
     }
 
     function isChurchMember(churchId) {
