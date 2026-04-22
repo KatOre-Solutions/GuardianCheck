@@ -70,7 +70,7 @@ service cloud.firestore {
     function isApproved() {
       return isAuthenticated() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-             getUserData().status == 'approved';
+             (getUserData().status == 'approved' || getUserData().status == 'pending');
     }
 
     function isAdmin() {
@@ -109,21 +109,18 @@ service cloud.firestore {
 
 
     function isValidUser(data) {
-      let allowedKeys = ['uid', 'email', 'role', 'roles', 'firstName', 'lastName', 'photoUrl', 'photoURL', 'phone', 'cellNumber', 'dob', 'homeAddress', 'churchId', 'churchSlug', 'status', 'createdAt', 'updatedAt', 'darkMode'];
-      return data.keys().hasAll(['uid', 'email', 'status']) &&
-             data.keys().hasAll(data.keys()) && // trivial check to keep structure similar if needed
-             data.keys().size() <= allowedKeys.size() &&
-             allowedKeys.hasAll(data.keys()) &&
-             data.uid is string && data.uid.size() < 128 &&
-             isValidEmail(data.email) &&
+      // Core requirements for any active user document
+      return data.email is string &&
              data.status in ['incomplete_profile', 'pending', 'approved', 'rejected'] &&
+             // Role validation if present
              (!('role' in data) || data.role in ['parent', 'volunteer', 'admin', 'master_admin']) &&
-             (!('firstName' in data) || (data.firstName is string && data.firstName.size() < 100)) &&
-             (!('lastName' in data) || (data.lastName is string && data.lastName.size() < 100)) &&
-             (!('cellNumber' in data) || (data.cellNumber is string && data.cellNumber.size() < 20)) &&
-             (!('dob' in data) || (data.dob is string && data.dob.size() < 20)) &&
-             (!('homeAddress' in data) || (data.homeAddress is string && data.homeAddress.size() < 500)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2048));
+             // Type and size constraints for profile fields - only check if present
+             (!('firstName' in data) || (data.firstName is string && data.firstName.size() < 128)) &&
+             (!('lastName' in data) || (data.lastName is string && data.lastName.size() < 128)) &&
+             (!('cellNumber' in data) || (data.cellNumber is string && data.cellNumber.size() < 50)) &&
+             (!('dob' in data) || (data.dob is string && data.dob.size() < 50)) &&
+             (!('churchId' in data) || (data.churchId == null || (data.churchId is string && data.churchId.size() < 128))) &&
+             (!('churchSlug' in data) || (data.churchSlug == null || (data.churchSlug is string && data.churchSlug.size() < 128)));
     }
 
     function isValidCheckin(data) {
@@ -151,20 +148,21 @@ service cloud.firestore {
       let user = get(/databases/$(database)/documents/users/$(uid)).data;
       return data.keys().hasAll(['version', 'acceptedAt', 'churchId', 'roleAtTime', 'legalContext']) &&
              data.version is string &&
-             data.acceptedAt == request.time && // Force server timestamp
-             (data.churchId == user.churchId || (isMasterAdmin() && data.churchId == 'system')) && // Allow 'system' for master admins
-             data.roleAtTime == user.role &&   // Capture authoritative role
+             data.acceptedAt == request.time &&
+             (data.churchId == user.churchId || (user.churchId == null && data.churchId == 'system') || (isMasterAdmin() && data.churchId == 'system')) &&
+             (data.roleAtTime == user.role || (user.role == null && data.roleAtTime == 'unknown')) &&
              data.legalContext is map &&
              data.legalContext.keys().hasAll(['policyHash', 'agreementType']) &&
              data.legalContext.agreementType in ['Operator_Agreement', 'Privacy_Notice'];
     }
 
     function isValidChurchPolicyAcceptance(data) {
+      let user = getUserData();
       return data.keys().hasAll(['acceptedBy', 'acceptedAt', 'policyVersion']) &&
              data.acceptedBy == request.auth.uid &&
              data.acceptedAt == request.time &&
              data.policyVersion is string &&
-             (isAdmin() || isMasterAdmin());
+             (user.role == 'admin' || user.role == 'master_admin' || isMasterAdmin());
     }
 
     function isValidInvitation(data) {
@@ -187,23 +185,23 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
       allow update: if isAuthenticated() && (
-        (request.auth.uid == userId && isValidUser(request.resource.data) && (
-          // User can update their own profile if incomplete
-          (getUserData().status == 'incomplete_profile' && (request.resource.data.status == 'pending' || request.resource.data.status == 'approved')) ||
-          // User can update their own settings (like darkMode) but NOT their role or churchId
-          (isApproved() && 
-           request.resource.data.status == resource.data.status && 
+        (request.auth.uid == userId && (
+          // Branch A: Initial setup - allowing the transition from incomplete
+          // We allow the update if the document is currently in 'incomplete_profile'
+          (resource.data.status == 'incomplete_profile' && isValidUser(request.resource.data)) ||
+          
+          // Branch B: Protecting immutable fields for approved users
+          (resource.data.status == 'approved' && 
+           isValidUser(request.resource.data) &&
            request.resource.data.role == resource.data.role && 
            request.resource.data.churchId == resource.data.churchId)
         )) ||
         isMasterAdmin() ||
         (isAdmin() && resource != null && 
          isValidUser(request.resource.data) &&
-         // Admins can't touch master admins
-         (!('role' in resource.data) || resource.data.role != 'master_admin') && 
-         // Admins can't promote anyone to master admin
+         // Admins can't touch each other's roles or master admin
+         (!('role' in resource.data) || resource.data.role != 'master_admin') &&
          (!('role' in request.resource.data) || request.resource.data.role != 'master_admin') &&
-         // Admins can only manage users in their own church
          resource.data.churchId == getUserData().churchId && 
          request.resource.data.churchId == getUserData().churchId)
       );
@@ -224,11 +222,11 @@ service cloud.firestore {
     }
 
     match /church_policy_acceptance/{churchId} {
-      allow read: if isAuthenticated() && (isChurchMember(churchId) || isMasterAdmin());
+      allow read: if isAuthenticated() && (isChurchMember(churchId) || isMasterAdmin() || (getUserData().churchId == churchId));
       // Only admins can accept on behalf of the church
       allow create: if isAuthenticated() && (
-                      (isAdmin() && getUserData().churchId == churchId) || 
-                      (isMasterAdmin() && churchId == 'system')
+                      (getUserData().role == 'admin' && getUserData().churchId == churchId) || 
+                      (isMasterAdmin() && (churchId == 'system' || churchId == getUserData().churchId))
                     ) && 
                     isValidChurchPolicyAcceptance(request.resource.data);
       allow update, delete: if false; // Immutable

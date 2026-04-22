@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { addDocument, setDocument } from "../lib/firestore";
 import { Shield, Building2, User, Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
@@ -39,6 +39,9 @@ export default function RegisterChurch() {
       // 1. Create Auth User
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
+      
+      // Send verification email immediately
+      await sendEmailVerification(user);
 
       // 2. Register Church via API
       const token = await user.getIdToken();

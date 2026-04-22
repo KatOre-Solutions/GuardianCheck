@@ -9,7 +9,7 @@ import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 
 export default function ProfileCompletion() {
-  const { user, userData, status, loading: authLoading } = useAuth();
+  const { user, userData, roles, status, loading: authLoading } = useAuth();
   const { church: tenantChurch } = useTenant();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -132,22 +132,23 @@ export default function ProfileCompletion() {
         displayName: `${firstName} ${lastName}`
       });
 
-      // 3. Create membership request
-      await createMembershipRequest({
-        userId: user.uid,
-        userEmail: user.email,
-        userName: `${firstName} ${lastName}`,
-        churchId: selectedChurch,
-        churchName: church?.name || "Unknown Church",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-
       showSuccessToast(
         "Profile completed!",
-        "Welcome to our church community."
+        "Account setup successful."
       );
-      navigate("/");
+      
+      // Navigate to the appropriate dashboard based on role
+      const slug = church?.slug;
+      if (roles.includes("master_admin")) {
+        navigate("/master-admin");
+      } else if (slug) {
+        if (roles.includes("admin")) navigate(`/${slug}/admin`);
+        else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer`);
+        else if (roles.includes("parent")) navigate(`/${slug}/parent`);
+        else navigate(`/${slug}`);
+      } else {
+        navigate("/");
+      }
     } catch (error) {
       console.error("Failed to complete profile", error);
       showErrorToast(error);
@@ -259,7 +260,7 @@ export default function ProfileCompletion() {
             disabled={loading}
             className="w-full bg-primary text-white p-4 rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-primary/90 transition-all disabled:opacity-50 shadow-lg shadow-primary/10 dark:shadow-none"
           >
-            <span>{loading ? "Processing..." : "Submit Request"}</span>
+            <span>{loading ? "Processing..." : "Complete Profile"}</span>
             {!loading && <ArrowRight className="h-5 w-5" />}
           </button>
         </form>

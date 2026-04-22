@@ -75,7 +75,6 @@ export default function AdminDashboard() {
   const [checkins, setCheckins] = useState<any[]>([]);
   const [children, setChildren] = useState<any[]>([]);
   const [guardians, setGuardians] = useState<any[]>([]);
-  const [membershipRequests, setMembershipRequests] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [showRoomModal, setShowRoomModal] = useState(false);
@@ -139,7 +138,6 @@ export default function AdminDashboard() {
       const unsubChildren = subscribeToCollection("children", constraints, setChildren);
       const unsubGuardians = subscribeToCollection("guardians", constraints, setGuardians);
       const unsubInvitations = subscribeToCollection("invitations", constraints, setInvitations);
-      const unsubRequests = subscribeToCollection("membershipRequests", constraints, setMembershipRequests);
       const unsubEvents = subscribeToCollection("events", constraints, setEvents);
       const unsubServices = subscribeToCollection("services", constraints, setServices);
 
@@ -150,48 +148,11 @@ export default function AdminDashboard() {
         unsubChildren();
         unsubGuardians();
         unsubInvitations();
-        unsubRequests();
         unsubEvents();
         unsubServices();
       };
     }
   }, [role, userData?.churchId]);
-
-  const handleApproveRequest = async (request: any, role: string = "parent") => {
-    try {
-      const roles = [role];
-      if (role === "admin") roles.push("volunteer");
-      if (role === "master_admin") {
-        if (!roles.includes("admin")) roles.push("admin");
-        if (!roles.includes("volunteer")) roles.push("volunteer");
-      }
-
-      await updateDocument("membershipRequests", request.id, { status: "approved", updatedAt: new Date().toISOString() });
-      await updateDocument("users", request.userId, { 
-        churchId: userData.churchId, 
-        churchSlug: userData.churchSlug,
-        role, 
-        roles,
-        status: "approved",
-        updatedAt: new Date().toISOString()
-      });
-      showSuccessToast("Request Approved", `Approved ${request.userName} as ${role}`);
-    } catch (error) {
-      console.error("Approve Request Error:", error);
-      showErrorToast(error);
-    }
-  };
-
-  const handleRejectRequest = async (request: any) => {
-    try {
-      await updateDocument("membershipRequests", request.id, { status: "rejected", updatedAt: new Date().toISOString() });
-      await updateDocument("users", request.userId, { status: "rejected", updatedAt: new Date().toISOString() });
-      showSuccessToast("Request Rejected", `Rejected ${request.userName}`);
-    } catch (error) {
-      console.error("Reject Request Error:", error);
-      showErrorToast(error);
-    }
-  };
 
   const handleAddRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -819,61 +780,6 @@ export default function AdminDashboard() {
           </div>
         </div>
       </header>
-
-      {/* Membership Requests Section */}
-      {membershipRequests.filter(r => r.status === "pending").length > 0 && (
-        <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100 dark:border-amber-900/30 overflow-hidden">
-          <div className="p-6 bg-amber-50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-900/30 flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Pending Membership Requests</h3>
-            </div>
-            <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-full text-xs font-bold">
-              {membershipRequests.filter(r => r.status === "pending").length} New
-            </span>
-          </div>
-          <div className="divide-y divide-gray-50 dark:divide-gray-800">
-            {membershipRequests.filter(r => r.status === "pending").map((request) => (
-              <div key={request.id} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-                <div>
-                  <p className="font-bold text-gray-900 dark:text-white text-lg">{request.userName}</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{request.userEmail}</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Requested {format(new Date(request.createdAt), "MMM d, yyyy HH:mm")}</p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
-                    <button
-                      onClick={() => handleApproveRequest(request, "parent")}
-                      className="px-3 py-2 text-xs font-bold rounded-lg hover:bg-white dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-all"
-                    >
-                      As Parent
-                    </button>
-                    <button
-                      onClick={() => handleApproveRequest(request, "volunteer")}
-                      className="px-3 py-2 text-xs font-bold rounded-lg hover:bg-white dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-all"
-                    >
-                      As Volunteer
-                    </button>
-                    <button
-                      onClick={() => handleApproveRequest(request, "admin")}
-                      className="px-3 py-2 text-xs font-bold rounded-lg hover:bg-white dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-all"
-                    >
-                      As Admin
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => handleRejectRequest(request)}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-                    title="Reject Request"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

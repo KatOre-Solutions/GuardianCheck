@@ -40,120 +40,105 @@ export default function Login() {
     namesRef.current = { firstName, lastName };
   }, [firstName, lastName]);
 
+  const performAuthCheck = React.useCallback(async (user: any, manual = false, retryCount = 0): Promise<void> => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Force reload to get latest verification status
+      await user.reload();
+      
+      const updatedUser = auth.currentUser;
+      if (!updatedUser) return;
+
+      // Check verification for password provider
+      const isPasswordProvider = updatedUser.providerData.some(p => p.providerId === "password");
+      if (!updatedUser.emailVerified && isPasswordProvider) {
+        setMode("verify");
+        if (manual) {
+          showErrorToast("Email not yet verified. Please check your inbox.");
+        }
+        setLoading(false);
+        return;
+      }
+
+      // GET user document 
+      let userDoc = await getDocument("users", updatedUser.uid) as any;
+      
+      if (!userDoc && updatedUser.email) {
+        const isMasterAdmin = updatedUser.email === "oreutlwilediutlwileng@gmail.com";
+        const [fName, ...lNameParts] = (updatedUser.displayName || "").split(" ");
+        
+        const churchId = church?.id || null;
+        const churchSlug = church?.slug || null;
+
+        userDoc = {
+          uid: updatedUser.uid,
+          email: updatedUser.email,
+          firstName: namesRef.current.firstName || fName || "",
+          lastName: namesRef.current.lastName || lNameParts.join(" ") || "",
+          role: isMasterAdmin ? "master_admin" : "parent",
+          roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : ["parent"],
+          churchId,
+          churchSlug,
+          status: isMasterAdmin ? "approved" : "incomplete_profile",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await setDocument("users", updatedUser.uid, userDoc);
+        
+        // Update Firebase Auth profile if names are available
+        if (userDoc.firstName && userDoc.lastName) {
+          await updateProfile(updatedUser, {
+            displayName: `${userDoc.firstName} ${userDoc.lastName}`
+          });
+        }
+        
+        await logAudit({
+          action: "user_signup_auto_create",
+          category: "security",
+          details: { email: updatedUser.email, role: userDoc.role },
+          userId: updatedUser.uid,
+          churchId: church?.id
+        });
+      }
+
+      if (userDoc) {
+        if (updatedUser.emailVerified && mode === "verify") {
+          showSuccessToast("Email verified!", "Logging you in...");
+        }
+        const churchPrefix = userDoc.churchSlug ? `/${userDoc.churchSlug}` : "";
+        if (userDoc.status === "incomplete_profile") navigate("/complete-profile");
+        else if (userDoc.status === "rejected") navigate("/rejected");
+        else if (userDoc.role === "master_admin") navigate("/master-admin");
+        else if (userDoc.role === "admin") navigate(`${churchPrefix}/admin`);
+        else if (userDoc.role === "volunteer") navigate(`${churchPrefix}/volunteer`);
+        else if (userDoc.role === "parent") navigate(`${churchPrefix}/parent`);
+        else navigate("/");
+      }
+    } catch (err: any) {
+      if (retryCount < 2 && (err.code === "auth/network-request-failed" || err.message?.includes("network"))) {
+        console.warn(`Auth check failed, retrying... (${retryCount + 1}/2)`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return performAuthCheck(user, manual, retryCount + 1);
+      }
+      console.error("Auth state change error:", err);
+      const { message } = getHumanReadableError(err);
+      setError(message);
+      showErrorToast(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [church, navigate]);
+
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (user) {
-        setLoading(true);
-        setError(null);
-        try {
-          // Force reload to get latest verification status
-          await user.reload();
-          
-          const updatedUser = auth.currentUser;
-          if (!updatedUser) return;
-
-          // Check verification for password provider
-          const isPasswordProvider = updatedUser.providerData.some(p => p.providerId === "password");
-          if (!updatedUser.emailVerified && isPasswordProvider) {
-            setMode("verify");
-            setLoading(false);
-            return;
-          }
-
-          let userDoc = await getDocument("users", updatedUser.uid) as any;
-          
-          // Fallback for missing churchSlug
-          if (userDoc && userDoc.churchId && !userDoc.churchSlug) {
-            try {
-              const churchDoc = await getDocument("churches", userDoc.churchId) as any;
-              if (churchDoc?.slug) {
-                userDoc.churchSlug = churchDoc.slug;
-                // Update the user document to include the slug for future logins
-                await updateDocument("users", updatedUser.uid, { churchSlug: churchDoc.slug });
-              }
-            } catch (err) {
-              console.error("Failed to fetch church slug fallback:", err);
-            }
-          }
-          
-          // If user exists but doc is missing (e.g. interrupted signup), create it
-          if (!userDoc && updatedUser.email) {
-            const isMasterAdmin = updatedUser.email === "oreutlwilediutlwileng@gmail.com";
-            const [fName, ...lNameParts] = (updatedUser.displayName || "").split(" ");
-            
-            // Determine church from context if available
-            const churchId = church?.id || null;
-            const churchSlug = church?.slug || null;
-
-            userDoc = {
-              uid: updatedUser.uid,
-              email: updatedUser.email,
-              firstName: namesRef.current.firstName || fName || "",
-              lastName: namesRef.current.lastName || lNameParts.join(" ") || "",
-              role: isMasterAdmin ? "master_admin" : "parent",
-              roles: isMasterAdmin ? ["master_admin", "admin", "volunteer"] : ["parent"],
-              churchId,
-              churchSlug,
-              status: isMasterAdmin ? "approved" : "incomplete_profile",
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            await setDocument("users", updatedUser.uid, userDoc);
-            
-            // Update Firebase Auth profile if names are available
-            if (userDoc.firstName && userDoc.lastName) {
-              await updateProfile(updatedUser, {
-                displayName: `${userDoc.firstName} ${userDoc.lastName}`
-              });
-            }
-            
-            await logAudit({
-              action: "user_signup_auto_create",
-              category: "security",
-              details: { email: updatedUser.email, role: userDoc.role },
-              userId: updatedUser.uid,
-              churchId: church?.id
-            });
-          }
-
-          if (userDoc?.mustChangePassword) {
-            setMode("must-change");
-            setLoading(false);
-            return;
-          }
-
-          if (userDoc) {
-            // Check email verification for password users
-            const isPasswordUser = updatedUser.providerData.some(p => p.providerId === "password");
-            if (isPasswordUser && !updatedUser.emailVerified) {
-              setMode("verify");
-              setLoading(false);
-              return;
-            }
-
-            const churchPrefix = userDoc.churchSlug ? `/${userDoc.churchSlug}` : "";
-            
-            if (userDoc.status === "incomplete_profile") navigate("/complete-profile");
-            else if (userDoc.status === "pending") navigate("/pending-approval");
-            else if (userDoc.status === "rejected") navigate("/rejected");
-            else if (userDoc.role === "master_admin") navigate("/master-admin");
-            else if (userDoc.role === "admin") navigate(`${churchPrefix}/admin`);
-            else if (userDoc.role === "volunteer") navigate(`${churchPrefix}/volunteer`);
-            else if (userDoc.role === "parent") navigate(`${churchPrefix}/parent`);
-            else navigate("/");
-          }
-        } catch (err: any) {
-          console.error("Auth state change error:", err);
-          const { message } = getHumanReadableError(err);
-          setError(message);
-          showErrorToast(err);
-        } finally {
-          setLoading(false);
-        }
+        performAuthCheck(user);
       }
     });
     return () => unsubscribe();
-  }, [navigate]);
+  }, [performAuthCheck]);
 
   const handleGoogleLogin = async () => {
     setLoading(true);
@@ -383,20 +368,8 @@ export default function Login() {
           <div className="space-y-4">
             <button 
               onClick={async () => {
-                setLoading(true);
-                try {
-                  await auth.currentUser?.reload();
-                  if (auth.currentUser?.emailVerified) {
-                    showSuccessToast("Email verified!", "Redirecting...");
-                    window.location.reload();
-                  } else {
-                    showErrorToast("Email not yet verified. Please check your inbox.");
-                  }
-                } catch (e) {
-                  showErrorToast("Failed to refresh status. Please try again.");
-                } finally {
-                  setLoading(false);
-                }
+                if (!auth.currentUser) return;
+                await performAuthCheck(auth.currentUser, true);
               }}
               disabled={loading}
               className="w-full bg-primary text-white p-4 rounded-xl font-bold hover:bg-primary/90 transition-all disabled:opacity-50"

@@ -194,8 +194,6 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
       } else if (status === "incomplete_profile") {
         // Force profile completion
         navigate("/complete-profile");
-      } else if (status === "pending") {
-        navigate("/pending-approval");
       } else if (status === "rejected") {
         navigate("/rejected");
       } else if (church && userData?.churchId !== church.id && !roles.includes("master_admin")) {
