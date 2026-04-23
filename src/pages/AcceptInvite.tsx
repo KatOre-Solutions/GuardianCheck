@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../lib/firebase";
+import { safeFetch } from "../lib/api";
 import { getInvitationByToken } from "../lib/firestore";
 import { Shield, Lock, User, Mail, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
@@ -59,15 +60,14 @@ export default function AcceptInvite() {
 
     setSubmitting(true);
     try {
-      const response = await fetch("/api/accept-invite", {
+      const result = await safeFetch("/api/accept-invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, password })
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to accept invitation");
+      if (!result.ok) {
+        throw new Error(result.error || "Failed to accept invitation");
       }
 
       // 2. Sign in the user automatically so they see the verification screen immediately

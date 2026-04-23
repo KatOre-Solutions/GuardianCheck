@@ -35,6 +35,7 @@ import {
   FileText
 } from "lucide-react";
 import PayFastButton from "../components/PayFastButton";
+import { safeFetch } from "../lib/api";
 import { hashPin, generatePin, obfuscatePin, deobfuscatePin } from "../lib/security";
 import { 
   BarChart, 
@@ -191,7 +192,7 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       const token = await auth.currentUser?.getIdToken();
-      const response = await fetch("/api/invite-user", {
+      const result = await safeFetch("/api/invite-user", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -205,15 +206,14 @@ export default function AdminDashboard() {
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to send invitation");
+      if (!result.ok) {
+        throw new Error(result.error || "Failed to send invitation");
       }
 
-      const result = await response.json();
+      const data = result.data;
       
-      if (result.emailError) {
-        showSuccessToast("Invitation created!", `Email failed to send, but you can share this link: ${result.inviteLink}`);
+      if (data.emailError) {
+        showSuccessToast("Invitation created!", `Email failed to send, but you can share this link: ${data.inviteLink}`);
       } else {
         showSuccessToast("Invitation sent!", `An email has been sent to ${newUser.email}`);
       }
@@ -413,7 +413,7 @@ export default function AdminDashboard() {
     setTriggeringEmergency(true);
     try {
       const token = await auth.currentUser?.getIdToken();
-      const response = await fetch("/api/emergency-alert", {
+      const result = await safeFetch("/api/emergency-alert", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -425,9 +425,8 @@ export default function AdminDashboard() {
         })
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to trigger emergency alert");
+      if (!result.ok) {
+        throw new Error(result.error || "Failed to trigger emergency alert");
       }
 
       showSuccessToast("Emergency alerts triggered successfully", "All parents of checked-in children have been notified.");

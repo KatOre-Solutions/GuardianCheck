@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { addDocument, setDocument } from "../lib/firestore";
+import { safeFetch } from "../lib/api";
 import { Shield, Building2, User, Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import { motion } from "motion/react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
@@ -45,7 +46,7 @@ export default function RegisterChurch() {
 
       // 2. Register Church via API
       const token = await user.getIdToken();
-      const response = await fetch("/api/register-church", {
+      const result = await safeFetch("/api/register-church", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -58,20 +59,18 @@ export default function RegisterChurch() {
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
+      if (!result.ok) {
         // If registration fails, delete the auth user to prevent inconsistent state
         try {
           await user.delete();
         } catch (deleteErr) {
           console.error("Failed to delete user after failed registration", deleteErr);
-          // If delete fails (e.g. user already deleted or network issue), just sign out
           await auth.signOut();
         }
-        throw new Error(errorData.error || "Failed to register church");
+        throw new Error(result.error || "Failed to register church");
       }
 
-      const { slug } = await response.json();
+      const { slug } = result.data;
 
       showSuccessToast("Church registered successfully! Welcome to GuardianCheck.");
       

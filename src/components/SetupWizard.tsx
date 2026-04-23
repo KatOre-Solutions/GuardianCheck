@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { auth } from "../lib/firebase";
 import { addDocument, setDocument, updateDocument } from "../lib/firestore";
+import { safeFetch } from "../lib/api";
 import { generatePin, hashPin, obfuscatePin } from "../lib/security";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
@@ -191,7 +192,7 @@ export default function SetupWizard({ churchId, onComplete }: SetupWizardProps) 
         const idToken = await auth.currentUser?.getIdToken();
         for (const email of validEmails) {
           try {
-            await fetch("/api/invite-user", {
+            await safeFetch("/api/invite-user", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",

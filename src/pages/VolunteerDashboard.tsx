@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { format } from "date-fns";
+import { safeFetch } from "../lib/api";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 import { hashPin } from "../lib/security";
 import { useActiveService } from "../hooks/useActiveService";
@@ -415,7 +416,7 @@ export default function VolunteerDashboard() {
 
         try {
           const token = await auth.currentUser?.getIdToken();
-          const response = await fetch("/api/check-in", {
+          const result = await safeFetch("/api/check-in", {
             method: "POST",
             headers: { 
               "Content-Type": "application/json",
@@ -440,16 +441,16 @@ export default function VolunteerDashboard() {
             })
           });
 
-          if (!response.ok) {
-            const errorData = await response.json();
-            if (response.status === 409) {
-              showErrorToast(`${child.firstName}: ${errorData.error}`);
+          if (!result.ok) {
+            if (result.status === 409) {
+              showErrorToast(`${child.firstName}: ${result.error}`);
               continue; // Skip this child but continue with others
             }
-            throw new Error(errorData.error || "Server error");
+            // If it's a 404 or other server error, treat it as "server unavailable" and trigger fallback
+            throw new Error(result.error || "Server error");
           }
         } catch (err) {
-          // Fallback to local write if offline or server error (except 409 conflicts)
+          // Fallback to local write if offline, 404, or regular server error (except 409 conflicts)
           console.warn("Check-in API failed, falling back to local write:", err);
           
           // Local check for "One room at a time" using synced state
@@ -512,7 +513,7 @@ export default function VolunteerDashboard() {
   const processCheckout = async (record: any, guardianId: string, guardianName: string = "", isOverride = false, reason = "") => {
     try {
       const token = await auth.currentUser?.getIdToken();
-      const response = await fetch("/api/check-out", {
+      const result = await safeFetch("/api/check-out", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -530,13 +531,12 @@ export default function VolunteerDashboard() {
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 409) {
-          showErrorToast(errorData.error);
+      if (!result.ok) {
+        if (result.status === 409) {
+          showErrorToast(result.error);
           return;
         }
-        throw new Error(errorData.error || "Server error");
+        throw new Error(result.error || "Server error");
       }
 
       showSuccessToast(`${record.childName} checked out successfully!`);
@@ -592,7 +592,7 @@ export default function VolunteerDashboard() {
     setLoading(true);
     try {
       const token = await auth.currentUser?.getIdToken();
-      const response = await fetch("/api/verify-pin", {
+      const result = await safeFetch("/api/verify-pin", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -601,7 +601,7 @@ export default function VolunteerDashboard() {
         body: JSON.stringify({ churchId: userData.churchId, pin: overridePin })
       });
       
-      const { isValid } = await response.json();
+      const isValid = result.ok && result.data?.isValid;
       
       if (isValid) {
         // Success
