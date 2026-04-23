@@ -72,8 +72,9 @@ export default function VolunteerDashboard() {
     useEffect(() => {
       if (!uid) return;
       
-      // If fallbackName is already a proper name (not an email), use it immediately
-      if (fallbackName && !fallbackName.includes("@")) {
+      // If fallbackName is already a proper name (not an email and not generic), use it immediately
+      const isGeneric = !fallbackName || fallbackName.toLowerCase() === "volunteer" || fallbackName.toLowerCase() === "unknown";
+      if (fallbackName && !fallbackName.includes("@") && !isGeneric) {
         setResolvedName(fallbackName);
         return;
       }

@@ -405,7 +405,9 @@ const authenticateToken = async (req: any, res: any, next: any) => {
         ...decodedToken,
         churchId: userData.churchId,
         role: userData.role,
-        status: userData.status
+        status: userData.status,
+        firstName: userData.firstName,
+        lastName: userData.lastName
       };
     } else {
       req.user = decodedToken;
@@ -752,7 +754,9 @@ async function startServer() {
           serviceName: service.name,
           checkInTime: new Date().toISOString(),
           volunteerId,
-          volunteerName: req.user.firstName ? `${req.user.firstName} ${req.user.lastName}` : "Volunteer",
+          volunteerName: (req.user.firstName || req.user.lastName) 
+            ? `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() 
+            : (req.user.name || req.user.email || "Volunteer"),
           status: "checked-in",
           qrCode,
           checkedInBy,
@@ -830,7 +834,9 @@ async function startServer() {
           checkOutTime: new Date().toISOString(),
           status: "checked-out",
           checkOutVolunteerId: volunteerId,
-          checkOutVolunteerName: req.user.firstName ? `${req.user.firstName} ${req.user.lastName}` : "Volunteer",
+          checkOutVolunteerName: (req.user.firstName || req.user.lastName) 
+            ? `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() 
+            : (req.user.name || req.user.email || "Volunteer"),
           guardianId: guardianId || (overrideReason ? "admin_override" : "unknown"),
           guardianName: guardianName || (overrideReason ? "Admin Override" : "Guardian"),
           overrideReason: overrideReason || null,
