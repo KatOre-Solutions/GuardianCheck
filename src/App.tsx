@@ -9,6 +9,7 @@ import { Toaster } from "sonner";
 import { TenantProvider, useTenant } from "./contexts/TenantContext";
 import { ChurchLogo } from "./components/ChurchLogo";
 
+import { SpeedInsights } from "@vercel/speed-insights/react";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import RegisterChurch from "./pages/RegisterChurch";
@@ -354,6 +355,7 @@ export default function App() {
             </Routes>
             <Toaster position="top-right" richColors />
             <NetworkStatus />
+            <SpeedInsights />
           </div>
         </TenantProvider>
       </Router>
