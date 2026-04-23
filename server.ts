@@ -303,10 +303,10 @@ const CheckInSchema = z.object({
 const CheckOutSchema = z.object({
   checkinId: z.string().min(1),
   volunteerId: z.string().min(1),
-  volunteerName: z.string().optional(),
-  guardianId: z.string().optional(),
-  guardianName: z.string().optional(),
-  overrideReason: z.string().optional()
+  volunteerName: z.string().optional().nullable(),
+  guardianId: z.string().optional().nullable(),
+  guardianName: z.string().optional().nullable(),
+  overrideReason: z.string().optional().nullable()
 });
 
 const InviteUserSchema = z.object({
@@ -809,7 +809,7 @@ async function startServer() {
     try {
       const checkinRef = db.collection("checkins").doc(checkinId);
       
-      await db.runTransaction(async (transaction: any) => {
+      const checkinData = await db.runTransaction(async (transaction: any) => {
         const checkinDoc = await transaction.get(checkinRef);
         req.firestoreOps.reads++;
 
@@ -826,7 +826,7 @@ async function startServer() {
           throw new Error(`Cannot check out. Current status is: ${cData.status}`);
         }
 
-        transaction.update(checkinRef, {
+        const updateData = {
           checkOutTime: new Date().toISOString(),
           status: "checked-out",
           checkOutVolunteerId: volunteerId,
@@ -835,29 +835,29 @@ async function startServer() {
           guardianName: guardianName || (overrideReason ? "Admin Override" : "Guardian"),
           overrideReason: overrideReason || null,
           updatedAt: new Date().toISOString()
-        });
+        };
+
+        transaction.update(checkinRef, updateData);
         req.firestoreOps.writes++;
+        return { ...cData, ...updateData };
       });
 
-      // Send Checkout Notification (Async)
-      const checkinDoc = await db.collection("checkins").doc(checkinId).get();
-      req.firestoreOps.reads++;
-      const cData = checkinDoc.data();
-      
-      if (cData) {
+      // Send Checkout Notification (Fire and forget)
+      if (checkinData) {
+        // Use cached church data for the name
         const churchData = await getCachedDoc(req, "churches", churchId, churchId);
         const churchName = churchData?.name || "Church";
 
-        emailService.sendNotification(churchId, cData.childId, {
-          childName: cData.childName,
-          time: new Date().toISOString(),
-          roomName: cData.roomName,
+        emailService.sendNotification(churchId, checkinData.childId, {
+          childName: checkinData.childName,
+          time: checkinData.checkOutTime,
+          roomName: checkinData.roomName,
           churchName,
-          serviceName: cData.serviceName,
+          serviceName: checkinData.serviceName,
           eventType: 'check-out',
-          volunteerName: req.user.firstName ? `${req.user.firstName} ${req.user.lastName}` : "Volunteer",
-          guardianName: guardianName || (overrideReason ? "Admin Override" : "Guardian")
-        });
+          volunteerName: checkinData.checkOutVolunteerName,
+          guardianName: checkinData.guardianName
+        }).catch(err => console.error("Async notification failed:", err));
       }
 
       res.json({ success: true });

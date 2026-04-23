@@ -233,33 +233,31 @@ export class EmailService {
     }
 
     try {
-      // 1. Find the parent/guardians
+      // 1. Find the parent/guardians in parallel
       const recipients: string[] = [];
       
-      // Get the child to find parentId
       const childDoc = await this.db.collection("children").doc(childId).get();
-      if (childDoc.exists) {
-        const parentId = childDoc.data().parentId;
-        if (parentId) {
-          const parentDoc = await this.db.collection("users").doc(parentId).get();
-          if (parentDoc.exists && parentDoc.data().email) {
-            recipients.push(parentDoc.data().email);
-          }
-        }
+      if (!childDoc.exists) return;
+
+      const parentId = childDoc.data().parentId;
+
+      // Fetch parent and guardians in parallel
+      const [parentDoc, guardiansSnapshot] = await Promise.all([
+        parentId ? this.db.collection("users").doc(parentId).get() : Promise.resolve(null),
+        this.db.collection("guardians")
+          .where("churchId", "==", churchId)
+          .where("childIds", "array-contains", childId)
+          .where("active", "==", true)
+          .get()
+      ]);
+
+      if (parentDoc?.exists && parentDoc.data().email) {
+        recipients.push(parentDoc.data().email);
       }
 
-      // Get guardians linked to this child
-      const guardiansSnapshot = await this.db.collection("guardians")
-        .where("churchId", "==", churchId)
-        .where("childIds", "array-contains", childId)
-        .where("active", "==", true)
-        .get();
-      
       guardiansSnapshot.forEach((doc: any) => {
         const gData = doc.data();
-        if (gData.email) {
-          recipients.push(gData.email);
-        }
+        if (gData.email) recipients.push(gData.email);
       });
 
       // Remove duplicates
@@ -274,8 +272,8 @@ export class EmailService {
       const subject = `${data.churchName} - ${data.childName} ${data.eventType === 'check-in' ? 'Checked In' : 'Checked Out'}`;
       const senderName = this.sanitizeSenderName(`${data.churchName} via GuardianCheck`);
 
-      // 2. Send emails
-      for (const email of uniqueRecipients) {
+      // 2. Send emails in parallel
+      await Promise.all(uniqueRecipients.map(async (email) => {
         try {
           await this.transporter.sendMail({
             from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
@@ -306,13 +304,10 @@ export class EmailService {
             eventType: data.eventType,
             status: "failed",
             errorMessage: sendError.message,
-            metadata: {
-              roomName: data.roomName,
-              serviceName: data.serviceName || "N/A",
-            }
+            metadata: { roomName: data.roomName, serviceName: data.serviceName || "N/A" }
           });
         }
-      }
+      }));
     } catch (error: any) {
       console.error("Error in sendNotification:", error.message);
     }
