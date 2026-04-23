@@ -63,6 +63,8 @@ export default function VolunteerDashboard() {
   const [allChildren, setAllChildren] = useState<any[]>([]);
   const [allGuardians, setAllGuardians] = useState<any[]>([]);
   const [isOnline, setIsOnline] = useState(typeof window !== "undefined" ? window.navigator.onLine : true);
+  const [loadingActivity, setLoadingActivity] = useState(true);
+  const [loadingAttendance, setLoadingAttendance] = useState(true);
   const lastScannedRef = useRef<{ text: string, time: number } | null>(null);
 
   // Helper component to display volunteer name with lookup
@@ -147,6 +149,7 @@ export default function VolunteerDashboard() {
       where("status", "==", "checked-in")
     ], (data) => {
       setCheckedInChildren(data);
+      setLoadingAttendance(false);
     });
 
     const unsubscribeRecent = subscribeToCollection("checkins", [
@@ -156,6 +159,7 @@ export default function VolunteerDashboard() {
         new Date(b.updatedAt || b.checkInTime).getTime() - new Date(a.updatedAt || a.checkInTime).getTime()
       ).slice(0, 5);
       setRecentActivity(sorted);
+      setLoadingActivity(false);
     });
 
     return () => {
@@ -958,59 +962,62 @@ export default function VolunteerDashboard() {
               <Clock className="h-5 w-5 text-gray-400 dark:text-gray-500" />
             </div>
             <div className="space-y-4">
-              {recentActivity.map((activity) => (
-                <div key={activity.id} className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className={`h-2 w-2 rounded-full ${activity.status === "checked-in" ? "bg-green-500" : "bg-orange-500"}`} />
-                      <p className="text-sm font-bold text-gray-900 dark:text-white">{activity.childName}</p>
+              {loadingActivity ? (
+                <ActivitySkeleton />
+              ) : recentActivity.length > 0 ? (
+                recentActivity.map((activity) => (
+                  <div key={activity.id} className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-2xl border border-gray-100 dark:border-gray-700 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className={`h-2 w-2 rounded-full ${activity.status === "checked-in" ? "bg-green-500" : "bg-orange-500"}`} />
+                        <p className="text-sm font-bold text-gray-900 dark:text-white">{activity.childName}</p>
+                      </div>
+                      <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">
+                        {format(new Date(activity.updatedAt || activity.checkInTime), "HH:mm")}
+                      </span>
                     </div>
-                    <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">
-                      {format(new Date(activity.updatedAt || activity.checkInTime), "HH:mm")}
-                    </span>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4 text-[10px]">
-                    <div className="space-y-1">
-                      <p className="text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">
-                        {activity.status === "checked-in" ? "Checked In By" : "Picked Up By"}
-                      </p>
-                      <p className="text-gray-700 dark:text-gray-300 font-medium">
-                        {activity.status === "checked-in" ? activity.checkedInBy : activity.guardianName}
-                      </p>
+                    
+                    <div className="grid grid-cols-2 gap-4 text-[10px]">
+                      <div className="space-y-1">
+                        <p className="text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">
+                          {activity.status === "checked-in" ? "Checked In By" : "Picked Up By"}
+                        </p>
+                        <p className="text-gray-700 dark:text-gray-300 font-medium">
+                          {activity.status === "checked-in" ? activity.checkedInBy : activity.guardianName}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">Volunteer</p>
+                        <p className="text-gray-700 dark:text-gray-300 font-medium">
+                          {activity.status === "checked-in" ? (
+                            <VolunteerDisplay 
+                              uid={activity.volunteerId} 
+                              fallbackName={activity.volunteerName} 
+                            />
+                          ) : (
+                            <VolunteerDisplay 
+                              uid={activity.checkOutVolunteerId || activity.volunteerId} 
+                              fallbackName={activity.checkOutVolunteerName || activity.volunteerName} 
+                            />
+                          )}
+                        </p>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wider">Volunteer</p>
-                      <p className="text-gray-700 dark:text-gray-300 font-medium">
-                        {activity.status === "checked-in" ? (
-                          <VolunteerDisplay 
-                            uid={activity.volunteerId} 
-                            fallbackName={activity.volunteerName} 
-                          />
-                        ) : (
-                          <VolunteerDisplay 
-                            uid={activity.checkOutVolunteerId || activity.volunteerId} 
-                            fallbackName={activity.checkOutVolunteerName || activity.volunteerName} 
-                          />
-                        )}
+                    
+                    <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1">
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {activity.status === "checked-in" ? "Assigned to " : "Released from "}
+                        <span className="font-bold text-primary dark:text-primary/80">{activity.roomName}</span>
                       </p>
+                      {activity.eventName && (
+                        <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                          {activity.eventName} • {activity.serviceName}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  
-                  <div className="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1">
-                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
-                      {activity.status === "checked-in" ? "Assigned to " : "Released from "}
-                      <span className="font-bold text-primary dark:text-primary/80">{activity.roomName}</span>
-                    </p>
-                    {activity.eventName && (
-                      <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
-                        {activity.eventName} • {activity.serviceName}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {recentActivity.length === 0 && (
+                ))
+              ) : (
                 <div className="text-center py-12 space-y-4">
                   <div className="h-16 w-16 bg-gray-50 dark:bg-gray-900/50 rounded-full flex items-center justify-center mx-auto">
                     <Clock className="h-8 w-8 text-gray-300" />
@@ -1043,56 +1050,59 @@ export default function VolunteerDashboard() {
             </div>
           </div>
           <div className="divide-y divide-gray-50 dark:divide-gray-700">
-            {checkedInChildren
-              .filter(record => record.childName.toLowerCase().includes(attendanceSearch.toLowerCase()))
-              .map((record) => (
-              <div key={record.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors">
-                <div className="flex items-center space-x-4">
-                  <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-xl flex items-center justify-center">
-                    <Users className="h-6 w-6 text-primary dark:text-primary/80" />
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900 dark:text-white">{record.childName}</p>
-                    <div className="flex flex-col space-y-1">
-                      <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
-                        <span className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-2 py-0.5 rounded-md font-bold uppercase">{record.roomName}</span>
-                        <span>•</span>
-                        <Clock className="h-3 w-3" />
-                        <span>{format(new Date(record.checkInTime), "h:mm a")}</span>
+            {loadingAttendance ? (
+              <MemberListSkeleton />
+            ) : checkedInChildren.length > 0 ? (
+              checkedInChildren
+                .filter(record => record.childName.toLowerCase().includes(attendanceSearch.toLowerCase()))
+                .map((record) => (
+                <div key={record.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors">
+                  <div className="flex items-center space-x-4">
+                    <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-xl flex items-center justify-center">
+                      <Users className="h-6 w-6 text-primary dark:text-primary/80" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 dark:text-white">{record.childName}</p>
+                      <div className="flex flex-col space-y-1">
+                        <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-2 py-0.5 rounded-md font-bold uppercase">{record.roomName}</span>
+                          <span>•</span>
+                          <Clock className="h-3 w-3" />
+                          <span>{format(new Date(record.checkInTime), "h:mm a")}</span>
+                        </div>
+                        {record.eventName && (
+                          <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                            {record.eventName} • {record.serviceName}
+                          </p>
+                        )}
                       </div>
-                      {record.eventName && (
-                        <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
-                          {record.eventName} • {record.serviceName}
-                        </p>
-                      )}
                     </div>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => {
+                        setMoveChild(record);
+                        setNewRoomForMove(record.roomId);
+                        setShowMoveModal(true);
+                      }}
+                      className="p-2 text-gray-400 hover:text-primary transition-colors"
+                      title="Move Room"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCheckoutChild(record);
+                        setShowCheckoutModal(true);
+                      }}
+                      className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-all"
+                    >
+                      Check Out
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => {
-                      setMoveChild(record);
-                      setNewRoomForMove(record.roomId);
-                      setShowMoveModal(true);
-                    }}
-                    className="p-2 text-gray-400 hover:text-primary transition-colors"
-                    title="Move Room"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCheckoutChild(record);
-                      setShowCheckoutModal(true);
-                    }}
-                    className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                  >
-                    Check Out
-                  </button>
-                </div>
-              </div>
-            ))}
-            {checkedInChildren.length === 0 && (
+              ))
+            ) : (
               <div className="p-20 text-center space-y-4">
                 <div className="h-20 w-20 bg-gray-50 dark:bg-gray-900/50 rounded-full flex items-center justify-center mx-auto">
                   <Users className="h-10 w-10 text-gray-200 dark:text-gray-700" />

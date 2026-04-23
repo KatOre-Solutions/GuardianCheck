@@ -27,6 +27,8 @@ import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 
+import { DashboardSkeleton } from "./components/Skeleton";
+
 function DashboardRedirect() {
   const { user, userData, roles, loading } = useAuth();
   const navigate = useNavigate();
@@ -214,9 +216,9 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
 
   if (loading || tenantLoading) {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
+      <Layout>
+        <DashboardSkeleton />
+      </Layout>
     );
   }
 

@@ -16,7 +16,7 @@ export const ChurchLogo: React.FC<ChurchLogoProps> = ({
 }) => {
   if (logoUrl) {
     return (
-      <div className="bg-white p-1 rounded-lg shadow-sm">
+      <div className="bg-white p-1 rounded-lg shadow-sm w-10 h-10 flex items-center justify-center overflow-hidden">
         <img 
           src={logoUrl} 
           alt={name || "Church Logo"} 
@@ -27,5 +27,9 @@ export const ChurchLogo: React.FC<ChurchLogoProps> = ({
     );
   }
 
-  return <Shield className={fallbackClassName} />;
+  return (
+    <div className="w-10 h-10 flex items-center justify-center">
+      <Shield className={fallbackClassName} />
+    </div>
+  );
 };
