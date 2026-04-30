@@ -56,6 +56,7 @@ import { motion } from "motion/react";
 import { useActiveService } from "../hooks/useActiveService";
 import SetupWizard from "../components/SetupWizard";
 import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+import ChildDetailsModal from "../components/ChildDetailsModal";
 
 const HelpTooltip = ({ text }: { text: string }) => (
   <div className="group relative inline-block ml-1">
@@ -102,6 +103,8 @@ export default function AdminDashboard() {
   const [exporting, setExporting] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [triggeringEmergency, setTriggeringEmergency] = useState(false);
+  const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+  const [showChildDetailsModal, setShowChildDetailsModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string>("");
 
   useEffect(() => {
@@ -1048,7 +1051,15 @@ export default function AdminDashboard() {
               {historicalCheckins.slice(0, 10).map((record) => (
                 <tr key={record.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                   <td className="py-4 px-4">
-                    <p className="font-bold text-gray-900 dark:text-white">{record.childName}</p>
+                    <p 
+                      className="font-bold text-gray-900 dark:text-white cursor-pointer hover:text-primary transition-colors"
+                      onClick={() => {
+                        setSelectedChildId(record.childId);
+                        setShowChildDetailsModal(true);
+                      }}
+                    >
+                      {record.childName}
+                    </p>
                   </td>
                   <td className="py-4 px-4">
                     <p className="text-sm text-gray-700 dark:text-gray-300">{record.eventName}</p>
@@ -1263,7 +1274,15 @@ export default function AdminDashboard() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <div className={`h-2 w-2 rounded-full ${activity.status === "checked-in" ? "bg-green-500" : "bg-orange-500"}`} />
-                  <p className="text-sm font-bold text-gray-900 dark:text-white">{activity.childName}</p>
+                  <p 
+                    className="text-sm font-bold text-gray-900 dark:text-white cursor-pointer hover:text-primary transition-colors"
+                    onClick={() => {
+                      setSelectedChildId(activity.childId);
+                      setShowChildDetailsModal(true);
+                    }}
+                  >
+                    {activity.childName}
+                  </p>
                 </div>
                 <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">
                   {format(new Date(activity.updatedAt || activity.checkInTime), "HH:mm")}
@@ -1951,6 +1970,13 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Child Details Modal */}
+      <ChildDetailsModal 
+        childId={selectedChildId || ""} 
+        isOpen={showChildDetailsModal} 
+        onClose={() => setShowChildDetailsModal(false)} 
+      />
 
       {/* Delete Room Confirmation Modal */}
       {showDeleteRoomModal && roomToDelete && (

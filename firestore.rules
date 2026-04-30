@@ -314,12 +314,14 @@ service cloud.firestore {
     }
 
     match /child_medical/{childId} {
-      // Sensitive medical details restricted to admins and parents
-      // We allow reads for parents even if not fully approved yet (incomplete_profile)
-      // to allow them to manage children during signup if necessary.
+      // Sensitive medical details restricted to admins, volunteers (for safety), and parents
       allow read: if isMasterAdmin() || (
         isAuthenticated() && (
           (isAdmin() && (
+            (resource != null && 'churchId' in resource.data && resource.data.churchId == getUserData().churchId) ||
+            get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId
+          )) ||
+          (isVolunteer() && (
             (resource != null && 'churchId' in resource.data && resource.data.churchId == getUserData().churchId) ||
             get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId
           )) ||
@@ -339,8 +341,17 @@ service cloud.firestore {
 
     match /guardians/{guardianId} {
       allow read: if isMasterAdmin() || (
-        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
-        (isVolunteer() || isAdmin() || (isParent() && resource.data.parentId == request.auth.uid))
+        isApproved() && (
+          (isAdmin() && getUserData().churchId == resource.data.churchId) ||
+          (isVolunteer() && getUserData().churchId == resource.data.churchId) ||
+          (isParent() && resource.data.parentId == request.auth.uid)
+        )
+      );
+      allow list: if isMasterAdmin() || (
+        isApproved() && (
+          (isAdmin() && getUserData().churchId != null) ||
+          (isVolunteer() && getUserData().churchId != null)
+        )
       );
       allow create: if isMasterAdmin() || (
         isApproved() && 
@@ -362,10 +373,19 @@ service cloud.firestore {
     }
 
     match /checkins/{checkinId} {
-      // Fine-grained access: Volunteers can only read active check-ins
+      // Fine-grained access: Volunteers can read all check-ins in their church for history/reporting
       allow read: if isMasterAdmin() || (
-        isApproved() && resource != null && getUserData().churchId == resource.data.churchId &&
-        (isAdmin() || (isVolunteer() && resource.data.status == 'checked-in'))
+        isApproved() && (
+          (isAdmin() && (resource == null || getUserData().churchId == resource.data.churchId)) ||
+          (isVolunteer() && (resource == null || getUserData().churchId == resource.data.churchId))
+        )
+      );
+      
+      allow list: if isMasterAdmin() || (
+        isApproved() && (
+          (isAdmin() && getUserData().churchId != null) ||
+          (isVolunteer() && getUserData().churchId != null)
+        )
       );
       
       function isValidCheckinStateTransition() {

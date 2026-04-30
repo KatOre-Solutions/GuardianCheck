@@ -88,20 +88,18 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     logAudit({
       action: `FAILED_${operationType.toUpperCase()}`,
       category: "system_error",
-      details: errInfo,
-      churchId: (auth.currentUser as any)?.churchId, // Attempt to get churchId if available
+      details: isDevMode ? errInfo : { error: errInfo.error, operationType, path }, // Sanitize audit logs in production
+      churchId: (auth.currentUser as any)?.churchId,
       userId: auth.currentUser?.uid
-    }).catch(() => {}); // Ignore audit logging failures to prevent infinite loops
+    }).catch(() => {});
   }
   
   // We throw the human readable version or the full info for the UI to catch
-  const errorPayload = isDevMode ? {
-    ...errInfo,
-    humanTitle: humanError.title,
-    humanMessage: humanError.message,
-    humanActionable: humanError.actionable
-  } : {
-    error: "Missing or insufficient permissions.",
+  // We NO LONGER include authInfo in the thrown string for production or dev
+  // to avoid cluttering the console with sensitive IDs. 
+  // Developers can check the console group above.
+  const errorPayload = {
+    error: isDevMode ? errInfo.error : "Missing or insufficient permissions.",
     operationType,
     path,
     humanTitle: humanError.title,
