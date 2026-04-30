@@ -297,7 +297,8 @@ const CheckInSchema = z.object({
   eventId: z.string().optional(),
   eventName: z.string().optional(),
   qrCode: z.string().optional(),
-  checkedInBy: z.string().min(1)
+  checkedInBy: z.string().min(1),
+  parentId: z.string().optional()
 });
 
 const CheckOutSchema = z.object({
@@ -689,7 +690,7 @@ async function startServer() {
 
   // Atomic Check-in Endpoint
   app.post("/api/check-in", peakLimiter, authenticateToken, requirePolicyAcceptance, requireVolunteer, validate(CheckInSchema), async (req, res) => {
-    const { childId, roomId, serviceId, volunteerId, checkedInBy, qrCode } = req.body;
+    const { childId, roomId, serviceId, volunteerId, checkedInBy, qrCode, parentId } = req.body;
     const churchId = req.user.churchId;
 
     const todayStr = format(new Date(), "yyyyMMdd");
@@ -707,6 +708,9 @@ async function startServer() {
       if (!child) return res.status(404).json({ error: "Child not found or unauthorized", traceId: req.traceId });
       if (!room) return res.status(404).json({ error: "Room not found or unauthorized", traceId: req.traceId });
       if (!service) return res.status(404).json({ error: "Service not found or unauthorized", traceId: req.traceId });
+
+      // Auto-extract parentId from child if not provided
+      const finalParentId = parentId || child.parentId;
 
       if (service.status !== "active") {
         return res.status(400).json({ error: "Service is not active", traceId: req.traceId });
@@ -748,6 +752,7 @@ async function startServer() {
           churchId,
           childId,
           childName: `${child.firstName} ${child.lastName}`,
+          parentId: finalParentId,
           roomId,
           roomName: room.name,
           serviceId,

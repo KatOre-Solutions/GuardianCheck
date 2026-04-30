@@ -26,7 +26,8 @@ interface ChildDetailsModalProps {
 }
 
 export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDetailsModalProps) {
-  const { churchId } = useTenant();
+  const { church } = useTenant();
+  const churchId = church?.id;
   const [child, setChild] = useState<any>(null);
   const [medical, setMedical] = useState<any>(null);
   const [guardians, setGuardians] = useState<any[]>([]);
@@ -40,19 +41,37 @@ export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDet
 
     // Subscribe to child basic info
     const unsubChild = subscribeToDocument("children", childId, (data) => {
+      if (import.meta.env.VITE_DEV_MODE === 'true') {
+        console.log("[DEBUG] Child data received:", data);
+      }
       setChild(data);
       if (data) setLoading(false);
+    }, (error) => {
+      console.error("[DEBUG] Child subscription error:", error);
+      setLoading(false);
     });
 
     // Subscribe to medical info
-    const unsubMedical = subscribeToDocument("child_medical", childId, setMedical);
+    const unsubMedical = subscribeToDocument("child_medical", childId, (data) => {
+      if (import.meta.env.VITE_DEV_MODE === 'true') {
+        console.log("[DEBUG] Medical data received:", data);
+      }
+      setMedical(data);
+    }, (error) => {
+      console.error("[DEBUG] Medical subscription error:", error);
+    });
 
     // Subscribe to guardians (where childIds contains childId)
     const unsubGuardians = subscribeToCollection("guardians", [
       where("churchId", "==", churchId),
       where("childIds", "array-contains", childId),
       where("active", "==", true)
-    ], setGuardians);
+    ], (data) => {
+      if (import.meta.env.VITE_DEV_MODE === 'true') {
+        console.log("[DEBUG] Guardians data received:", data);
+      }
+      setGuardians(data);
+    });
 
     // Subscribe to recent check-ins
     const unsubCheckins = subscribeToCollection("checkins", [
@@ -60,7 +79,12 @@ export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDet
       where("childId", "==", childId),
       orderBy("checkInTime", "desc"),
       firestoreLimit(5)
-    ], setRecentCheckins);
+    ], (data) => {
+      if (import.meta.env.VITE_DEV_MODE === 'true') {
+        console.log("[DEBUG] Checkins data received:", data);
+      }
+      setRecentCheckins(data);
+    });
 
     return () => {
       unsubChild();
@@ -108,9 +132,11 @@ export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDet
               </div>
               <div className="pb-1">
                 <h2 className="text-2xl font-bold text-white drop-shadow-sm">{child?.firstName} {child?.lastName}</h2>
-                <span className="bg-white/20 text-white text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full">
-                  ID: {childId.slice(-6).toUpperCase()}
-                </span>
+                {import.meta.env.VITE_DEV_MODE === 'true' && (
+                  <span className="bg-white/20 text-white text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full">
+                    ID: {childId.slice(-6).toUpperCase()}
+                  </span>
+                )}
               </div>
             </div>
           </div>

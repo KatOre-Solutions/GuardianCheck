@@ -52,9 +52,9 @@ export interface FirestoreErrorInfo {
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const humanError = getHumanReadableError(error);
-  
   const isDevMode = logger.isDevEnabled();
   
+  // Standardized error info
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -72,33 +72,33 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     },
     operationType,
     path
-  }
+  };
   
-  // SECURE LOGGING: Strip sensitive data in production
+  // SECURE LOGGING: Absolute silent in production for sensitive info
   if (isDevMode) {
     console.group('Firestore Error [DEV]');
-    logger.error('Operation:', operationType);
-    logger.error('Path:', path);
-    logger.error('Error Details:', errInfo);
+    console.error('Operation:', operationType);
+    console.error('Path:', path);
+    console.error('Details:', errInfo);
     console.groupEnd();
-  } 
+  } else {
+    // In production, we ONLY log the basic error string to console
+    console.error(`[Firestore Error] ${operationType} on ${path}: ${errInfo.error}`);
+  }
   
-  // Log critical errors to audit logs for monitoring
+  // Handle Audit Logs (Sanitized for production)
   if (operationType === OperationType.WRITE || operationType === OperationType.CREATE || operationType === OperationType.UPDATE) {
     logAudit({
       action: `FAILED_${operationType.toUpperCase()}`,
       category: "system_error",
-      details: isDevMode ? errInfo : { error: errInfo.error, operationType, path }, // Sanitize audit logs in production
+      details: isDevMode ? errInfo : { error: errInfo.error, operationType, path },
       churchId: (auth.currentUser as any)?.churchId,
       userId: auth.currentUser?.uid
     }).catch(() => {});
   }
   
-  // We throw the human readable version or the full info for the UI to catch
-  // We NO LONGER include authInfo in the thrown string for production or dev
-  // to avoid cluttering the console with sensitive IDs. 
-  // Developers can check the console group above.
-  const errorPayload = {
+  // Throw sanitized payload
+  const errorPayload: any = {
     error: isDevMode ? errInfo.error : "Missing or insufficient permissions.",
     operationType,
     path,
@@ -107,6 +107,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     humanActionable: humanError.actionable
   };
 
+  // Explicitly ensure NO authInfo is present in the thrown error
   throw new Error(JSON.stringify(errorPayload));
 }
 

@@ -47,11 +47,10 @@ export default function ParentDashboard() {
       });
       const unsubscribeCheckins = subscribeToCollection("checkins", [
         where("churchId", "==", userData.churchId),
-        where("status", "==", "checked-in")
+        where("status", "==", "checked-in"),
+        where("parentId", "==", user.uid)
       ], (data) => {
-        // Filter checkins for parent's children
-        const parentChildIds = children.map(c => c.id);
-        setCheckins(data.filter(c => parentChildIds.includes(c.childId)));
+        setCheckins(data);
       });
 
       return () => {

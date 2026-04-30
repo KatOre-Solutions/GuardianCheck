@@ -325,16 +325,16 @@ service cloud.firestore {
             (resource != null && 'churchId' in resource.data && resource.data.churchId == getUserData().churchId) ||
             get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId
           )) ||
-          (isAuthenticated() && (
+          (isParent() && (
             (resource != null && 'parentId' in resource.data && resource.data.parentId == request.auth.uid) ||
-            get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid
+            (exists(/databases/$(database)/documents/children/$(childId)) && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
           ))
         )
       );
       allow write: if isMasterAdmin() || (
         isAuthenticated() && (
           (isAdmin() && get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId) ||
-          (isAuthenticated() && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
+          (isParent() && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
         )
       );
     }
@@ -342,21 +342,22 @@ service cloud.firestore {
     match /guardians/{guardianId} {
       allow read: if isMasterAdmin() || (
         isApproved() && (
-          (isAdmin() && getUserData().churchId == resource.data.churchId) ||
-          (isVolunteer() && getUserData().churchId == resource.data.churchId) ||
-          (isParent() && resource.data.parentId == request.auth.uid)
+          (isAdmin() && (resource == null || resource.data.churchId == getUserData().churchId)) ||
+          (isVolunteer() && (resource == null || resource.data.churchId == getUserData().churchId)) ||
+          (isParent() && resource != null && resource.data.parentId == request.auth.uid)
         )
       );
       allow list: if isMasterAdmin() || (
         isApproved() && (
-          (isAdmin() && getUserData().churchId != null) ||
-          (isVolunteer() && getUserData().churchId != null)
+          (isAdmin() && resource.data.churchId == getUserData().churchId) ||
+          (isVolunteer() && resource.data.churchId == getUserData().churchId) ||
+          (isParent() && resource.data.parentId == request.auth.uid)
         )
       );
       allow create: if isMasterAdmin() || (
         isApproved() && 
         request.resource.data.churchId == getUserData().churchId && 
-        (isAdmin() || (isParent() && request.resource.data.parentId == request.auth.uid))
+        (isAdmin() || isVolunteer() || (isParent() && request.resource.data.parentId == request.auth.uid))
       );
       allow update: if isMasterAdmin() || (
         isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
@@ -377,14 +378,16 @@ service cloud.firestore {
       allow read: if isMasterAdmin() || (
         isApproved() && (
           (isAdmin() && (resource == null || getUserData().churchId == resource.data.churchId)) ||
-          (isVolunteer() && (resource == null || getUserData().churchId == resource.data.churchId))
+          (isVolunteer() && (resource == null || getUserData().churchId == resource.data.churchId)) ||
+          (isParent() && resource != null && resource.data.parentId == request.auth.uid)
         )
       );
       
       allow list: if isMasterAdmin() || (
         isApproved() && (
-          (isAdmin() && getUserData().churchId != null) ||
-          (isVolunteer() && getUserData().churchId != null)
+          (isAdmin() && resource.data.churchId == getUserData().churchId) ||
+          (isVolunteer() && resource.data.churchId == getUserData().churchId) ||
+          (isParent() && resource.data.parentId == request.auth.uid)
         )
       );
       
