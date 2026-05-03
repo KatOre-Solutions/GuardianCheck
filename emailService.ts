@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { format } from "date-fns";
 import he from "he";
 
@@ -11,12 +11,6 @@ const logger = {
   error: (...args: any[]) => isDev && console.error(...args),
   debug: (...args: any[]) => isDev && console.debug(...args),
 };
-
-interface EmailOptions {
-  to: string;
-  subject: string;
-  html: string;
-}
 
 interface NotificationData {
   childName: string;
@@ -31,9 +25,10 @@ interface NotificationData {
 }
 
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private resend: Resend | null = null;
   private db: any;
   private cooldowns: Map<string, number> = new Map();
+  private fromEmail: string = process.env.RESEND_FROM_EMAIL || "notifications@guardiancheck.co.za";
 
   constructor(db: any) {
     this.db = db;
@@ -41,25 +36,21 @@ export class EmailService {
       logger.warn("EmailService initialized without database. Logging will be disabled.");
     }
     
-    // Configure transporter
-    // In a real app, these would come from process.env
-    this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || "smtp.ethereal.email",
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === "true",
-      auth: {
-        user: process.env.SMTP_USER || "mock_user",
-        pass: process.env.SMTP_PASS || "mock_pass",
-      },
-    });
+    const apiKey = process.env.RESEND_API_KEY;
+    if (apiKey) {
+      this.resend = new Resend(apiKey);
+    } else {
+      logger.warn("RESEND_API_KEY not found. Email service will be in mock mode.");
+    }
   }
 
   async verify(): Promise<boolean> {
+    if (!this.resend) return false;
     try {
-      await this.transporter.verify();
+      // Resend doesn't have a direct 'verify' like Nodemailer, but we can check if the client exists
       return true;
     } catch (error) {
-      logger.error("SMTP Verification failed:", error);
+      logger.error("Resend verification failed:", error);
       return false;
     }
   }
@@ -275,12 +266,16 @@ export class EmailService {
       // 2. Send emails in parallel
       await Promise.all(uniqueRecipients.map(async (email) => {
         try {
-          await this.transporter.sendMail({
-            from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
-            to: email,
-            subject: data.eventType === 'emergency' ? `URGENT: ${subject}` : subject,
-            html: html,
-          });
+          if (this.resend) {
+            await this.resend.emails.send({
+              from: `${senderName} <${this.fromEmail}>`,
+              to: email,
+              subject: data.eventType === 'emergency' ? `URGENT: ${subject}` : subject,
+              html: html,
+            });
+          } else {
+            logger.info(`Mock Email to ${email}: ${subject}`);
+          }
 
           await this.logEmail({
             churchId,
@@ -395,12 +390,16 @@ export class EmailService {
         </html>
       `;
 
-      await this.transporter.sendMail({
-        from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
-        to: email,
-        subject: subject,
-        html: html,
-      });
+      if (this.resend) {
+        await this.resend.emails.send({
+          from: `${senderName} <${this.fromEmail}>`,
+          to: email,
+          subject: subject,
+          html: html,
+        });
+      } else {
+        logger.info(`Mock Invitation Email to ${email}: ${subject}`);
+      }
 
       await this.logEmail({
         churchId: "system", // Or pass churchId if available
@@ -466,12 +465,16 @@ export class EmailService {
         </html>
       `;
 
-      await this.transporter.sendMail({
-        from: `"${senderName}" <${process.env.SMTP_FROM || "noreply@guardiancheck.com"}>`,
-        to: email,
-        subject: subject,
-        html: html,
-      });
+      if (this.resend) {
+        await this.resend.emails.send({
+          from: `${senderName} <${this.fromEmail}>`,
+          to: email,
+          subject: subject,
+          html: html,
+        });
+      } else {
+        logger.info(`Mock Verification Email to ${email}: ${subject}`);
+      }
 
       await this.logEmail({
         churchId: "system",
