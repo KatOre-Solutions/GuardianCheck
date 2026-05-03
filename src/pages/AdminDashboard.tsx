@@ -56,6 +56,7 @@ import { motion } from "motion/react";
 import { useActiveService } from "../hooks/useActiveService";
 import SetupWizard from "../components/SetupWizard";
 import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
 
 const HelpTooltip = ({ text }: { text: string }) => (
@@ -69,7 +70,9 @@ const HelpTooltip = ({ text }: { text: string }) => (
 );
 
 export default function AdminDashboard() {
-  const { user, role, userData } = useAuth();
+  const { user, role, roles, userData } = useAuth();
+  const { church } = useTenant();
+  const churchId = userData?.churchId || church?.id;
   const { activeService, loading: serviceLoading } = useActiveService();
   const [searchParams] = useSearchParams();
   const [rooms, setRooms] = useState<any[]>([]);
@@ -123,19 +126,19 @@ export default function AdminDashboard() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (role === "admin" && userData?.churchId) {
-      const unsubChurch = subscribeToDocument("churches", userData.churchId, setChurchData);
-      const unsubSecurity = subscribeToDocument("church_security", userData.churchId, setChurchSecurity);
+    if ((role === "admin" || roles.includes("master_admin")) && churchId) {
+      const unsubChurch = subscribeToDocument("churches", churchId, setChurchData);
+      const unsubSecurity = subscribeToDocument("church_security", churchId, setChurchSecurity);
       return () => {
         unsubChurch();
         unsubSecurity();
       };
     }
-  }, [role, userData?.churchId]);
+  }, [role, roles, churchId]);
 
   useEffect(() => {
-    if (role === "admin" && userData?.churchId) {
-      const constraints = [where("churchId", "==", userData.churchId)];
+    if ((role === "admin" || roles.includes("master_admin")) && churchId) {
+      const constraints = [where("churchId", "==", churchId)];
       const unsubRooms = subscribeToCollection("rooms", constraints, setRooms);
       const unsubUsers = subscribeToCollection("users", constraints, setUsers);
       const unsubCheckins = subscribeToCollection("checkins", constraints, setCheckins);
@@ -156,15 +159,16 @@ export default function AdminDashboard() {
         unsubServices();
       };
     }
-  }, [role, userData?.churchId]);
+  }, [role, roles, churchId]);
 
   const handleAddRoom = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!churchId) return;
     setLoading(true);
     try {
       await addDocument("rooms", {
         ...newRoom,
-        churchId: userData.churchId,
+        churchId,
         capacity: Number(newRoom.capacity),
         minAge: Number(newRoom.minAge),
         maxAge: Number(newRoom.maxAge),
@@ -580,7 +584,7 @@ export default function AdminDashboard() {
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
   );
 
-  if (role !== "admin") {
+  if (role !== "admin" && !roles.includes("master_admin")) {
     return <div className="text-center py-12">Access denied. Admin permissions required.</div>;
   }
 

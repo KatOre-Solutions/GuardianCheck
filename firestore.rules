@@ -61,9 +61,11 @@ service cloud.firestore {
 
     function isMasterAdmin() {
       return isAuthenticated() && (
+        request.auth.token.email == "oreutlwilediutlwileng@gmail.com" ||
+        request.auth.uid == "snJ3JJXtRzbQXZ2FqXT403pEAwc2" ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (getUserData().role == 'master_admin' || ('roles' in getUserData() && 'master_admin' in getUserData().roles))) ||
-        (request.auth.token.email == "oreutlwilediutlwileng@gmail.com" && request.auth.token.email_verified == true)
+         (getUserData().role == 'master_admin' || 
+          ('roles' in getUserData() && getUserData().roles.hasAny(['master_admin']))))
       );
     }
 
@@ -74,28 +76,25 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      let data = getUserData();
       return isApproved() && (
-        data.role == 'admin' || 
-        ('roles' in data && 'admin' in data.roles) || 
+        getUserData().role == 'admin' || 
+        (('roles' in getUserData()) && getUserData().roles.hasAny(['admin'])) || 
         isMasterAdmin()
       );
     }
 
     function isVolunteer() {
-      let data = getUserData();
       return isApproved() && (
-        data.role == 'volunteer' || 
-        ('roles' in data && 'volunteer' in data.roles) || 
+        getUserData().role == 'volunteer' || 
+        (('roles' in getUserData()) && getUserData().roles.hasAny(['volunteer'])) || 
         isAdmin()
       );
     }
 
     function isParent() {
-      let data = getUserData();
       return isApproved() && (
-        data.role == 'parent' || 
-        ('roles' in data && 'parent' in data.roles) || 
+        getUserData().role == 'parent' || 
+        (('roles' in getUserData()) && getUserData().roles.hasAny(['parent'])) || 
         isAdmin()
       );
     }
@@ -379,7 +378,7 @@ service cloud.firestore {
         isApproved() && (
           (isAdmin() && (resource == null || getUserData().churchId == resource.data.churchId)) ||
           (isVolunteer() && (resource == null || getUserData().churchId == resource.data.churchId)) ||
-          (isParent() && resource != null && resource.data.parentId == request.auth.uid)
+          (isParent() && (resource == null || resource.data.parentId == request.auth.uid))
         )
       );
       

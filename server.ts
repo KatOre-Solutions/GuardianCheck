@@ -801,7 +801,7 @@ async function startServer() {
         serviceName: service.name,
         eventType: 'check-in',
         guardianQrToken
-      });
+      }).catch(err => console.error("Async check-in notification failed:", err.message));
 
       res.json({ success: true, checkinId });
     } catch (error: any) {
@@ -989,26 +989,18 @@ async function startServer() {
       // 6. Send Invitation Email
       const inviteLink = `${process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
       
-      try {
-        await emailService.sendInvitation(email, {
-          firstName,
-          lastName,
-          role,
-          churchName,
-          inviteLink
-        });
-      } catch (emailError) {
-        console.error("Failed to send invitation email:", emailError);
-        return res.json({ 
-          success: true, 
-          message: "Invitation created, but email failed to send. You can manually share the link.",
-          inviteLink,
-          emailError: true,
-          traceId: req.traceId
-        });
-      }
+      // Fire-and-forget email invitation
+      emailService.sendInvitation(email, {
+        firstName,
+        lastName,
+        role,
+        churchName,
+        inviteLink
+      }).catch(emailError => {
+        console.error("Delayed failure sending invitation email:", emailError.message);
+      });
 
-      res.json({ success: true, message: "Invitation sent successfully", inviteLink });
+      res.json({ success: true, message: "Invitation created and email queued.", inviteLink });
     } catch (error: any) {
       console.error("Invitation error:", error.message);
       res.status(500).json({ error: "Internal server error", traceId: req.traceId });
@@ -1090,24 +1082,24 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      // 6. Send Verification Email
+      // 6. Send Verification Email (Fire-and-forget)
       try {
         const verificationLink = await getAuth().generateEmailVerificationLink(inviteData.email, {
           url: `${process.env.APP_URL || req.get("origin")}/login`
         });
-        await emailService.sendVerificationEmail(
+        emailService.sendVerificationEmail(
           inviteData.email, 
           inviteData.firstName, 
           inviteData.churchName || "Your Church",
           verificationLink
-        );
-      } catch (emailError) {
-        console.error("Failed to send verification email:", emailError);
+        ).catch(err => console.error("Async verification email failed:", err.message));
+      } catch (error) {
+        console.error("Failed to generate verification link:", error);
       }
 
       res.json({ 
         success: true, 
-        message: "Account created successfully. Please check your email to verify your account.",
+        message: "Account created successfully. A verification email is being sent.",
         userId: userRecord.uid
       });
     } catch (error: any) {
@@ -1215,7 +1207,7 @@ async function startServer() {
           churchName,
           serviceName: cData.serviceName,
           eventType: 'room_move'
-        });
+        }).catch(err => console.error("Async room-move notification failed:", err.message));
       }
 
       res.json({ success: true });

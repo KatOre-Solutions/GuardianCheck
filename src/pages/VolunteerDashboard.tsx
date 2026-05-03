@@ -35,9 +35,12 @@ import { hashPin } from "../lib/security";
 import { useActiveService } from "../hooks/useActiveService";
 import { activateService, closeService } from "../lib/firestore";
 import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function VolunteerDashboard() {
-  const { user, userData, role, darkMode } = useAuth();
+  const { user, userData, role, roles, darkMode } = useAuth();
+  const { church } = useTenant();
+  const churchId = userData?.churchId || church?.id;
   const { activeService, upcomingServices, loading: serviceLoading } = useActiveService();
   const [activeTab, setActiveTab] = useState<"scan" | "list">("scan");
   const [scannedChildren, setScannedChildren] = useState<any[]>([]);
@@ -125,36 +128,36 @@ export default function VolunteerDashboard() {
   }, []);
 
   useEffect(() => {
-    if (!userData?.churchId) return;
+    if (!churchId) return;
 
     // Pre-fetch/Warm cache for offline resilience
-    const unsubChildren = subscribeToCollection("children", [where("churchId", "==", userData.churchId)], setAllChildren);
-    const unsubGuardians = subscribeToCollection("guardians", [where("churchId", "==", userData.churchId)], setAllGuardians);
+    const unsubChildren = subscribeToCollection("children", [where("churchId", "==", churchId)], setAllChildren);
+    const unsubGuardians = subscribeToCollection("guardians", [where("churchId", "==", churchId)], setAllGuardians);
     
     return () => {
       unsubChildren();
       unsubGuardians();
     };
-  }, [userData?.churchId]);
+  }, [churchId]);
 
   useEffect(() => {
-    if (!userData?.churchId) return;
+    if (!churchId) return;
 
     const fetchRooms = async () => {
-      const data = await getCollection("rooms", [where("churchId", "==", userData.churchId)]);
+      const data = await getCollection("rooms", [where("churchId", "==", churchId)]);
       setRooms(data || []);
     };
     fetchRooms();
 
     const unsubscribe = subscribeToCollection("checkins", [
-      where("churchId", "==", userData.churchId),
+      where("churchId", "==", churchId),
       where("status", "==", "checked-in")
     ], (data) => {
       setCheckedInChildren(data);
     });
 
     const unsubscribeRecent = subscribeToCollection("checkins", [
-      where("churchId", "==", userData.churchId)
+      where("churchId", "==", churchId)
     ], (data) => {
       const sorted = data.sort((a: any, b: any) => 
         new Date(b.updatedAt || b.checkInTime).getTime() - new Date(a.updatedAt || a.checkInTime).getTime()
@@ -166,16 +169,16 @@ export default function VolunteerDashboard() {
       unsubscribe();
       unsubscribeRecent();
     };
-  }, [userData?.churchId]);
+  }, [churchId]);
 
   useEffect(() => {
-    if (userData?.churchId) {
-      const unsubChurch = subscribeToDocument("churches", userData.churchId, setChurchData);
+    if (churchId) {
+      const unsubChurch = subscribeToDocument("churches", churchId, setChurchData);
       return () => {
         unsubChurch();
       };
     }
-  }, [userData?.churchId]);
+  }, [churchId]);
 
   useEffect(() => {
     const fetchGuardians = async () => {
@@ -672,7 +675,7 @@ export default function VolunteerDashboard() {
     }
   };
 
-  if (role !== "admin" && role !== "volunteer") {
+  if (role !== "admin" && role !== "volunteer" && !roles.includes("master_admin")) {
     return <div className="text-center py-12">Access denied. Volunteer permissions required.</div>;
   }
 

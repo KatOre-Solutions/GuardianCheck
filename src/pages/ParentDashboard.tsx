@@ -5,12 +5,15 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
+import { useTenant } from "../contexts/TenantContext";
 import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 
 export default function ParentDashboard() {
-  const { user, userData } = useAuth();
+  const { user, userData, role, roles } = useAuth();
+  const { church } = useTenant();
+  const churchId = userData?.churchId || church?.id;
   const [children, setChildren] = useState<any[]>([]);
   const [guardians, setGuardians] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
@@ -34,10 +37,10 @@ export default function ParentDashboard() {
   const GENDERS = ["Male", "Female", "Other"];
 
   useEffect(() => {
-    if (user && userData?.churchId) {
+    if (user && churchId) {
       const constraints = [
         where("parentId", "==", user.uid),
-        where("churchId", "==", userData.churchId)
+        where("churchId", "==", churchId)
       ];
       const unsubscribeChildren = subscribeToCollection("children", constraints, (data) => {
         setChildren(data);
@@ -46,7 +49,7 @@ export default function ParentDashboard() {
         setGuardians(data);
       });
       const unsubscribeCheckins = subscribeToCollection("checkins", [
-        where("churchId", "==", userData.churchId),
+        where("churchId", "==", churchId),
         where("status", "==", "checked-in"),
         where("parentId", "==", user.uid)
       ], (data) => {
@@ -59,7 +62,7 @@ export default function ParentDashboard() {
         unsubscribeCheckins();
       };
     }
-  }, [user, userData?.churchId, children.length]);
+  }, [user, churchId, children.length]);
 
   // Handle medical info subscriptions individually for each child
   useEffect(() => {
@@ -436,6 +439,10 @@ export default function ParentDashboard() {
   };
 
   if (!user) return <div className="text-center py-12">Please login to view your dashboard.</div>;
+
+  if (role !== "admin" && role !== "parent" && !roles.includes("master_admin")) {
+    return <div className="text-center py-12">Access denied. Parent permissions required.</div>;
+  }
 
   return (
     <div className="space-y-8">
