@@ -1296,16 +1296,31 @@ async function startServer() {
             pf_payment_id: data.pf_payment_id,
             amount_gross: data.amount_gross,
             has_token: !!data.token,
-            sandbox
+            sandbox,
+            data_keys: Object.keys(data)
           },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });
 
         // Validate Signature
+        await db.collection("logs").add({
+          level: "info",
+          message: `[ITN_${traceId}] Calculating signature...`,
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
+
         const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
         const signature = generateSignature(data, passphrase);
         
+        await db.collection("logs").add({
+          level: "info",
+          message: `[ITN_${traceId}] Signature calculated: ${signature}`,
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
+
         if (signature !== data.signature) {
           console.error(`[ITN_${traceId}] Signature mismatch. Expected: ${signature}, Got: ${data.signature}`);
           await db.collection("logs").add({
@@ -1328,9 +1343,24 @@ async function startServer() {
           }
         });
         
-        console.log(`[ITN_${traceId}] Verifying with PayFast: ${validateUrl}`);
-        const validationResponse = await axios.post(validateUrl, params.toString(), { timeout: 15000 });
+        await db.collection("logs").add({
+          level: "info",
+          message: `[ITN_${traceId}] Verifying with PayFast: ${validateUrl}`,
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
+
+        const validationResponse = await axios.post(validateUrl, params.toString(), { 
+          timeout: 15000,
+          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        });
         
+        await db.collection("logs").add({
+          level: "info",
+          message: `[ITN_${traceId}] Ping-back response: ${validationResponse.data}`,
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
         if (validationResponse.data !== "VALID") {
           console.error(`[ITN_${traceId}] Validation Failed: ${validationResponse.data}`);
           await db.collection("logs").add({
