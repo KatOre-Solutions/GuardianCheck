@@ -500,9 +500,13 @@ const requireVolunteer = async (req: any, res: any, next: any) => {
 // PayFast Helper: Generate Signature
 function generateSignature(data: any, passphrase?: string) {
   let queryString = "";
+  // Sort keys to ensure consistent signature calculation if needed, 
+  // though PayFast usually sends them in order. 
+  // However, PayFast requires original order. Express req.body usually preserves it.
   Object.keys(data).forEach((key) => {
-    if (key !== "signature" && data[key] !== "") {
-      queryString += `${key}=${encodeURIComponent(data[key].toString().trim()).replace(/%20/g, "+")}&`;
+    if (key !== "signature" && data[key] !== undefined && data[key] !== null && data[key] !== "") {
+      const val = String(data[key]).trim();
+      queryString += `${key}=${encodeURIComponent(val).replace(/%20/g, "+")}&`;
     }
   });
 
@@ -1273,201 +1277,156 @@ async function startServer() {
   // PayFast ITN Webhook
   app.post("/api/payfast-itn", async (req, res) => {
     const data = req.body;
+    const traceId = uuidv4().substring(0, 8);
     
-    // 1. QUICK ACKNOWLEDGEMENT
-    // Acknowledge receipt immediately to prevent PayFast timeout/cURL errors
-    res.status(200).send("OK");
+    try {
+      const sandbox = String(process.env.VITE_PAYFAST_SANDBOX || process.env.PAYFAST_SANDBOX).toLowerCase() === "true";
+      
+      // Log arrival
+      await db.collection("logs").add({
+        level: "info",
+        message: `[ITN_${traceId}] ITN received [Sandbox: ${sandbox}]`,
+        metadata: { 
+          churchId: data.custom_str1,
+          plan: data.custom_str2,
+          payment_status: data.payment_status,
+          m_payment_id: data.m_payment_id,
+          pf_payment_id: data.pf_payment_id,
+          amount_gross: data.amount_gross,
+          sandbox
+        },
+        source: "payfast_itn",
+        timestamp: new Date().toISOString()
+      });
 
-    // 2. BACKGROUND PROCESSING
-    (async () => {
-      const traceId = uuidv4().substring(0, 8);
-      try {
-        const sandbox = String(process.env.VITE_PAYFAST_SANDBOX || process.env.PAYFAST_SANDBOX).toLowerCase() === "true";
-        
-        // Log every ITN arrival for debugging
-        await db.collection("logs").add({
-          level: "info",
-          message: `[ITN_${traceId}] ITN received [Sandbox: ${sandbox}]`,
-          metadata: { 
-            churchId: data.custom_str1,
-            plan: data.custom_str2,
-            payment_status: data.payment_status,
-            m_payment_id: data.m_payment_id,
-            pf_payment_id: data.pf_payment_id,
-            amount_gross: data.amount_gross,
-            has_token: !!data.token,
-            sandbox,
-            data_keys: Object.keys(data)
-          },
-          source: "payfast_itn",
-          timestamp: new Date().toISOString()
-        });
-
-        // Validate Signature
-        await db.collection("logs").add({
-          level: "info",
-          message: `[ITN_${traceId}] Calculating signature...`,
-          source: "payfast_itn",
-          timestamp: new Date().toISOString()
-        });
-
-        const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
-        const signature = generateSignature(data, passphrase);
-        
-        await db.collection("logs").add({
-          level: "info",
-          message: `[ITN_${traceId}] Signature calculated: ${signature}`,
-          source: "payfast_itn",
-          timestamp: new Date().toISOString()
-        });
-
-        if (signature !== data.signature) {
-          console.error(`[ITN_${traceId}] Signature mismatch. Expected: ${signature}, Got: ${data.signature}`);
-          await db.collection("logs").add({
-            level: "error",
-            message: `[ITN_${traceId}] Signature mismatch`,
-            metadata: { received: data.signature, expected: signature, sandbox },
-            source: "payfast_itn",
-            timestamp: new Date().toISOString()
-          });
-          return;
-        }
-
-        // Ping-back verification
-        const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
-        const validateUrl = `https://${pfHost}/eng/query/validate`;
-        const params = new URLSearchParams();
-        Object.keys(data).forEach(key => {
-          if (data[key] !== undefined && data[key] !== null) {
-            params.append(key, data[key].toString());
-          }
-        });
-        
-        await db.collection("logs").add({
-          level: "info",
-          message: `[ITN_${traceId}] Verifying with PayFast: ${validateUrl}`,
-          source: "payfast_itn",
-          timestamp: new Date().toISOString()
-        });
-
-        const validationResponse = await axios.post(validateUrl, params.toString(), { 
-          timeout: 15000,
-          headers: { "Content-Type": "application/x-www-form-urlencoded" }
-        });
-        
-        await db.collection("logs").add({
-          level: "info",
-          message: `[ITN_${traceId}] Ping-back response: ${validationResponse.data}`,
-          source: "payfast_itn",
-          timestamp: new Date().toISOString()
-        });
-        if (validationResponse.data !== "VALID") {
-          console.error(`[ITN_${traceId}] Validation Failed: ${validationResponse.data}`);
-          await db.collection("logs").add({
-            level: "error",
-            message: `[ITN_${traceId}] Ping-back validation failed`,
-            metadata: { response: validationResponse.data, sandbox },
-            source: "payfast_itn",
-            timestamp: new Date().toISOString()
-          });
-          return;
-        }
-
-        // Action: COMPLETE payment
-        if (data.payment_status === "COMPLETE") {
-          const churchId = data.custom_str1?.trim();
-          const plan = data.custom_str2;
-          const token = data.token;
-          const amount = parseFloat(data.amount_gross || "0");
-          
-          if (!churchId) {
-            await db.collection("logs").add({
-              level: "error",
-              message: `[ITN_${traceId}] Missing churchId (custom_str1)`,
-              source: "payfast_itn",
-              timestamp: new Date().toISOString()
-            });
-            return;
-          }
-
-          const churchRef = db.collection("churches").doc(churchId);
-          const churchDoc = await churchRef.get();
-
-          if (churchDoc.exists) {
-            const now = new Date();
-            const updateData: any = {
-              updatedAt: now.toISOString(),
-              payfast_m_payment_id: data.m_payment_id,
-              payfast_pf_payment_id: data.pf_payment_id
-            };
-
-            if (token) updateData["subscription.payfast_token"] = token;
-            if (plan) {
-              updateData["plan"] = plan;
-              updateData["subscription.tier"] = plan;
-            }
-
-            if (amount > 0) {
-              updateData.status = "active";
-              updateData["subscription.status"] = "active";
-              updateData.lastPaymentDate = now.toISOString();
-              updateData.nextBillingDate = addMonths(now, 1).toISOString();
-            } else if (token) {
-              updateData.status = "trialing";
-              updateData["subscription.status"] = "trialing";
-              if (data.billing_date) {
-                updateData["subscription.trialEndsAt"] = new Date(data.billing_date).toISOString();
-                updateData["subscription.billingDate"] = new Date(data.billing_date).toISOString();
-              }
-            }
-
-            await churchRef.update(updateData);
-            
-            await db.collection("transactions").add({
-              churchId,
-              amount,
-              plan: plan || churchDoc.data()?.plan || "starter",
-              payfast_pf_payment_id: data.pf_payment_id,
-              status: "complete",
-              token: token || null,
-              m_payment_id: data.m_payment_id || null,
-              createdAt: now.toISOString()
-            });
-
-            await db.collection("logs").add({
-              level: "info",
-              message: `[ITN_${traceId}] Sync Successful: ${churchId}`,
-              metadata: { amount, plan, status: updateData.status },
-              source: "payfast_itn",
-              timestamp: now.toISOString()
-            });
-          } else {
-            await db.collection("logs").add({
-              level: "error",
-              message: `[ITN_${traceId}] Church not found: ${churchId}`,
-              source: "payfast_itn",
-              timestamp: new Date().toISOString()
-            });
-          }
-        } else {
-          await db.collection("logs").add({
-            level: "info",
-            message: `[ITN_${traceId}] Ignored - Status: ${data.payment_status}`,
-            source: "payfast_itn",
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (err: any) {
-        console.error(`[ITN_${traceId}] Exception:`, err.message);
+      // Signature Validation
+      const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
+      const signature = generateSignature(data, passphrase);
+      
+      if (signature !== data.signature) {
         await db.collection("logs").add({
           level: "error",
-          message: `[ITN_${traceId}] Exception occurred`,
+          message: `[ITN_${traceId}] Signature mismatch`,
+          metadata: { expected: signature, received: data.signature, sandbox },
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
+        return res.status(200).send("OK");
+      }
+
+      // Ping-back verification
+      const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
+      const validateUrl = `https://${pfHost}/eng/query/validate`;
+      const params = new URLSearchParams();
+      Object.keys(data).forEach(key => {
+        if (data[key] !== undefined && data[key] !== null) {
+          params.append(key, data[key].toString());
+        }
+      });
+      
+      const validationResponse = await axios.post(validateUrl, params.toString(), { 
+        timeout: 15000,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+      });
+      
+      if (validationResponse.data !== "VALID") {
+        await db.collection("logs").add({
+          level: "error",
+          message: `[ITN_${traceId}] Ping-back validation failed`,
+          metadata: { response: validationResponse.data, sandbox },
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
+        return res.status(200).send("OK");
+      }
+
+      // Business Logic
+      if (data.payment_status === "COMPLETE") {
+        const churchId = data.custom_str1?.trim();
+        const plan = data.custom_str2;
+        const token = data.token;
+        const amount = parseFloat(data.amount_gross || "0");
+        
+        if (!churchId) {
+          await db.collection("logs").add({
+            level: "error",
+            message: `[ITN_${traceId}] Missing churchId`,
+            source: "payfast_itn",
+            timestamp: new Date().toISOString()
+          });
+          return res.status(200).send("OK");
+        }
+
+        const churchRef = db.collection("churches").doc(churchId);
+        const churchDoc = await churchRef.get();
+
+        if (churchDoc.exists) {
+          const now = new Date();
+          const updateData: any = {
+            updatedAt: now.toISOString(),
+            payfast_m_payment_id: data.m_payment_id,
+            payfast_pf_payment_id: data.pf_payment_id
+          };
+
+          if (token) updateData["subscription.payfast_token"] = token;
+          if (plan) {
+            updateData["plan"] = plan;
+            updateData["subscription.tier"] = plan;
+          }
+
+          if (amount > 0) {
+            updateData.status = "active";
+            updateData["subscription.status"] = "active";
+            updateData.lastPaymentDate = now.toISOString();
+            updateData.nextBillingDate = addMonths(now, 1).toISOString();
+          } else if (token) {
+            updateData.status = "trialing";
+            updateData["subscription.status"] = "trialing";
+            if (data.billing_date) {
+              updateData["subscription.trialEndsAt"] = new Date(data.billing_date).toISOString();
+              updateData["subscription.billingDate"] = new Date(data.billing_date).toISOString();
+            }
+          }
+
+          await churchRef.update(updateData);
+          
+          await db.collection("transactions").add({
+            churchId,
+            amount,
+            plan: plan || churchDoc.data()?.plan || "starter",
+            payfast_pf_payment_id: data.pf_payment_id,
+            status: "complete",
+            token: token || null,
+            m_payment_id: data.m_payment_id || null,
+            createdAt: now.toISOString()
+          });
+
+          await db.collection("logs").add({
+            level: "info",
+            message: `[ITN_${traceId}] Sync Successful: ${churchId}`,
+            metadata: { amount, plan, status: updateData.status },
+            source: "payfast_itn",
+            timestamp: now.toISOString()
+          });
+        }
+      }
+
+      res.status(200).send("OK");
+    } catch (err: any) {
+      console.error(`[ITN_${traceId}] Critical Exception:`, err.message);
+      try {
+        await db.collection("logs").add({
+          level: "error",
+          message: `[ITN_${traceId}] Critical Exception`,
           metadata: { error: err.message, stack: err.stack },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });
+      } catch (innerErr) {
+        console.error("Failed to log internal error to DB", innerErr);
       }
-    })();
+      res.status(200).send("OK");
+    }
   });
 
   // Church Registration Endpoint
