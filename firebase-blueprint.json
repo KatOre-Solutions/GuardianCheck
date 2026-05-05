@@ -230,6 +230,70 @@
         "policyVersion": { "type": "string" }
       },
       "required": ["acceptedBy", "acceptedAt", "policyVersion"]
+    },
+    "log": {
+      "title": "Log",
+      "description": "Application logs for debugging and monitoring",
+      "type": "object",
+      "properties": {
+        "level": { "type": "string", "enum": ["info", "warn", "error", "critical"] },
+        "message": { "type": "string" },
+        "context": { "type": "object" },
+        "userId": { "type": "string" },
+        "churchId": { "type": "string" },
+        "source": { "type": "string", "enum": ["client", "server"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "stack": { "type": "string" },
+        "url": { "type": "string" },
+        "userAgent": { "type": "string" }
+      },
+      "required": ["level", "message", "timestamp", "source"]
+    },
+    "emailLog": {
+      "title": "EmailLog",
+      "description": "History of sent emails and their delivery status",
+      "type": "object",
+      "properties": {
+        "recipientEmail": { "type": "string" },
+        "subject": { "type": "string" },
+        "eventType": { "type": "string" },
+        "status": { "type": "string", "enum": ["success", "failed"] },
+        "errorMessage": { "type": "string" },
+        "churchId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "provider": { "type": "string" },
+        "messageId": { "type": "string" }
+      },
+      "required": ["recipientEmail", "subject", "status", "timestamp"]
+    },
+    "audit_log": {
+      "title": "AuditLog",
+      "description": "Critical security and data change records",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "category": { "type": "string" },
+        "details": { "type": "object" },
+        "churchId": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "ip": { "type": "string" }
+      },
+      "required": ["action", "category", "timestamp"]
+    },
+    "metricDaily": {
+      "title": "MetricDaily",
+      "description": "Daily aggregated metrics for system health",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "churchId": { "type": "string" },
+        "checkinCount": { "type": "number" },
+        "errorCount": { "type": "number" },
+        "activeUsers": { "type": "number" },
+        "emailSentCount": { "type": "number" }
+      },
+      "required": ["date", "churchId"]
     }
   },
   "firestore": {
@@ -243,6 +307,10 @@
     "/invitations": { "schema": "invitation", "description": "Secure invitations for new users" },
     "/policy_acceptance/{uid}": { "schema": "policyAcceptance", "description": "User policy acceptance summary" },
     "/policy_acceptance/{uid}/history/{versionId}": { "schema": "policyAcceptanceHistory", "description": "Immutable policy acceptance audit trail" },
-    "/church_policy_acceptance/{churchId}": { "schema": "churchPolicyAcceptance", "description": "Church-level DPA acceptance" }
+    "/church_policy_acceptance/{churchId}": { "schema": "churchPolicyAcceptance", "description": "Church-level DPA acceptance" },
+    "/logs": { "schema": "log", "description": "Application execution logs" },
+    "/email_logs": { "schema": "emailLog", "description": "Email delivery logs" },
+    "/audit_logs": { "schema": "audit_log", "description": "Security audit trails" },
+    "/metrics_daily": { "schema": "metricDaily", "description": "Daily system usage metrics" }
   }
 }

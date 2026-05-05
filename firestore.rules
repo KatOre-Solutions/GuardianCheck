@@ -64,8 +64,7 @@ service cloud.firestore {
         request.auth.token.email == "oreutlwilediutlwileng@gmail.com" ||
         request.auth.uid == "snJ3JJXtRzbQXZ2FqXT403pEAwc2" ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (getUserData().role == 'master_admin' || 
-          ('roles' in getUserData() && getUserData().roles.hasAny(['master_admin']))))
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master_admin')
       );
     }
 
@@ -454,6 +453,28 @@ service cloud.firestore {
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy', 'updatedAt']) &&
                      isValidInvitation(request.resource.data));
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+    }
+
+    match /logs/{logId} {
+      allow read: if isMasterAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /test/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /email_logs/{logId} {
+      allow read: if isMasterAdmin() || (isAdmin() && resource.data.churchId == getUserData().churchId);
+      allow create: if false; // System only
+      allow update, delete: if false;
+    }
+
+    match /metrics_daily/{metricId} {
+      allow read: if isMasterAdmin() || (isAdmin() && resource.data.churchId == getUserData().churchId);
+      allow write: if false; // System only
     }
 
     match /{path=**} {

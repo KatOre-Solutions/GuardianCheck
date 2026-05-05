@@ -633,6 +633,56 @@ async function startServer() {
   });
 
   // PIN Verification Endpoint
+  app.post("/api/log-client-error", async (req, res) => {
+    const { level, message, context, timestamp, stack, url, userAgent, source } = req.body;
+    
+    try {
+      const logData = {
+        level: level || 'error',
+        message: message || 'Unknown client error',
+        context: context || {},
+        timestamp: timestamp || new Date().toISOString(),
+        stack: stack || null,
+        url: url || req.get('Referer') || null,
+        userAgent: userAgent || req.get('user-agent'),
+        source: source || 'client',
+        userId: req.user?.uid || context?.userId || null,
+        churchId: req.user?.churchId || context?.churchId || null,
+        processedAt: new Date().toISOString()
+      };
+
+      if (db) {
+        await db.collection("logs").add(logData);
+      }
+      
+      if (level === 'critical' || level === 'error') {
+        const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+        if (webhookUrl) {
+          const color = level === 'critical' ? 0xff0000 : 0xffa500;
+          await axios.post(webhookUrl, {
+            embeds: [{
+              title: `GuardianCheck Alert: ${level.toUpperCase()}`,
+              description: message,
+              color: color,
+              fields: [
+                { name: 'Source', value: logData.source, inline: true },
+                { name: 'User ID', value: logData.userId || 'N/A', inline: true },
+                { name: 'Church ID', value: logData.churchId || 'N/A', inline: true },
+                { name: 'URL', value: logData.url || 'N/A' },
+              ],
+              timestamp: logData.processedAt
+            }]
+          } as any).catch((err: any) => console.error("Discord webhook failed:", err.message));
+        }
+      }
+
+      res.status(200).json({ status: "logged" });
+    } catch (e: any) {
+      console.error("Error logging client error:", e.message);
+      res.status(500).json({ error: "Failed to log" });
+    }
+  });
+
   app.post("/api/verify-pin", pinLimiter, authenticateToken, requireVolunteer, validate(VerifyPinSchema), async (req, res) => {
     const { pin } = req.body;
     const churchId = req.user.churchId;

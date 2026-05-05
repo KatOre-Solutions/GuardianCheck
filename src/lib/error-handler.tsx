@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { logger } from "./logger";
 
 export enum ErrorCode {
   PERMISSION_DENIED = "permission-denied",
@@ -162,6 +163,17 @@ export function getHumanReadableError(error: any): ErrorMessage {
 export function showErrorToast(error: any) {
   const { title, message, actionable } = getHumanReadableError(error);
   
+  // Log to backend
+  if (error?.code === ErrorCode.PERMISSION_DENIED) {
+    logger.warn(`Permission Denied: ${message}`, { error, title });
+  } else {
+    logger.error(`UI Error: ${title} - ${message}`, { 
+      rawError: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      code: error?.code
+    });
+  }
+
   toast.error(title, {
     description: (
       <div className="mt-1">

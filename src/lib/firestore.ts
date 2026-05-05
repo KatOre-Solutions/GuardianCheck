@@ -99,7 +99,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   
   // Throw sanitized payload
   const errorPayload: any = {
-    error: isDevMode ? errInfo.error : "Missing or insufficient permissions.",
+    error: errInfo.error,
     operationType,
     path,
     humanTitle: humanError.title,

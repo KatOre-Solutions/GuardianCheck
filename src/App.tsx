@@ -23,6 +23,7 @@ import VolunteerDashboard from "./pages/VolunteerDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import EventsServices from "./pages/EventsServices";
 import MasterAdminDashboard from "./pages/MasterAdminDashboard";
+import MasterAdminLogs from "./pages/MasterAdminLogs";
 import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
@@ -308,6 +309,13 @@ export default function App() {
                 <ProtectedRoute allowedRoles={["master_admin"]}>
                   <PolicyGuard>
                     <Layout><MasterAdminDashboard /></Layout>
+                  </PolicyGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/master-admin/logs" element={
+                <ProtectedRoute allowedRoles={["master_admin"]}>
+                  <PolicyGuard>
+                    <Layout><MasterAdminLogs /></Layout>
                   </PolicyGuard>
                 </ProtectedRoute>
               } />

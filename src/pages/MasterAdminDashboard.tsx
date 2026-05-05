@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter, Terminal } from "lucide-react";
 import { getChurches, addDocument, removeDocument, getCollection, updateDocument, subscribeToCollection } from "../lib/firestore";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion, AnimatePresence } from "motion/react";
@@ -188,13 +189,22 @@ export default function MasterAdminDashboard() {
           <h1 className="text-4xl font-bold text-gray-900 dark:text-white tracking-tight">Platform Overview</h1>
           <p className="text-gray-500 dark:text-gray-400">Global management for GuardianCheck SaaS</p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="bg-primary text-white px-8 py-4 rounded-2xl font-bold flex items-center space-x-2 hover:bg-primary/90 transition-all shadow-xl shadow-primary/10 dark:shadow-none"
-        >
-          <Plus className="h-5 w-5" />
-          <span>Provision New Church</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-4">
+          <Link
+            to="/master-admin/logs"
+            className="p-4 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-2xl hover:bg-gray-50 flex items-center space-x-2 transition-all shadow-sm"
+          >
+            <Terminal className="h-5 w-5 text-gray-500" />
+            <span className="font-bold text-gray-700 dark:text-gray-300">System Logs</span>
+          </Link>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="bg-primary text-white px-8 py-4 rounded-2xl font-bold flex items-center space-x-2 hover:bg-primary/90 transition-all shadow-xl shadow-primary/10 dark:shadow-none"
+          >
+            <Plus className="h-5 w-5" />
+            <span>Provision New Church</span>
+          </button>
+        </div>
       </header>
 
       {/* Platform Stats Grid */}
