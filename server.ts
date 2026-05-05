@@ -1282,33 +1282,36 @@ async function startServer() {
     (async () => {
       const traceId = uuidv4().substring(0, 8);
       try {
+        const sandbox = String(process.env.VITE_PAYFAST_SANDBOX || process.env.PAYFAST_SANDBOX).toLowerCase() === "true";
+        
         // Log every ITN arrival for debugging
         await db.collection("logs").add({
           level: "info",
-          message: `[ITN_${traceId}] ITN received for Church ID: ${data.custom_str1}`,
+          message: `[ITN_${traceId}] ITN received [Sandbox: ${sandbox}]`,
           metadata: { 
+            churchId: data.custom_str1,
+            plan: data.custom_str2,
             payment_status: data.payment_status,
             m_payment_id: data.m_payment_id,
             pf_payment_id: data.pf_payment_id,
             amount_gross: data.amount_gross,
-            has_token: !!data.token
+            has_token: !!data.token,
+            sandbox
           },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });
 
-        const sandbox = String(process.env.VITE_PAYFAST_SANDBOX).toLowerCase() === "true";
-        
         // Validate Signature
         const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
         const signature = generateSignature(data, passphrase);
         
         if (signature !== data.signature) {
-          console.error(`[ITN_${traceId}] Invalid Signature. Got: ${data.signature}, Expected: ${signature}`);
+          console.error(`[ITN_${traceId}] Signature mismatch. Expected: ${signature}, Got: ${data.signature}`);
           await db.collection("logs").add({
             level: "error",
-            message: `[ITN_${traceId}] ITN Signature binary mismatch.`,
-            metadata: { received: data.signature, expected: signature },
+            message: `[ITN_${traceId}] Signature mismatch`,
+            metadata: { received: data.signature, expected: signature, sandbox },
             source: "payfast_itn",
             timestamp: new Date().toISOString()
           });
@@ -1319,15 +1322,21 @@ async function startServer() {
         const pfHost = sandbox ? "sandbox.payfast.co.za" : "www.payfast.co.za";
         const validateUrl = `https://${pfHost}/eng/query/validate`;
         const params = new URLSearchParams();
-        Object.keys(data).forEach(key => params.append(key, data[key]));
+        Object.keys(data).forEach(key => {
+          if (data[key] !== undefined && data[key] !== null) {
+            params.append(key, data[key].toString());
+          }
+        });
         
-        const validationResponse = await axios.post(validateUrl, params.toString());
+        console.log(`[ITN_${traceId}] Verifying with PayFast: ${validateUrl}`);
+        const validationResponse = await axios.post(validateUrl, params.toString(), { timeout: 15000 });
+        
         if (validationResponse.data !== "VALID") {
           console.error(`[ITN_${traceId}] Validation Failed: ${validationResponse.data}`);
           await db.collection("logs").add({
             level: "error",
-            message: `[ITN_${traceId}] ITN Ping-back validation failed.`,
-            metadata: { response: validationResponse.data },
+            message: `[ITN_${traceId}] Ping-back validation failed`,
+            metadata: { response: validationResponse.data, sandbox },
             source: "payfast_itn",
             timestamp: new Date().toISOString()
           });
@@ -1338,13 +1347,13 @@ async function startServer() {
         if (data.payment_status === "COMPLETE") {
           const churchId = data.custom_str1?.trim();
           const plan = data.custom_str2;
-          const token = data.token; // Recurring payment token
+          const token = data.token;
+          const amount = parseFloat(data.amount_gross || "0");
           
           if (!churchId) {
-            console.error(`[ITN_${traceId}] Missing churchId.`);
             await db.collection("logs").add({
               level: "error",
-              message: `[ITN_${traceId}] ITN missing custom_str1 (churchId).`,
+              message: `[ITN_${traceId}] Missing churchId (custom_str1)`,
               source: "payfast_itn",
               timestamp: new Date().toISOString()
             });
@@ -1356,38 +1365,26 @@ async function startServer() {
 
           if (churchDoc.exists) {
             const now = new Date();
-            // If it's a new subscription setup (has token), use that.
-            // If it's a trial starting now, status is active.
-            
-            const churchData = churchDoc.data();
             const updateData: any = {
               updatedAt: now.toISOString(),
               payfast_m_payment_id: data.m_payment_id,
               payfast_pf_payment_id: data.pf_payment_id
             };
 
-            // If it's a recurring billing token, save it
-            if (token) {
-              updateData["subscription.payfast_token"] = token;
-            }
-
-            // Update plan if provided
+            if (token) updateData["subscription.payfast_token"] = token;
             if (plan) {
               updateData["plan"] = plan;
               updateData["subscription.tier"] = plan;
             }
 
-            // If it's the first payment or subscription setup
-            if (data.amount_gross > 0) {
+            if (amount > 0) {
               updateData.status = "active";
               updateData["subscription.status"] = "active";
               updateData.lastPaymentDate = now.toISOString();
               updateData.nextBillingDate = addMonths(now, 1).toISOString();
             } else if (token) {
-              // Trial subscription setup (zero amount initial ITN)
               updateData.status = "trialing";
               updateData["subscription.status"] = "trialing";
-              // Trial ends when billing starts
               if (data.billing_date) {
                 updateData["subscription.trialEndsAt"] = new Date(data.billing_date).toISOString();
                 updateData["subscription.billingDate"] = new Date(data.billing_date).toISOString();
@@ -1395,11 +1392,11 @@ async function startServer() {
             }
 
             await churchRef.update(updateData);
-
+            
             await db.collection("transactions").add({
               churchId,
-              amount: parseFloat(data.amount_gross || "0"),
-              plan: plan || churchData?.plan || "starter",
+              amount,
+              plan: plan || churchDoc.data()?.plan || "starter",
               payfast_pf_payment_id: data.pf_payment_id,
               status: "complete",
               token: token || null,
@@ -1409,36 +1406,33 @@ async function startServer() {
 
             await db.collection("logs").add({
               level: "info",
-              message: `[ITN_${traceId}] Subscription/Payment successfully synced for ${churchId}.`,
-              metadata: { amount: parseFloat(data.amount_gross || "0"), plan: plan || churchData?.plan, status: updateData.status },
+              message: `[ITN_${traceId}] Sync Successful: ${churchId}`,
+              metadata: { amount, plan, status: updateData.status },
               source: "payfast_itn",
-              timestamp: new Date().toISOString()
+              timestamp: now.toISOString()
             });
           } else {
-            console.error(`[ITN_${traceId}] Church ${churchId} not found.`);
             await db.collection("logs").add({
               level: "error",
-              message: `[ITN_${traceId}] Church not found for ID: ${churchId}.`,
+              message: `[ITN_${traceId}] Church not found: ${churchId}`,
               source: "payfast_itn",
               timestamp: new Date().toISOString()
             });
           }
         } else {
-          console.log(`[ITN_${traceId}] Ignored ITN with status: ${data.payment_status}`);
           await db.collection("logs").add({
             level: "info",
-            message: `[ITN_${traceId}] Ignored non-complete status.`,
-            metadata: { status: data.payment_status },
+            message: `[ITN_${traceId}] Ignored - Status: ${data.payment_status}`,
             source: "payfast_itn",
             timestamp: new Date().toISOString()
           });
         }
       } catch (err: any) {
-        console.error(`[ITN_${traceId}] Error processing ITN:`, err.message);
+        console.error(`[ITN_${traceId}] Exception:`, err.message);
         await db.collection("logs").add({
           level: "error",
-          message: `[ITN_${traceId}] ITN Handler Error.`,
-          metadata: { error: err.message },
+          message: `[ITN_${traceId}] Exception occurred`,
+          metadata: { error: err.message, stack: err.stack },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });

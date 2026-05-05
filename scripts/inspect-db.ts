@@ -76,6 +76,9 @@ async function inspectDb() {
     logsSnap.forEach(doc => {
       const data = doc.data();
       console.log(doc.id, "=>", data.timestamp, `[${data.level}]`, data.message);
+      if (data.metadata) {
+        console.log("   Metadata:", JSON.stringify(data.metadata, null, 2));
+      }
     });
   }
 }
