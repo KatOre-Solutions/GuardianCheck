@@ -500,12 +500,9 @@ const requireVolunteer = async (req: any, res: any, next: any) => {
 // PayFast Helper: Generate Signature
 function generateSignature(data: any, passphrase?: string) {
   let queryString = "";
-  // Sort keys to ensure consistent signature calculation if needed, 
-  // though PayFast usually sends them in order. 
-  // However, PayFast requires original order. Express req.body usually preserves it.
   Object.keys(data).forEach((key) => {
     if (key !== "signature" && data[key] !== undefined && data[key] !== null && data[key] !== "") {
-      const val = String(data[key]).trim();
+      const val = String(data[key]);
       queryString += `${key}=${encodeURIComponent(val).replace(/%20/g, "+")}&`;
     }
   });
@@ -516,7 +513,8 @@ function generateSignature(data: any, passphrase?: string) {
     queryString = queryString.substring(0, queryString.length - 1);
   }
 
-  return crypto.createHash("md5").update(queryString).digest("hex");
+  const hash = crypto.createHash("md5").update(queryString).digest("hex");
+  return { hash, queryString };
 }
 
 // Firestore Cost Optimization Helpers
@@ -1301,13 +1299,18 @@ async function startServer() {
 
       // Signature Validation
       const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
-      const signature = generateSignature(data, passphrase);
+      const { hash: signature, queryString } = generateSignature(data, passphrase);
       
       if (signature !== data.signature) {
         await db.collection("logs").add({
           level: "error",
           message: `[ITN_${traceId}] Signature mismatch`,
-          metadata: { expected: signature, received: data.signature, sandbox },
+          metadata: { 
+            expected: signature, 
+            received: data.signature, 
+            queryString,
+            sandbox 
+          },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });
