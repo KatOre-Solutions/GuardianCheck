@@ -513,8 +513,7 @@ function generateSignature(data: any, passphrase?: string) {
     queryString = queryString.substring(0, queryString.length - 1);
   }
 
-  const hash = crypto.createHash("md5").update(queryString).digest("hex");
-  return { hash, queryString };
+  return crypto.createHash("md5").update(queryString).digest("hex");
 }
 
 // Firestore Cost Optimization Helpers
@@ -577,8 +576,17 @@ async function getCachedDoc(req: any, collection: string, id: string, churchId: 
 async function startServer() {
   const PORT = 3000;
 
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({
+    verify: (req: any, res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
+  app.use(express.urlencoded({ 
+    extended: true,
+    verify: (req: any, res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
   app.set("trust proxy", 1);
   app.use("/api/", generalLimiter);
 
@@ -1297,9 +1305,23 @@ async function startServer() {
         timestamp: new Date().toISOString()
       });
 
-      // Signature Validation
+      // Signature Validation using Raw Body for ITN
       const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
-      const { hash: signature, queryString } = generateSignature(data, passphrase);
+      let signatureString = "";
+      
+      if ((req as any).rawBody) {
+        const rawBodyStr = (req as any).rawBody.toString();
+        // Split by ampersand, filter out signature, join back in original order
+        signatureString = rawBodyStr.split("&")
+          .filter(pair => !pair.startsWith("signature="))
+          .join("&");
+        
+        if (passphrase) {
+          signatureString += `&passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, "+")}`;
+        }
+      }
+
+      const signature = crypto.createHash("md5").update(signatureString).digest("hex");
       
       if (signature !== data.signature) {
         await db.collection("logs").add({
@@ -1308,7 +1330,7 @@ async function startServer() {
           metadata: { 
             expected: signature, 
             received: data.signature, 
-            queryString,
+            signatureString,
             sandbox 
           },
           source: "payfast_itn",
