@@ -9,6 +9,8 @@ interface PayFastButtonProps {
   churchId: string;
   plan: string;
   isSandbox?: boolean;
+  billingDate?: string; // YYYY-MM-DD
+  subscriptionType?: number; // 1 for monthly, 2 for quarterly, 3 for annual
 }
 
 export default function PayFastButton({ 
@@ -17,7 +19,9 @@ export default function PayFastButton({
   mPaymentId, 
   churchId, 
   plan,
-  isSandbox: explicitSandbox
+  isSandbox: explicitSandbox,
+  billingDate,
+  subscriptionType = 1 // Default to monthly
 }: PayFastButtonProps) {
   // Config from environment variables
   const envMerchantId = import.meta.env.VITE_PAYFAST_MERCHANT_ID;
@@ -97,12 +101,19 @@ export default function PayFastButton({
       <input type="hidden" name="custom_str1" value={churchId} />
       <input type="hidden" name="custom_str2" value={plan} />
 
+      {/* Subscription / Recurring billing fields */}
+      <input type="hidden" name="subscription_type" value="1" />
+      <input type="hidden" name="recurring_amount" value={amount.toFixed(2)} />
+      <input type="hidden" name="frequency" value={subscriptionType === 1 ? "3" : subscriptionType === 3 ? "6" : "3"} />
+      <input type="hidden" name="cycles" value="0" />
+      {billingDate && <input type="hidden" name="billing_date" value={billingDate} />}
+
       <button
         type="submit"
         className="w-full bg-primary text-white py-4 rounded-xl font-bold hover:bg-primary/90 transition-all shadow-lg flex items-center justify-center space-x-2"
       >
         <CreditCard className="h-5 w-5" />
-        <span>Pay with PayFast (R{amount.toFixed(2)})</span>
+        <span>{billingDate ? 'Subscribe After Trial' : `Pay with PayFast (R${amount.toFixed(2)})`}</span>
       </button>
     </form>
   );

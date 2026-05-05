@@ -1282,8 +1282,21 @@ async function startServer() {
     (async () => {
       const traceId = uuidv4().substring(0, 8);
       try {
-        logger.log(`[ITN_${traceId}] Background processing started.`);
-        
+        // Log every ITN arrival for debugging
+        await db.collection("logs").add({
+          level: "info",
+          message: `[ITN_${traceId}] ITN received for Church ID: ${data.custom_str1}`,
+          metadata: { 
+            payment_status: data.payment_status,
+            m_payment_id: data.m_payment_id,
+            pf_payment_id: data.pf_payment_id,
+            amount_gross: data.amount_gross,
+            has_token: !!data.token
+          },
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
+
         const sandbox = String(process.env.VITE_PAYFAST_SANDBOX).toLowerCase() === "true";
         
         // Validate Signature
@@ -1291,7 +1304,14 @@ async function startServer() {
         const signature = generateSignature(data, passphrase);
         
         if (signature !== data.signature) {
-          logger.error(`[ITN_${traceId}] Invalid Signature.`);
+          console.error(`[ITN_${traceId}] Invalid Signature. Got: ${data.signature}, Expected: ${signature}`);
+          await db.collection("logs").add({
+            level: "error",
+            message: `[ITN_${traceId}] ITN Signature binary mismatch.`,
+            metadata: { received: data.signature, expected: signature },
+            source: "payfast_itn",
+            timestamp: new Date().toISOString()
+          });
           return;
         }
 
@@ -1303,17 +1323,31 @@ async function startServer() {
         
         const validationResponse = await axios.post(validateUrl, params.toString());
         if (validationResponse.data !== "VALID") {
-          logger.error(`[ITN_${traceId}] Validation Failed: ${validationResponse.data}`);
+          console.error(`[ITN_${traceId}] Validation Failed: ${validationResponse.data}`);
+          await db.collection("logs").add({
+            level: "error",
+            message: `[ITN_${traceId}] ITN Ping-back validation failed.`,
+            metadata: { response: validationResponse.data },
+            source: "payfast_itn",
+            timestamp: new Date().toISOString()
+          });
           return;
         }
 
         // Action: COMPLETE payment
         if (data.payment_status === "COMPLETE") {
-          const churchId = data.custom_str1;
+          const churchId = data.custom_str1?.trim();
           const plan = data.custom_str2;
+          const token = data.token; // Recurring payment token
           
           if (!churchId) {
-            logger.error(`[ITN_${traceId}] Missing churchId.`);
+            console.error(`[ITN_${traceId}] Missing churchId.`);
+            await db.collection("logs").add({
+              level: "error",
+              message: `[ITN_${traceId}] ITN missing custom_str1 (churchId).`,
+              source: "payfast_itn",
+              timestamp: new Date().toISOString()
+            });
             return;
           }
 
@@ -1322,36 +1356,92 @@ async function startServer() {
 
           if (churchDoc.exists) {
             const now = new Date();
-            const nextBilling = addMonths(now, 1);
-
-            await churchRef.update({
-              status: "active",
-              plan: plan || churchDoc.data()?.plan || "starter",
-              lastPaymentDate: now.toISOString(),
-              nextBillingDate: nextBilling.toISOString(),
+            // If it's a new subscription setup (has token), use that.
+            // If it's a trial starting now, status is active.
+            
+            const churchData = churchDoc.data();
+            const updateData: any = {
               updatedAt: now.toISOString(),
               payfast_m_payment_id: data.m_payment_id,
               payfast_pf_payment_id: data.pf_payment_id
-            });
+            };
+
+            // If it's a recurring billing token, save it
+            if (token) {
+              updateData["subscription.payfast_token"] = token;
+            }
+
+            // Update plan if provided
+            if (plan) {
+              updateData["plan"] = plan;
+              updateData["subscription.tier"] = plan;
+            }
+
+            // If it's the first payment or subscription setup
+            if (data.amount_gross > 0) {
+              updateData.status = "active";
+              updateData["subscription.status"] = "active";
+              updateData.lastPaymentDate = now.toISOString();
+              updateData.nextBillingDate = addMonths(now, 1).toISOString();
+            } else if (token) {
+              // Trial subscription setup (zero amount initial ITN)
+              updateData.status = "trialing";
+              updateData["subscription.status"] = "trialing";
+              // Trial ends when billing starts
+              if (data.billing_date) {
+                updateData["subscription.trialEndsAt"] = new Date(data.billing_date).toISOString();
+                updateData["subscription.billingDate"] = new Date(data.billing_date).toISOString();
+              }
+            }
+
+            await churchRef.update(updateData);
 
             await db.collection("transactions").add({
               churchId,
-              amount: data.amount_gross,
-              plan,
+              amount: parseFloat(data.amount_gross || "0"),
+              plan: plan || churchData?.plan || "starter",
               payfast_pf_payment_id: data.pf_payment_id,
               status: "complete",
+              token: token || null,
+              m_payment_id: data.m_payment_id || null,
               createdAt: now.toISOString()
             });
 
-            logger.log(`[ITN_${traceId}] Church ${churchId} updated successfully.`);
+            await db.collection("logs").add({
+              level: "info",
+              message: `[ITN_${traceId}] Subscription/Payment successfully synced for ${churchId}.`,
+              metadata: { amount: parseFloat(data.amount_gross || "0"), plan: plan || churchData?.plan, status: updateData.status },
+              source: "payfast_itn",
+              timestamp: new Date().toISOString()
+            });
           } else {
-            logger.error(`[ITN_${traceId}] Church doc not found: ${churchId}`);
+            console.error(`[ITN_${traceId}] Church ${churchId} not found.`);
+            await db.collection("logs").add({
+              level: "error",
+              message: `[ITN_${traceId}] Church not found for ID: ${churchId}.`,
+              source: "payfast_itn",
+              timestamp: new Date().toISOString()
+            });
           }
         } else {
-          logger.log(`[ITN_${traceId}] Status is not COMPLETE: ${data.payment_status}`);
+          console.log(`[ITN_${traceId}] Ignored ITN with status: ${data.payment_status}`);
+          await db.collection("logs").add({
+            level: "info",
+            message: `[ITN_${traceId}] Ignored non-complete status.`,
+            metadata: { status: data.payment_status },
+            source: "payfast_itn",
+            timestamp: new Date().toISOString()
+          });
         }
-      } catch (error: any) {
-        logger.error(`[ITN_${traceId}] Critical error:`, error.message);
+      } catch (err: any) {
+        console.error(`[ITN_${traceId}] Error processing ITN:`, err.message);
+        await db.collection("logs").add({
+          level: "error",
+          message: `[ITN_${traceId}] ITN Handler Error.`,
+          metadata: { error: err.message },
+          source: "payfast_itn",
+          timestamp: new Date().toISOString()
+        });
       }
     })();
   });
@@ -1410,6 +1500,7 @@ async function startServer() {
         subscription: {
           tier: "free",
           status: "active",
+          trialStartedAt: new Date().toISOString(),
           trialEndsAt: addMonths(new Date(), 1).toISOString(), // 1 month trial
         },
         metrics: {

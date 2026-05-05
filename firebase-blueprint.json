@@ -38,7 +38,11 @@
           "type": "object",
           "properties": {
             "tier": { "type": "string", "enum": ["free", "pro", "enterprise"] },
-            "status": { "type": "string", "enum": ["active", "past_due", "canceled"] }
+            "status": { "type": "string", "enum": ["active", "past_due", "canceled", "trialing"] },
+            "trialStartedAt": { "type": "string", "format": "date-time" },
+            "trialEndsAt": { "type": "string", "format": "date-time" },
+            "billingDate": { "type": "string", "format": "date-time" },
+            "payfast_token": { "type": "string" }
           }
         },
         "metrics": {

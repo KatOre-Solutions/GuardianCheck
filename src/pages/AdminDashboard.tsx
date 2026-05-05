@@ -1391,7 +1391,11 @@ export default function AdminDashboard() {
               <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
                 <Calendar className="h-4 w-4" />
                 <span>Next billing date: <span className="font-bold text-gray-900 dark:text-white">
-                  {churchData?.nextBillingDate ? format(new Date(churchData.nextBillingDate), "MMMM d, yyyy") : "N/A"}
+                  {churchData?.subscription?.billingDate 
+                    ? format(new Date(churchData.subscription.billingDate), "MMMM d, yyyy") 
+                    : churchData?.subscription?.trialEndsAt
+                    ? format(new Date(churchData.subscription.trialEndsAt), "MMMM d, yyyy")
+                    : format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), "MMMM d, yyyy") + " (Trial End)"}
                 </span></span>
               </div>
             </div>
@@ -1418,16 +1422,48 @@ export default function AdminDashboard() {
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
                 Secure payments processed via PayFast. Local South African payment gateway.
               </p>
-              <PayFastButton 
-                churchId={userData?.churchId || ""} 
-                plan={selectedPlan || "starter"} 
-                amount={selectedPlan === "professional" ? 999 : selectedPlan === "growth" ? 499 : 249}
-                itemName={`GuardianCheck ${selectedPlan || "Starter"} Subscription`}
-                mPaymentId={`SUB-${userData?.churchId}-${Date.now()}`}
-              />
-              <p className="text-[10px] text-center text-gray-400 mt-4">
-                By clicking "Pay Now", you agree to our terms of service and subscription policy.
-              </p>
+              
+              {churchData?.subscription?.payfast_token ? (
+                <div className="bg-green-50 dark:bg-green-900/10 p-4 rounded-xl border border-green-100 dark:border-green-900/30 text-center space-y-3">
+                  <div className="flex items-center justify-center space-x-2 text-green-600 dark:text-green-400">
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span className="font-bold">Active Recurring Subscription</span>
+                  </div>
+                  <p className="text-xs text-gray-500">Your subscription is active and managed via PayFast.</p>
+                  {churchData?.plan !== selectedPlan && (
+                    <div className="pt-2 border-t border-green-100/50 dark:border-green-900/20">
+                      <p className="text-[10px] text-orange-600 font-bold mb-2">Switching plans? Setup new recurring payment below:</p>
+                      <PayFastButton 
+                        churchId={userData?.churchId || ""} 
+                        plan={selectedPlan || "starter"} 
+                        amount={selectedPlan === "professional" ? 999 : selectedPlan === "growth" ? 499 : 249}
+                        itemName={`GuardianCheck ${selectedPlan || "Starter"} Subscription`}
+                        mPaymentId={`SUB-${userData?.churchId}-${Date.now()}`}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <PayFastButton 
+                    churchId={userData?.churchId || ""} 
+                    plan={selectedPlan || "starter"} 
+                    amount={selectedPlan === "professional" ? 999 : selectedPlan === "growth" ? 499 : 249}
+                    itemName={`GuardianCheck ${selectedPlan || "Starter"} Subscription`}
+                    mPaymentId={`SUB-${userData?.churchId}-${Date.now()}`}
+                    billingDate={
+                      churchData?.subscription?.trialEndsAt 
+                        ? format(new Date(churchData.subscription.trialEndsAt), "yyyy-MM-dd")
+                        : format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd")
+                    }
+                  />
+                  <p className="text-[10px] text-center text-gray-400 mt-4">
+                    {!churchData?.subscription?.trialStartedAt 
+                      ? "Your card will not be charged until the end of your 30-day free trial."
+                      : "By clicking above, you agree to our terms of service and subscription policy."}
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>

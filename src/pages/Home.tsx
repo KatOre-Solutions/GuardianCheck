@@ -49,7 +49,7 @@ export default function Home() {
       price: "R999",
       description: "Complete solution for large churches.",
       features: ["Unlimited Children", "Unlimited Rooms", "Real-time Dashboard", "Custom Branding", "24/7 Support"],
-      cta: "Contact Sales",
+      cta: "Start Free Trial",
       highlight: false
     }
   ];
