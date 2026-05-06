@@ -15,6 +15,12 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 
+const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
+  starter: { users: 20, children: 50 },
+  growth: { users: 50, children: 150 },
+  professional: { users: Infinity, children: Infinity }
+};
+
 // Global Server-side Logger
 const isDev = String(process.env.VITE_DEV_MODE).toLowerCase() === "true";
 const logger = {
@@ -320,6 +326,16 @@ const InviteUserSchema = z.object({
 const AcceptInviteSchema = z.object({
   token: z.string().length(64),
   password: z.string().min(6)
+});
+
+const RegisterChildSchema = z.object({
+  firstName: z.string().min(1).max(50),
+  lastName: z.string().min(1).max(50),
+  age: z.number().int().min(0).max(110),
+  gender: z.enum(["Male", "Female"]),
+  allergies: z.string().max(500).optional(),
+  notes: z.string().max(1000).optional(),
+  photoUrl: z.string().url().optional().or(z.literal(""))
 });
 
 const RegisterChurchSchema = z.object({
@@ -795,6 +811,79 @@ async function startServer() {
     }
   });
 
+  // Child Registration via API (with Plan Limit Enforcement)
+  app.post("/api/children", authenticateToken, validate(RegisterChildSchema), async (req, res) => {
+    const childData = req.body;
+    const { uid, churchId, firstName, lastName } = req.user;
+
+    if (!churchId) {
+      return res.status(400).json({ error: "Church ID not found in profile. Please select a church first." });
+    }
+
+    try {
+      // 1. Get Church Data for Plan
+      const churchData = await getCachedDoc(req, "churches", churchId, churchId);
+      if (!churchData) {
+        return res.status(404).json({ error: "Church not found" });
+      }
+
+      const planTier = (churchData.plan || "starter").toLowerCase();
+      const limits = PLAN_LIMITS[planTier] || PLAN_LIMITS.starter;
+
+      // 2. Enforcement Check
+      if (limits.children !== Infinity) {
+        const childrenSnapshot = await db.collection("children").where("churchId", "==", churchId).get();
+        req.firestoreOps.reads++;
+
+        if (childrenSnapshot.size >= limits.children) {
+          return res.status(403).json({ 
+            error: `Children limit reached for your ${planTier.charAt(0).toUpperCase() + planTier.slice(1)} plan (${limits.children} children). Please upgrade to register more.`,
+            traceId: req.traceId
+          });
+        }
+      }
+
+      // 3. Create Child
+      const parentName = `${firstName} ${lastName}`;
+      const { notes, ...basicChildData } = childData;
+      const childId = uuidv4();
+      const qrCode = `child_${Math.random().toString(36).substr(2, 9)}`;
+
+      const childDoc = {
+        ...basicChildData,
+        id: childId,
+        parentId: uid,
+        parentName,
+        churchId,
+        qrCode,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await db.collection("children").doc(childId).set(childDoc);
+      req.firestoreOps.writes++;
+
+      // 4. Store Medical Notes separately
+      await db.collection("child_medical").doc(childId).set({
+        notes: notes || "",
+        parentId: uid,
+        churchId,
+        updatedAt: new Date().toISOString()
+      });
+      req.firestoreOps.writes++;
+
+      res.status(201).json({ 
+        success: true, 
+        childId, 
+        message: "Child registered successfully." 
+      });
+
+    } catch (error: any) {
+      console.error(`[CHILD_REG_ERROR] ${error.message} [Trace: ${req.traceId}]`);
+      res.status(500).json({ error: "Failed to register child", traceId: req.traceId });
+    }
+  });
+
   // Server-side Audit Logging
   app.post("/api/audit", authenticateToken, async (req, res) => {
     const { action, category, details } = req.body;
@@ -1093,6 +1182,32 @@ async function startServer() {
       const token = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
+
+      // 3.5 Plan Limit Check (Users)
+      const planTier = (churchData.plan || "starter").toLowerCase();
+      const limits = PLAN_LIMITS[planTier] || PLAN_LIMITS.starter;
+      
+      if (limits.users !== Infinity) {
+        // Count active users
+        const usersSnapshot = await db.collection("users").where("churchId", "==", churchId).get();
+        req.firestoreOps.reads++;
+        
+        // Count pending invitations
+        const activeInvitesSnapshot = await db.collection("invitations")
+          .where("churchId", "==", churchId)
+          .where("status", "==", "pending")
+          .get();
+        req.firestoreOps.reads++;
+        
+        const totalUserSlots = usersSnapshot.size + activeInvitesSnapshot.size;
+        
+        if (totalUserSlots >= limits.users) {
+          return res.status(403).json({ 
+            error: `User limit reached for your ${planTier.charAt(0).toUpperCase() + planTier.slice(1)} plan (${limits.users} users). Please upgrade your subscription to invite more users.`,
+            traceId: req.traceId
+          });
+        }
+      }
 
       // 4. Determine Roles
       const roles = [role];

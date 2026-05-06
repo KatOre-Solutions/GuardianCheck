@@ -9,6 +9,7 @@ import { useTenant } from "../contexts/TenantContext";
 import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
+import { registerChild } from "../lib/api";
 
 export default function ParentDashboard() {
   const { user, userData, role, roles } = useAuth();
@@ -130,21 +131,11 @@ export default function ParentDashboard() {
       // Split sensitive data
       const { notes, ...childData } = newChild;
       
-      const childId = await addDocument("children", {
+      const token = await user.getIdToken();
+      const { childId } = await registerChild(token, {
         ...childData,
         age: Number(newChild.age),
-        parentId: user.uid,
-        parentName, // Denormalize for offline check-in
-        churchId: userData.churchId,
-        qrCode: `child_${Math.random().toString(36).substr(2, 9)}`
-      });
-
-      // Store sensitive medical details separately
-      await setDocument("child_medical", childId, {
-        notes: notes || "",
-        parentId: user.uid,
-        churchId: userData.churchId,
-        updatedAt: new Date().toISOString()
+        notes: notes || ""
       });
 
       // Check if parent guardian already exists for this account

@@ -32,7 +32,7 @@ export default function Home() {
       name: "Starter",
       price: "R249",
       description: "Perfect for small churches starting out.",
-      features: ["Up to 30 Children", "1 Active Room", "QR Check-In", "Basic Reports", "Email Support"],
+      features: ["20 Users", "50 Children", "1 Active Room", "QR Check-In", "Basic Reports"],
       cta: "Start Free Trial",
       highlight: false
     },
@@ -40,7 +40,7 @@ export default function Home() {
       name: "Growth",
       price: "R499",
       description: "Ideal for growing congregations.",
-      features: ["Up to 150 Children", "Unlimited Rooms", "Advanced Reports", "Guardian Management", "Priority Email Support"],
+      features: ["50 Users", "150 Children", "Unlimited Rooms", "Advanced Reports", "Guardian Management"],
       cta: "Start Free Trial",
       highlight: true
     },
@@ -48,7 +48,7 @@ export default function Home() {
       name: "Professional",
       price: "R999",
       description: "Complete solution for large churches.",
-      features: ["Unlimited Children", "Unlimited Rooms", "Real-time Dashboard", "Custom Branding", "24/7 Support"],
+      features: ["Unlimited Users", "Unlimited Children", "Unlimited Rooms", "Real-time Dashboard", "Custom Branding"],
       cta: "Start Free Trial",
       highlight: false
     }

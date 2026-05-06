@@ -59,6 +59,8 @@ import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
 import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
 
+import { PLAN_LIMITS, PlanTier } from "../constants/plans";
+
 const HelpTooltip = ({ text }: { text: string }) => (
   <div className="group relative inline-block ml-1">
     <AlertCircle className="h-3.5 w-3.5 text-gray-400 cursor-help hover:text-primary transition-colors" />
@@ -1406,14 +1408,30 @@ export default function AdminDashboard() {
               <div className="p-4 bg-primary/10 dark:bg-primary/20 rounded-xl border border-primary/20 dark:border-primary/30">
                 <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase mb-1">Users Limit</p>
                 <p className="text-lg font-bold text-gray-900 dark:text-white">
-                  {users.length} / {churchData?.plan === "professional" ? "Unlimited" : churchData?.plan === "growth" ? "50" : "20"}
+                  {users.length} / {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users === Infinity ? "Unlimited" : PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users || 20}
                 </p>
+                {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users !== Infinity && (
+                  <div className="mt-2 h-1.5 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ${users.length >= PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users ? 'bg-red-500' : 'bg-primary'}`}
+                      style={{ width: `${Math.min(100, (users.length / (PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users || 20)) * 100)}%` }}
+                    />
+                  </div>
+                )}
               </div>
               <div className="p-4 bg-purple-50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-900/30">
                 <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase mb-1">Children Limit</p>
                 <p className="text-lg font-bold text-gray-900 dark:text-white">
-                  {children.length} / {churchData?.plan === "professional" ? "Unlimited" : churchData?.plan === "growth" ? "200" : "50"}
+                  {children.length} / {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children === Infinity ? "Unlimited" : PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children || 50}
                 </p>
+                {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children !== Infinity && (
+                  <div className="mt-2 h-1.5 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ${children.length >= PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children ? 'bg-red-500' : 'bg-purple-500'}`}
+                      style={{ width: `${Math.min(100, (children.length / (PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children || 50)) * 100)}%` }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </div>

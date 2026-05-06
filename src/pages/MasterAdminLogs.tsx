@@ -17,18 +17,27 @@ export default function MasterAdminLogs() {
 
   useEffect(() => {
     // Subscribe to latest 100 logs
-    const unsub = subscribeToCollection("logs", [
-      orderBy("timestamp", "desc"),
-      limit(100)
-    ], (data) => {
-      setLogs(data);
+    let unsub: () => void = () => {};
+    
+    try {
+      unsub = subscribeToCollection("logs", [
+        orderBy("timestamp", "desc"),
+        limit(100)
+      ], (data) => {
+        setLogs(data);
+        setLoading(false);
+      });
+    } catch (err) {
+      console.error("Subscription failed:", err);
+      showErrorToast(err);
       setLoading(false);
-    });
+    }
     
     return () => unsub();
   }, []);
 
   async function loadLogs() {
+    setLoading(true);
     try {
       const data = await getCollection("logs");
       const sorted = [...data].sort((a: any, b: any) => 
@@ -37,7 +46,8 @@ export default function MasterAdminLogs() {
       setLogs(sorted);
       setLoading(false);
     } catch (error) {
-      showErrorToast("Failed to load logs");
+      console.error("Load logs error:", error);
+      showErrorToast(error);
       setLoading(false);
     }
   }

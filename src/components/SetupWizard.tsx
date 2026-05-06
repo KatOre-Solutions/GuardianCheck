@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { auth } from "../lib/firebase";
 import { addDocument, setDocument, updateDocument } from "../lib/firestore";
-import { safeFetch } from "../lib/api";
+import { safeFetch, registerChild } from "../lib/api";
 import { generatePin, hashPin, obfuscatePin } from "../lib/security";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
