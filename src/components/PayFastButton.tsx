@@ -67,14 +67,16 @@ export default function PayFastButton({
   const appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
   const returnUrl = `${window.location.origin}/admin?payment=success&plan=${plan}`;
   const cancelUrl = `${window.location.origin}/admin?payment=cancel`;
-  const notifyUrl = `${appUrl}/api/payfast-itn`;
+  const notifyUrl = import.meta.env.VITE_PAYFAST_NOTIFY_URL || `${appUrl}/api/payfast-itn`;
 
   if (isMissingConfig) {
     return (
       <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-100 dark:border-orange-900/30 rounded-xl">
         <p className="text-sm text-orange-700 dark:text-orange-400 font-medium flex items-start gap-2">
           <Loader2 className="h-4 w-4 mt-0.5 shrink-0" />
-          <span>Payment configuration missing. Please set VITE_PAYFAST_MERCHANT_ID and MERCHANT_KEY in your environment secrets.</span>
+          <span>
+            Payment configuration missing. Please ensure <strong>VITE_PAYFAST_MERCHANT_ID</strong> and <strong>VITE_PAYFAST_MERCHANT_KEY</strong> are set in your environment secrets for Live mode.
+          </span>
         </p>
       </div>
     );

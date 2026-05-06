@@ -1391,7 +1391,9 @@ export default function AdminDashboard() {
               <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
                 <Calendar className="h-4 w-4" />
                 <span>Next billing date: <span className="font-bold text-gray-900 dark:text-white">
-                  {churchData?.subscription?.billingDate 
+                  {churchData?.nextBillingDate 
+                    ? format(new Date(churchData.nextBillingDate), "MMMM d, yyyy")
+                    : churchData?.subscription?.billingDate 
                     ? format(new Date(churchData.subscription.billingDate), "MMMM d, yyyy") 
                     : churchData?.subscription?.trialEndsAt
                     ? format(new Date(churchData.subscription.trialEndsAt), "MMMM d, yyyy")

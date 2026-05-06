@@ -1,16 +1,26 @@
-import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+import React, { useState, useEffect } from "react";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
+import { createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { addDocument, setDocument } from "../lib/firestore";
-import { safeFetch } from "../lib/api";
+import { safeFetch, sendCustomVerificationEmail } from "../lib/api";
 import { Shield, Building2, User, Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import { motion } from "motion/react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
 export default function RegisterChurch() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<string>("starter");
+
+  useEffect(() => {
+    const plan = searchParams.get("plan");
+    if (plan && ["starter", "growth", "professional"].includes(plan.toLowerCase())) {
+      setSelectedPlan(plan.toLowerCase());
+    }
+  }, [searchParams]);
+
   const [formData, setFormData] = useState({
     churchName: "",
     adminFirstName: "",
@@ -41,9 +51,6 @@ export default function RegisterChurch() {
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
       
-      // Send verification email immediately
-      await sendEmailVerification(user);
-
       // 2. Register Church via API
       const token = await user.getIdToken();
       const result = await safeFetch("/api/register-church", {
@@ -55,7 +62,8 @@ export default function RegisterChurch() {
         body: JSON.stringify({
           churchName: formData.churchName,
           adminFirstName: formData.adminFirstName,
-          adminLastName: formData.adminLastName
+          adminLastName: formData.adminLastName,
+          plan: selectedPlan
         })
       });
 
@@ -140,7 +148,9 @@ export default function RegisterChurch() {
               <Shield className="h-8 w-8 text-primary" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Register Your Church</h1>
-            <p className="text-gray-500 dark:text-gray-400">Create your admin account to get started</p>
+            <p className="text-gray-500 dark:text-gray-400">
+              {selectedPlan ? `You've selected the ${selectedPlan.charAt(0).toUpperCase() + selectedPlan.slice(1)} plan` : 'Create your admin account to get started'}
+            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">

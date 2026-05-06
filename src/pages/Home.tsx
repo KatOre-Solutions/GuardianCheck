@@ -232,7 +232,7 @@ export default function Home() {
                   ))}
                 </ul>
                 <Link
-                  to="/register-church"
+                  to={`/register-church?plan=${plan.name.toLowerCase()}`}
                   className={`w-full py-4 rounded-xl font-bold text-center block transition-all ${
                     plan.highlight 
                       ? "bg-white text-primary hover:bg-primary/10" 

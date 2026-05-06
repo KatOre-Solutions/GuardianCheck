@@ -27,3 +27,19 @@ export async function safeFetch(url: string, options: RequestInit) {
     };
   }
 }
+
+export async function sendCustomVerificationEmail(token: string) {
+  const response = await fetch("/api/auth/send-verification", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || "Failed to send verification email");
+  }
+
+  return response.json();
+}

@@ -325,7 +325,8 @@ const AcceptInviteSchema = z.object({
 const RegisterChurchSchema = z.object({
   churchName: z.string().min(3).max(100),
   adminFirstName: z.string().min(1),
-  adminLastName: z.string().min(1)
+  adminLastName: z.string().min(1),
+  plan: z.string().optional()
 });
 
 const VerifyPinSchema = z.object({
@@ -496,6 +497,81 @@ const requireVolunteer = async (req: any, res: any, next: any) => {
   
   res.status(403).json({ error: "Forbidden. Volunteer access required." });
 };
+
+const PLAN_PRICES: Record<string, number> = {
+  starter: 249,
+  growth: 499,
+  professional: 999
+};
+
+// Transactions List Endpoint
+app.get("/api/transactions", authenticateToken, async (req, res) => {
+  const churchId = req.user.churchId;
+  if (!churchId) return res.status(403).json({ error: "Unauthorized" });
+
+  try {
+    const transactions = await db.collection("transactions")
+      .where("churchId", "==", churchId)
+      .orderBy("createdAt", "desc")
+      .limit(50)
+      .get();
+    
+    req.firestoreOps.reads++;
+    
+    if (transactions.empty) {
+      console.log(`No transactions found for church ${churchId}`);
+    }
+
+    const results = transactions.docs.map((doc: any) => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    res.json(results);
+  } catch (error: any) {
+    console.error("Error fetching transactions:", error.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
+  const { uid, email } = req.user;
+  if (!email) return res.status(400).json({ error: "Email not found" });
+
+  try {
+    // 1. Fetch user data to get firstName
+    const userDoc = await db.collection("users").doc(uid).get();
+    req.firestoreOps.reads++;
+    
+    const userData = userDoc.data() || {};
+    const firstName = userData.firstName || "there";
+    
+    // 2. Fetch church name
+    let churchName = "GuardianCheck";
+    if (userData.churchId) {
+      const churchDoc = await db.collection("churches").doc(userData.churchId).get();
+      req.firestoreOps.reads++;
+      if (churchDoc.exists) {
+        churchName = churchDoc.data().name;
+      }
+    }
+
+    // 3. Generate Link
+    const actionCodeSettings = {
+      url: `${process.env.APP_URL || req.get("origin")}/login`
+    };
+    
+    const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
+
+    // 4. Send via Resend
+    await emailService.sendVerificationEmail(email, firstName, churchName, verificationLink);
+
+    res.json({ success: true, message: "Verification email sent via Resend" });
+  } catch (error: any) {
+    console.error(`[VERIFICATION_ERROR] ${error.message}`);
+    res.status(500).json({ error: "Failed to send verification email" });
+  }
+});
 
 // PayFast Helper: Generate Signature
 function generateSignature(data: any, passphrase?: string) {
@@ -1403,7 +1479,23 @@ async function startServer() {
             updateData.status = "active";
             updateData["subscription.status"] = "active";
             updateData.lastPaymentDate = now.toISOString();
-            updateData.nextBillingDate = addMonths(now, 1).toISOString();
+            
+            const existingData = churchDoc.data();
+            // Try root field first, then nested subscription field
+            const trialEndsAt = existingData?.trialEndsAt || existingData?.subscription?.trialEndsAt;
+            const currentNextBilling = existingData?.nextBillingDate || existingData?.subscription?.billingDate;
+            
+            let anchorDate = now;
+            
+            if (trialEndsAt && new Date(trialEndsAt) > now) {
+              anchorDate = new Date(trialEndsAt);
+            } else if (currentNextBilling && new Date(currentNextBilling) > now) {
+              anchorDate = new Date(currentNextBilling);
+            }
+
+            const nextDate = addMonths(anchorDate, 1);
+            updateData.nextBillingDate = nextDate.toISOString();
+            updateData["subscription.billingDate"] = nextDate.toISOString();
           } else if (token) {
             updateData.status = "trialing";
             updateData["subscription.status"] = "trialing";
@@ -1454,9 +1546,94 @@ async function startServer() {
     }
   });
 
+  // PayFast Helper: Generate API Signature (v1)
+  function generatePayFastApiSignature(params: any, passphrase?: string) {
+    let queryString = "";
+    Object.keys(params).forEach((key) => {
+      queryString += `${key}=${encodeURIComponent(params[key]).replace(/%20/g, "+")}&`;
+    });
+
+    if (passphrase) {
+      queryString += `passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, "+")}`;
+    } else if (queryString.endsWith("&")) {
+      queryString = queryString.substring(0, queryString.length - 1);
+    }
+
+    return crypto.createHash("md5").update(queryString).digest("hex");
+  }
+
+  // Cancel Subscription Endpoint
+  app.post("/api/subscriptions/cancel", authenticateToken, async (req, res) => {
+    try {
+      const churchId = req.user.churchId;
+      if (!churchId) return res.status(403).json({ error: "Unauthorized" });
+
+      const churchRef = db.collection("churches").doc(churchId);
+      const churchDoc = await churchRef.get();
+      if (!churchDoc.exists) return res.status(404).json({ error: "Church not found" });
+
+      const churchData = churchDoc.data();
+      const token = churchData?.subscription?.payfast_token;
+      
+      if (!token) {
+        return res.status(400).json({ error: "No active subscription found to cancel." });
+      }
+
+      const sandbox = process.env.PAYFAST_SANDBOX === "true" || process.env.VITE_PAYFAST_SANDBOX === "true";
+      const merchantId = process.env.VITE_PAYFAST_MERCHANT_ID;
+      const passphrase = sandbox ? "" : process.env.PAYFAST_PASSPHRASE;
+      
+      const timestamp = new Date().toISOString();
+      const params: any = {
+        "merchant-id": merchantId,
+        "version": "v1",
+        "timestamp": timestamp
+      };
+
+      const signature = generatePayFastApiSignature(params, passphrase);
+      const baseUrl = sandbox ? "https://sandbox.payfast.co.za" : "https://api.payfast.co.za";
+      const url = `${baseUrl}/subscriptions/${token}/cancel`;
+
+      // Call PayFast API
+      const pfResponse = await axios.put(url, {}, {
+        headers: {
+          "merchant-id": merchantId,
+          "version": "v1",
+          "timestamp": timestamp,
+          "signature": signature
+        }
+      });
+
+      if (pfResponse.data.status === "success" || pfResponse.data?.data?.response === true) {
+        // Update local status
+        await churchRef.update({
+          "subscription.cancel_at_period_end": true,
+          "subscription.status": "cancelling",
+          updatedAt: new Date().toISOString()
+        });
+
+        await db.collection("logs").add({
+          level: "info",
+          message: `Subscription cancelled for church: ${churchId}`,
+          metadata: { pfResponse: pfResponse.data },
+          source: "subscription_cancel",
+          timestamp: new Date().toISOString()
+        });
+
+        return res.json({ success: true, message: "Subscription cancelled successfully. It will remain active until the end of the current billing period." });
+      } else {
+        throw new Error(pfResponse.data?.data?.message || "PayFast API error");
+      }
+
+    } catch (err: any) {
+      console.error("Cancel Subscription Error:", err.message);
+      res.status(500).json({ error: "Failed to cancel subscription: " + (err.response?.data?.data?.message || err.message) });
+    }
+  });
+
   // Church Registration Endpoint
   app.post("/api/register-church", registrationLimiter, authenticateToken, validate(RegisterChurchSchema), async (req, res) => {
-    const { churchName, adminFirstName, adminLastName } = req.body;
+    const { churchName, adminFirstName, adminLastName, plan } = req.body;
     const { uid, email } = req.user;
 
     if (!db || !adminApp) {
@@ -1500,13 +1677,18 @@ async function startServer() {
       }
 
       // 2. Create Church Document
+      const initialTier = plan && ["starter", "growth", "professional"].includes(plan.toLowerCase()) 
+        ? plan.toLowerCase() 
+        : "starter";
+
       churchRef = await db.collection("churches").add({
         name: churchName,
         slug: slug,
         adminEmail: email,
         status: "trialing",
+        plan: initialTier,
         subscription: {
-          tier: "free",
+          tier: initialTier,
           status: "active",
           trialStartedAt: new Date().toISOString(),
           trialEndsAt: addMonths(new Date(), 1).toISOString(), // 1 month trial
@@ -1542,6 +1724,15 @@ async function startServer() {
       console.log(`Created admin user document: ${uid}`);
 
       res.json({ success: true, churchId: churchRef.id, slug: slug });
+
+      // 4. Send Verification Email (Async)
+      const actionCodeSettings = {
+        url: `${process.env.APP_URL || req.get("origin")}/login`
+      };
+      getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings)
+        .then(link => emailService.sendVerificationEmail(email, adminFirstName, churchName, link))
+        .catch(err => console.error(`[VERIFICATION_ERROR] Async registration verification failed: ${err.message}`));
+
     } catch (error: any) {
       console.error(`[REGISTRATION_ERROR] ${error.message} [Trace: ${req.traceId}]`);
       

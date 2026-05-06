@@ -18,6 +18,7 @@ export function useAuth() {
     return false;
   });
   const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
 
   // Derived primary role for backward compatibility
   const role = roles.length > 0 ? roles[0] : null;
@@ -43,12 +44,10 @@ export function useAuth() {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       
-      if (unsubscribeDoc) {
-        unsubscribeDoc();
-        unsubscribeDoc = null;
-      }
-
       if (user) {
+        // Fetch ID token
+        user.getIdToken().then(setToken).catch(err => console.error("Error getting token", err));
+        
         unsubscribeDoc = subscribeToDocument("users", user.uid, (userDoc) => {
           if (userDoc) {
             setUserData(userDoc);
@@ -88,6 +87,7 @@ export function useAuth() {
           setLoading(false); // Ensure loading is false even on error
         });
       } else {
+        setToken(null);
         setRoles([]);
         setStatus(null);
         setUserData(null);
@@ -110,5 +110,5 @@ export function useAuth() {
     };
   }, []);
 
-  return { user, userData, role, roles, status, darkMode, loading };
+  return { user, userData, role, roles, status, darkMode, loading, token };
 }

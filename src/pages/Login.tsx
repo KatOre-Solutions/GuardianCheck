@@ -5,7 +5,6 @@ import {
   GoogleAuthProvider, 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
-  sendEmailVerification, 
   sendPasswordResetEmail,
   updatePassword,
   updateProfile
@@ -14,6 +13,7 @@ import { Shield, Mail, Lock, ArrowRight, User, CheckCircle2, AlertCircle, Key, L
 import { auth } from "../lib/firebase";
 import { getDocument, setDocument, updateDocument, logAudit } from "../lib/firestore";
 import { showErrorToast, showSuccessToast, getHumanReadableError } from "../lib/error-handler";
+import { sendCustomVerificationEmail } from "../lib/api";
 import { useTenant } from "../contexts/TenantContext";
 import { ChurchLogo } from "../components/ChurchLogo";
 
@@ -250,7 +250,14 @@ export default function Login() {
       if (mode === "signup") {
         const result = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(result.user, { displayName: `${firstName} ${lastName}` });
-        await sendEmailVerification(result.user);
+        
+        try {
+          const token = await result.user.getIdToken();
+          await sendCustomVerificationEmail(token);
+        } catch (emailErr) {
+          console.error("Failed to send custom verification email:", emailErr);
+          // Fallback or ignore? User already created.
+        }
         
         // Determine church from context if available
         const churchId = church?.id || null;
@@ -381,7 +388,8 @@ export default function Login() {
                 if (!auth.currentUser) return;
                 setLoading(true);
                 try {
-                  await sendEmailVerification(auth.currentUser);
+                  const token = await auth.currentUser.getIdToken();
+                  await sendCustomVerificationEmail(token);
                   showSuccessToast("Verification email resent!", "Please check your inbox.");
                 } catch (e: any) {
                   const { message } = getHumanReadableError(e);
