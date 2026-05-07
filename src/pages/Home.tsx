@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { Shield, QrCode, ClipboardCheck, Users, ArrowRight, CheckCircle2, Star, Zap, Globe, Heart } from "lucide-react";
 import { motion } from "motion/react";
+import WhatsAppSupport from "../components/WhatsAppSupport";
 
 export default function Home() {
   const features = [
@@ -345,6 +346,12 @@ export default function Home() {
           Start Your Free Trial Now
         </Link>
       </section>
+
+      <WhatsAppSupport 
+        phoneNumber="+27796251393" 
+        message="Hello, I'd like more information about GuardianCheck." 
+        label="Chat with us"
+      />
     </div>
   );
 }

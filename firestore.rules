@@ -220,7 +220,11 @@ service cloud.firestore {
          resource.data.churchId == getUserData().churchId && 
          request.resource.data.churchId == getUserData().churchId)
       );
-      allow delete: if isMasterAdmin();
+      allow delete: if isMasterAdmin() || (
+        isAdmin() && resource != null && 
+        resource.data.churchId == getUserData().churchId &&
+        (!('role' in resource.data) || resource.data.role != 'master_admin')
+      );
     }
 
     match /policy_acceptance/{userId} {

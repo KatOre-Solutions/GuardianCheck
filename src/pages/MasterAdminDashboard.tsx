@@ -6,6 +6,7 @@ import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion, AnimatePresence } from "motion/react";
 import { format, isAfter, parseISO } from "date-fns";
 import { where } from "firebase/firestore";
+import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { useAuth } from "../hooks/useAuth";
 
@@ -204,6 +205,13 @@ export default function MasterAdminDashboard() {
             <Plus className="h-5 w-5" />
             <span>Provision New Church</span>
           </button>
+          <WhatsAppSupport 
+            phoneNumber="+27796251393" 
+            message={`Bug Report from Master Admin (${user?.email}): `}
+            label="Log Bug"
+            position="static"
+            className="!px-8 !py-4 !rounded-2xl !shadow-none ring-1 ring-inset ring-gray-100 dark:ring-gray-700 font-bold"
+          />
         </div>
       </header>
 

@@ -58,6 +58,7 @@ import SetupWizard from "../components/SetupWizard";
 import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
 import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
+import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { PLAN_LIMITS, PlanTier } from "../constants/plans";
 
@@ -727,34 +728,31 @@ export default function AdminDashboard() {
       )}
 
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
+        <div className="space-y-2">
           <div className="flex items-center space-x-3">
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Admin Control Center</h1>
-            {churchData?.name && (
-              <span className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-3 py-1 rounded-full text-sm font-bold border border-primary/20 dark:border-primary/30">
-                {churchData.name}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center space-x-2">
-            <p className="text-gray-500 dark:text-gray-400">System-wide management and analytics</p>
             {activeService ? (
-              <span className="flex items-center space-x-1 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                <CheckCircle2 className="h-3 w-3" />
+              <motion.span 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center space-x-2 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 px-3 py-1.5 rounded-2xl text-[11px] font-bold uppercase tracking-wider border border-green-100 dark:border-green-800/50 shadow-sm"
+              >
+                <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
                 <span>{activeService.name} Active</span>
-              </span>
+              </motion.span>
             ) : (
-              <span className="flex items-center space-x-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+              <span className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-800 text-gray-400 px-3 py-1.5 rounded-2xl text-[11px] font-bold uppercase tracking-wider border border-gray-100 dark:border-gray-700">
                 <AlertCircle className="h-3 w-3" />
                 <span>No Active Service</span>
               </span>
             )}
           </div>
+          <p className="text-gray-500 dark:text-gray-400">System-wide management and analytics</p>
         </div>
         <div className="flex items-center space-x-3">
           <button
             onClick={() => setShowEmergencyModal(true)}
-            className="bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2 hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none"
+            className="bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2 hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none hover:-translate-y-0.5 cursor-pointer"
           >
             <AlertTriangle className="h-4 w-4" />
             <span>Emergency Alert</span>
@@ -763,25 +761,18 @@ export default function AdminDashboard() {
           <button 
             onClick={exportAllData}
             disabled={exporting}
-            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2 disabled:opacity-50"
+            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 hover:shadow-md hover:-translate-y-0.5 transition-all flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
           >
             <Download className="h-4 w-4" />
             <span>{exporting ? "Exporting..." : "Export All Data"}</span>
           </button>
-          <Link 
-            to="/admin/events"
-            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2"
-          >
-            <Calendar className="h-4 w-4" />
-            <span>Manage Events</span>
-          </Link>
-          <Link 
-            to="/admin/settings"
-            className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-xl text-sm font-bold border border-gray-100 dark:border-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2"
-          >
-            <Settings className="h-4 w-4" />
-            <span>Church Settings</span>
-          </Link>
+          <WhatsAppSupport 
+            phoneNumber="+27796251393" 
+            message={`Bug Report from ${userData?.firstName} ${userData?.lastName} at ${churchData?.name || 'Unknown Church'}: `}
+            label="Log Bug"
+            position="static"
+            className="!px-3 !py-2 !rounded-xl !shadow-none ring-1 ring-inset ring-gray-100 dark:ring-gray-700 font-bold hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer"
+          />
           <div className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2">
             <Shield className="h-4 w-4" />
             <span>Admin Mode Active</span>
