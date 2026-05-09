@@ -18,8 +18,8 @@ const serverErrorCounter = new Counter('server_errors');
 
 export const options = {
   stages: [
-    { duration: '1m', target: 50 }, 
-    { duration: '3m', target: 50 }, 
+    { duration: '1m', target: 150 }, 
+    { duration: '3m', target: 150 }, 
     { duration: '1m', target: 0 },  
   ],
   thresholds: {

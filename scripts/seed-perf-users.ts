@@ -42,11 +42,11 @@ async function seedPerfUsers() {
   const CHURCH_ID = "perf-test-church";
   const POLICY_VERSION = "1.0";
 
-  console.log("Preparing 50 performance test users in Firestore...");
+  console.log("Preparing 150 performance test users in Firestore...");
 
-  const batch = db.batch();
+  let batch = db.batch();
 
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 150; i++) {
     const userId = `perf-user-${i}`;
     const userRef = db.collection("users").doc(userId);
     const policyRef = db.collection("policy_acceptance").doc(userId);
@@ -80,11 +80,22 @@ async function seedPerfUsers() {
       status: "active",
       createdAt: new Date().toISOString()
     });
+
+    // Use multiple batches for many users
+    if ((i + 1) % 50 === 0) {
+      await batch.commit();
+      batch = db.batch(); // Create a new batch for the next set of operations
+    }
   }
 
-  await batch.commit();
+  // Final commit if any
+  try {
+     await batch.commit();
+  } catch (e) {
+     // Ignore empty batch errors
+  }
 
-  console.log("Successfully seeded 50 test users with policies and roles.");
+  console.log("Successfully seeded 150 test users with policies and roles.");
 }
 
 seedPerfUsers().catch(console.error);

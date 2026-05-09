@@ -60,7 +60,7 @@ async function preparePerfData() {
     };
   });
 
-  if (testUsers.length < 50) {
+  if (testUsers.length < 150) {
     console.warn(`Only found ${testUsers.length} test users. Performance results may be limited.`);
   }
 

@@ -594,8 +594,13 @@ app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, asy
 
     res.json({ success: true, message: "Verification email sent via Resend" });
   } catch (error: any) {
-    console.error(`[VERIFICATION_ERROR] ${error.message}`);
-    res.status(500).json({ error: "Failed to send verification email" });
+    console.error(`[VERIFICATION_ERROR] UID: ${uid}, Email: ${email}, Error: ${error.message}`);
+    // If it's a "user not found" error from Firebase Auth, or something else
+    res.status(500).json({ 
+      error: "Failed to send verification email", 
+      details: error.message,
+      traceId: req.traceId 
+    });
   }
 });
 
