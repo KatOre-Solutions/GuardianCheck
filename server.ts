@@ -239,9 +239,16 @@ const keyGenerator = (req: any) => {
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 200, // Increased to 200 to reduce accidental 429s for active users
   keyGenerator,
   message: { error: "Too many requests, please try again later." }
+});
+
+const dashboardLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500, // Higher limit for polling-heavy routes (health, transactions)
+  keyGenerator,
+  message: { error: "Dashboard polling limit reached, please refresh in a few minutes." }
 });
 
 const peakLimiter = rateLimit({
@@ -521,7 +528,7 @@ const PLAN_PRICES: Record<string, number> = {
 };
 
 // Transactions List Endpoint
-app.get("/api/transactions", authenticateToken, async (req, res) => {
+app.get("/api/transactions", dashboardLimiter, authenticateToken, async (req, res) => {
   const churchId = req.user.churchId;
   if (!churchId) return res.status(403).json({ error: "Unauthorized" });
 
@@ -550,7 +557,7 @@ app.get("/api/transactions", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
+app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, async (req, res) => {
   const { uid, email } = req.user;
   if (!email) return res.status(400).json({ error: "Email not found" });
 
@@ -690,7 +697,7 @@ async function startServer() {
     res.json({ version: CURRENT_POLICY_VERSION });
   });
 
-  app.get("/api/health", async (req, res) => {
+  app.get("/api/health", dashboardLimiter, async (req, res) => {
     const status: any = {
       status: "healthy",
       timestamp: new Date().toISOString(),
