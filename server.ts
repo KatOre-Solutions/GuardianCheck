@@ -26,8 +26,8 @@ const isDev = String(process.env.VITE_DEV_MODE).toLowerCase() === "true";
 const logger = {
   log: (...args: any[]) => isDev && console.log(...args),
   info: (...args: any[]) => isDev && console.info(...args),
-  warn: (...args: any[]) => isDev && console.warn(...args),
-  error: (...args: any[]) => isDev && console.error(...args),
+  warn: (...args: any[]) => console.warn(...args),
+  error: (...args: any[]) => console.error(...args),
   debug: (...args: any[]) => isDev && console.debug(...args),
   isDevEnabled: () => isDev
 };
@@ -573,8 +573,11 @@ app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
     }
 
     // 3. Generate Link
+    const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
+    const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+
     const actionCodeSettings = {
-      url: `${process.env.APP_URL || req.get("origin")}/login`
+      url: `${process.env.APP_URL || baseUrl}/login`
     };
     
     const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
@@ -1240,18 +1243,27 @@ async function startServer() {
       // 6. Send Invitation Email
       const inviteLink = `${process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
       
-      // Fire-and-forget email invitation
-      emailService.sendInvitation(email, {
-        firstName,
-        lastName,
-        role,
-        churchName,
-        inviteLink
-      }).catch(emailError => {
+      try {
+        await emailService.sendInvitation(email, {
+          firstName,
+          lastName,
+          role,
+          churchName,
+          inviteLink
+        });
+      } catch (emailError: any) {
         console.error("Delayed failure sending invitation email:", emailError.message);
-      });
+        // We still return success: true because the invitation IS in the database
+        // and the user can see the link in the response/UI if needed.
+        return res.json({ 
+          success: true, 
+          message: "Invitation created but email delivery failed. You can copy the link manually.", 
+          inviteLink,
+          emailError: emailError.message 
+        });
+      }
 
-      res.json({ success: true, message: "Invitation created and email queued.", inviteLink });
+      res.json({ success: true, message: "Invitation created and email sent successfully.", inviteLink });
     } catch (error: any) {
       console.error("Invitation error:", error.message);
       res.status(500).json({ error: "Internal server error", traceId: req.traceId });
@@ -1333,20 +1345,48 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      // 6. Send Verification Email (Fire-and-forget)
-      try {
-        const verificationLink = await getAuth().generateEmailVerificationLink(inviteData.email, {
-          url: `${process.env.APP_URL || req.get("origin")}/login`
-        });
-        emailService.sendVerificationEmail(
-          inviteData.email, 
-          inviteData.firstName, 
-          inviteData.churchName || "Your Church",
-          verificationLink
-        ).catch(err => console.error("Async verification email failed:", err.message));
-      } catch (error) {
-        console.error("Failed to generate verification link:", error);
-      }
+      // 6. Send Verification Email (Fire-and-forget but logged)
+      (async () => {
+        try {
+          // Get church name if missing
+          let churchName = inviteData.churchName;
+          if (!churchName) {
+            const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
+            if (churchDoc.exists) {
+              churchName = churchDoc.data().name;
+            }
+          }
+
+          const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
+          const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+          
+          const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
+            url: `${process.env.APP_URL || baseUrl}/login`
+          });
+
+          await emailService.sendVerificationEmail(
+            inviteData.email, 
+            inviteData.firstName, 
+            churchName || "Your Church",
+            verificationLink
+          );
+          
+          logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
+        } catch (error: any) {
+          console.error("Async verification email failed for volunteer signup:", error.message);
+          // Log to general logs for visibility
+          await db.collection("logs").add({
+            level: "error",
+            message: `Verification email failed during invite acceptance: ${error.message}`,
+            context: { 
+                email: inviteData.email, 
+                churchId: inviteData.churchId,
+                traceId: req.traceId
+            },
+            timestamp: new Date().toISOString()
+          }).catch(console.error);
+        }
+      })();
 
       res.json({ 
         success: true, 

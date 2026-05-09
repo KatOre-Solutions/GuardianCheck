@@ -7,8 +7,8 @@ const isDev = String(process.env.VITE_DEV_MODE).toLowerCase() === "true";
 const logger = {
   log: (...args: any[]) => isDev && console.log(...args),
   info: (...args: any[]) => isDev && console.info(...args),
-  warn: (...args: any[]) => isDev && console.warn(...args),
-  error: (...args: any[]) => isDev && console.error(...args),
+  warn: (...args: any[]) => console.warn(...args),
+  error: (...args: any[]) => console.error(...args),
   debug: (...args: any[]) => isDev && console.debug(...args),
 };
 
@@ -37,10 +37,18 @@ export class EmailService {
     }
     
     const apiKey = process.env.RESEND_API_KEY;
-    if (apiKey) {
+    if (apiKey && apiKey !== "re_...") {
       this.resend = new Resend(apiKey);
+      console.log("EmailService: Resend initialized successfully.");
     } else {
-      logger.warn("RESEND_API_KEY not found. Email service will be in mock mode.");
+      console.warn("EmailService: RESEND_API_KEY not found or is placeholder. MOCK MODE ACTIVE.");
+      if (this.db) {
+        this.db.collection("logs").add({
+            level: "warn",
+            message: "EmailService initialized in MOCK MODE (missing RESEND_API_KEY)",
+            timestamp: new Date().toISOString()
+        }).catch(console.error);
+      }
     }
   }
 
@@ -274,7 +282,7 @@ export class EmailService {
               html: html,
             });
           } else {
-            logger.info(`Mock Email to ${email}: ${subject}`);
+            console.log(`[MOCK EMAIL] To: ${email} | Subject: ${subject}`);
           }
 
           await this.logEmail({
@@ -398,11 +406,11 @@ export class EmailService {
           html: html,
         });
       } else {
-        logger.info(`Mock Invitation Email to ${email}: ${subject}`);
+        console.log(`[MOCK INVITATION] To: ${email} | Subject: ${subject}`);
       }
 
       await this.logEmail({
-        churchId: "system", // Or pass churchId if available
+        churchId: "system",
         recipientEmail: email,
         eventType: "invitation",
         status: "success",
@@ -414,7 +422,18 @@ export class EmailService {
 
       logger.log(`Invitation email sent to ${email}`);
     } catch (error: any) {
-      logger.error(`Failed to send invitation email to ${email}:`, error.message);
+      console.error(`CRITICAL: Failed to send invitation email to ${email}:`, error.message);
+      await this.logEmail({
+        churchId: "system",
+        recipientEmail: email,
+        eventType: "invitation",
+        status: "failed",
+        errorMessage: error.message,
+        metadata: {
+          role: data.role,
+          churchName: data.churchName
+        }
+      });
       throw error;
     }
   }
@@ -473,7 +492,7 @@ export class EmailService {
           html: html,
         });
       } else {
-        logger.info(`Mock Verification Email to ${email}: ${subject}`);
+        console.log(`[MOCK VERIFICATION] To: ${email} | Subject: ${subject}`);
       }
 
       await this.logEmail({
@@ -485,7 +504,14 @@ export class EmailService {
 
       logger.log(`Verification email sent to ${email}`);
     } catch (error: any) {
-      logger.error(`Failed to send verification email to ${email}:`, error.message);
+      console.error(`CRITICAL: Failed to send verification email to ${email}:`, error.message);
+      await this.logEmail({
+        churchId: "system",
+        recipientEmail: email,
+        eventType: "verification",
+        status: "failed",
+        errorMessage: error.message
+      });
       throw error;
     }
   }
