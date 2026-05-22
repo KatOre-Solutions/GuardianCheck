@@ -1,6 +1,6 @@
-
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -24,10 +24,11 @@ function formatPrivateKey(key: string) {
   return privateKey;
 }
 
-async function checkUser() {
+async function inspectJojerajaState() {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
   
+  let adminApp: any;
   if (getApps().length === 0) {
     const options: any = { projectId: firebaseConfig.projectId };
     if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
@@ -37,21 +38,44 @@ async function checkUser() {
         privateKey: formatPrivateKey(process.env.FIREBASE_PRIVATE_KEY),
       });
     }
-    initializeApp(options);
+    adminApp = initializeApp(options);
+  } else {
+    adminApp = getApps()[0];
   }
   
   const db = getFirestore(firebaseConfig.firestoreDatabaseId);
-  const uid = "kBVohDvHzCPzAHZvI0l8TzS6ksw2";
-  const userRef = db.collection("users").doc(uid);
+  const email = "jojeraja@denipl.net";
   
-  await userRef.update({
-    churchId: "9HuAV8EUTom5SRvm5uQr",
-    churchSlug: "people-church",
-    role: "admin",
-    roles: ["admin", "volunteer"]
+  console.log(`=== Inspecting jojeraja@denipl.net Firestore / Auth State ===`);
+
+  // 1. Firebase Auth State
+  try {
+    const userAuthObj = await getAuth(adminApp).getUserByEmail(email);
+    console.log("Firebase Auth:", {
+      uid: userAuthObj.uid,
+      email: userAuthObj.email,
+      emailVerified: userAuthObj.emailVerified,
+      disabled: userAuthObj.disabled,
+      displayName: userAuthObj.displayName,
+      tokensValidAfterTime: userAuthObj.tokensValidAfterTime
+    });
+  } catch (err: any) {
+    console.log("Firebase Auth User error:", err.message);
+  }
+
+  // 2. Invitations state
+  const invites = await db.collection("invitations").where("email", "==", email).get();
+  console.log(`\nInvitations (Count: ${invites.size}):`);
+  invites.forEach(doc => {
+    console.log(`Invite ${doc.id}:`, JSON.stringify(doc.data(), null, 2));
   });
-  
-  console.log("Successfully updated user fitopoc634@gixpos.com to be admin of people-church.");
+
+  // 3. User Document state
+  const users = await db.collection("users").where("email", "==", email).get();
+  console.log(`\nUser Profiles (Count: ${users.size}):`);
+  users.forEach(doc => {
+    console.log(`User Doc ${doc.id}:`, JSON.stringify(doc.data(), null, 2));
+  });
 }
 
-checkUser().catch(console.error);
+inspectJojerajaState().catch(console.error);

@@ -1,4 +1,3 @@
-
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
@@ -24,7 +23,7 @@ function formatPrivateKey(key: string) {
   return privateKey;
 }
 
-async function checkUser() {
+async function inspectEmailLogs() {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
   
@@ -41,17 +40,38 @@ async function checkUser() {
   }
   
   const db = getFirestore(firebaseConfig.firestoreDatabaseId);
-  const uid = "kBVohDvHzCPzAHZvI0l8TzS6ksw2";
-  const userRef = db.collection("users").doc(uid);
+  const email = "jojeraja@denipl.net";
   
-  await userRef.update({
-    churchId: "9HuAV8EUTom5SRvm5uQr",
-    churchSlug: "people-church",
-    role: "admin",
-    roles: ["admin", "volunteer"]
-  });
-  
-  console.log("Successfully updated user fitopoc634@gixpos.com to be admin of people-church.");
+  console.log(`--- Fetching email logs for ${email} ---`);
+  const logsSnap = await db.collection("email_logs")
+    .where("recipientEmail", "==", email)
+    .orderBy("timestamp", "desc")
+    .limit(10)
+    .get();
+    
+  if (logsSnap.empty) {
+    console.log("No deep email logs found specifically for this email.");
+  } else {
+    logsSnap.forEach(doc => {
+      console.log(`[${doc.data().timestamp}] Event: ${doc.data().eventType} | Status: ${doc.data().status} | Error: ${doc.data().errorMessage || "none"}`);
+      console.log("Details:", JSON.stringify(doc.data(), null, 2));
+    });
+  }
+
+  console.log("\n--- Fetching recent failed email logs ---");
+  const failedSnap = await db.collection("email_logs")
+    .where("status", "==", "failed")
+    .orderBy("timestamp", "desc")
+    .limit(10)
+    .get();
+    
+  if (failedSnap.empty) {
+    console.log("No recent failed email logs found.");
+  } else {
+    failedSnap.forEach(doc => {
+      console.log(`[${doc.data().timestamp}] Email: ${doc.data().recipientEmail} | Event: ${doc.data().eventType} | Status: ${doc.data().status} | Error: ${doc.data().errorMessage || "none"}`);
+    });
+  }
 }
 
-checkUser().catch(console.error);
+inspectEmailLogs().catch(console.error);

@@ -830,12 +830,23 @@ async function startServer() {
   app.post("/api/children", authenticateToken, validate(RegisterChildSchema), async (req, res) => {
     const childData = req.body;
     const { uid, churchId, firstName, lastName } = req.user;
+    const idempotencyKey = req.headers["x-idempotency-key"] as string;
 
     if (!churchId) {
       return res.status(400).json({ error: "Church ID not found in profile. Please select a church first." });
     }
 
     try {
+      // 0. Handle Idempotency
+      if (idempotencyKey) {
+        const existingOp = await db.collection("idempotency_keys").doc(idempotencyKey).get();
+        if (existingOp.exists) {
+          const data = existingOp.data();
+          logger.info(`[IDEMPOTENCY] Key ${idempotencyKey} already processed. Returning cached result.`);
+          return res.status(200).json(data.response);
+        }
+      }
+
       // 1. Get Church Data for Plan
       const churchData = await getCachedDoc(req, "churches", churchId, churchId);
       if (!churchData) {
@@ -887,11 +898,22 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      res.status(201).json({ 
+      const successResponse = { 
         success: true, 
         childId, 
         message: "Child registered successfully." 
-      });
+      };
+
+      // Store response for idempotency
+      if (idempotencyKey) {
+        await db.collection("idempotency_keys").doc(idempotencyKey).set({
+          response: successResponse,
+          uid,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      res.status(201).json(successResponse);
 
     } catch (error: any) {
       console.error(`[CHILD_REG_ERROR] ${error.message} [Trace: ${req.traceId}]`);
@@ -1309,13 +1331,27 @@ async function startServer() {
         return res.status(400).json({ error: "This invitation has expired." });
       }
 
-      // 3. Create Auth User
-      const userRecord = await getAuth().createUser({
-        email: inviteData.email,
-        password: password,
-        displayName: `${inviteData.firstName} ${inviteData.lastName}`,
-        emailVerified: false
-      });
+      // 3. Create or Fetch/Update Auth User
+      let userRecord;
+      try {
+        const existingUser = await getAuth(adminApp).getUserByEmail(inviteData.email);
+        // If they already exist in Auth, update password and displayName to complete setup
+        userRecord = await getAuth(adminApp).updateUser(existingUser.uid, {
+          password: password,
+          displayName: `${inviteData.firstName} ${inviteData.lastName}`
+        });
+      } catch (authError: any) {
+        if (authError.code === "auth/user-not-found") {
+          userRecord = await getAuth(adminApp).createUser({
+            email: inviteData.email,
+            password: password,
+            displayName: `${inviteData.firstName} ${inviteData.lastName}`,
+            emailVerified: false
+          });
+        } else {
+          throw authError;
+        }
+      }
 
       // 4. Atomic Transaction: Create User Doc and Update Invite
       await db.runTransaction(async (transaction) => {
@@ -1406,8 +1442,18 @@ async function startServer() {
         userId: userRecord.uid
       });
     } catch (error: any) {
-      console.error("Accept invite failed:", error.message);
-      res.status(500).json({ error: "Internal server error" });
+      console.error("Accept invite failed:", error.message || error);
+      const errCode = error.code || "";
+      if (errCode.startsWith("auth/")) {
+        let msg = error.message;
+        if (errCode === "auth/invalid-password" || errCode === "auth/weak-password") {
+          msg = "Password must be at least 6 characters long.";
+        } else if (errCode === "auth/email-already-in-use") {
+          msg = "This email is already registered.";
+        }
+        return res.status(400).json({ error: msg });
+      }
+      res.status(500).json({ error: error.message || "Internal server error" });
     }
   });
 

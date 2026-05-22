@@ -415,6 +415,9 @@ export default function VolunteerDashboard() {
     
     setLoading(true);
     try {
+      // Direct offline check to avoid hanging on getIdToken when network is spotty
+      const effectivelyOnline = navigator.onLine;
+
       for (const child of childrenToProcess) {
         const targetRoomId = roomId || autoAssignedRooms[child.id] || selectedRoom;
         if (!targetRoomId) continue;
@@ -422,46 +425,59 @@ export default function VolunteerDashboard() {
         const room = rooms.find(r => r.id === targetRoomId);
         if (!room) continue;
 
-        try {
-          const token = await auth.currentUser?.getIdToken();
-          const result = await safeFetch("/api/check-in", {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              churchId: userData.churchId,
-              childId: child.id,
-              childName: `${child.firstName} ${child.lastName}`,
-              parentId: child.parentId,
-              roomId: targetRoomId,
-              roomName: room.name,
-              eventId: currentService.eventId,
-              eventName: currentService.eventName,
-              serviceId: currentService.id,
-              serviceName: currentService.name,
-              volunteerId: user.uid,
-              volunteerName: userData?.firstName && userData?.lastName 
-                ? `${userData.firstName} ${userData.lastName}` 
-                : (user.displayName || user.email || "Volunteer"),
-              qrCode: child.qrCode,
-              checkedInBy: child.parentName || "Parent"
-            })
-          });
+        let syncSuccess = false;
 
-          if (!result.ok) {
-            if (result.status === 409) {
+        if (effectivelyOnline) {
+          try {
+            // Add a safety timeout for the API call
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+            const token = await auth.currentUser?.getIdToken();
+            const result = await safeFetch("/api/check-in", {
+              method: "POST",
+              headers: { 
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                churchId: userData.churchId,
+                childId: child.id,
+                childName: `${child.firstName} ${child.lastName}`,
+                parentId: child.parentId,
+                roomId: targetRoomId,
+                roomName: room.name,
+                eventId: currentService.eventId,
+                eventName: currentService.eventName,
+                serviceId: currentService.id,
+                serviceName: currentService.name,
+                volunteerId: user.uid,
+                volunteerName: userData?.firstName && userData?.lastName 
+                  ? `${userData.firstName} ${userData.lastName}` 
+                  : (user.displayName || user.email || "Volunteer"),
+                qrCode: child.qrCode,
+                checkedInBy: child.parentName || "Parent"
+              }),
+              signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (result.ok) {
+              syncSuccess = true;
+            } else if (result.status === 409) {
               showErrorToast(`${child.firstName}: ${result.error}`);
               continue; // Skip this child but continue with others
+            } else {
+              throw new Error(result.error || "Server error");
             }
-            // If it's a 404 or other server error, treat it as "server unavailable" and trigger fallback
-            throw new Error(result.error || "Server error");
+          } catch (err) {
+            console.warn("Check-in API failed or timed out, jumping to fallback:", err);
           }
-        } catch (err) {
-          // Fallback to local write if offline, 404, or regular server error (except 409 conflicts)
-          console.warn("Check-in API failed, falling back to local write:", err);
-          
+        }
+
+        if (!syncSuccess) {
+          // Fallback to local write if offline or API failed
           // Local check for "One room at a time" using synced state
           const alreadyCheckedIn = checkedInChildren.find(c => c.childId === child.id);
           if (alreadyCheckedIn) {
@@ -472,7 +488,7 @@ export default function VolunteerDashboard() {
           const todayStr = format(new Date(), "yyyyMMdd");
           const checkinId = `checkin_${child.id}_${currentService.id}_${todayStr}`;
           
-          await setDocument("checkins", checkinId, {
+          setDocument("checkins", checkinId, {
             churchId: userData.churchId,
             childId: child.id,
             childName: `${child.firstName} ${child.lastName}`,
@@ -493,28 +509,38 @@ export default function VolunteerDashboard() {
             checkedInBy: child.parentName || "Parent",
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
+          }).catch(err => {
+            console.error("Critical: Offline check-in failed to write to local Firestore:", err);
           });
         }
       }
       
+      // Clear state immediately after processing loop to close the card
       if (childToCheckIn) {
         setScannedChildren(prev => prev.filter(c => c.id !== childToCheckIn.id));
         showSuccessToast(`${childToCheckIn.firstName} checked in successfully!`);
+        // If it was the last one (or only one), reset UI
         if (scannedChildren.length <= 1) {
           setSelectedRoom("");
           setAutoAssignedRooms({});
           setActiveTab("list");
         }
       } else {
-        showSuccessToast(`${scannedChildren.length} children checked in successfully!`);
+        const count = scannedChildren.length;
         setScannedChildren([]);
         setSelectedRoom("");
         setAutoAssignedRooms({});
         setActiveTab("list");
+        if (count > 0) showSuccessToast(`${count} children checked in successfully!`);
       }
     } catch (err) {
       console.error(err);
-      showErrorToast("Check-in failed. It will sync when online.");
+      showErrorToast("Check-in encountered an error. It will sync when online.");
+      // Safety reset
+      setScannedChildren([]);
+      setSelectedRoom("");
+      setAutoAssignedRooms({});
+      setActiveTab("list");
     } finally {
       setLoading(false);
     }
@@ -685,17 +711,6 @@ export default function VolunteerDashboard() {
 
   return (
     <div className="space-y-8">
-      {!isOnline && (
-        <motion.div 
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: "auto", opacity: 1 }}
-          className="bg-amber-500 text-white px-6 py-2 rounded-xl flex items-center justify-center space-x-2 font-bold text-sm shadow-lg"
-        >
-          <WifiOff className="h-4 w-4" />
-          <span>Offline Mode Active. Actions will sync when connection is restored.</span>
-        </motion.div>
-      )}
-      
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Volunteer Station</h1>

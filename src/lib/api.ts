@@ -44,12 +44,13 @@ export async function sendCustomVerificationEmail(token: string) {
   return response.json();
 }
 
-export async function registerChild(token: string, childData: any) {
+export async function registerChild(token: string, childData: any, idempotencyKey?: string) {
   const result = await safeFetch("/api/children", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "x-idempotency-key": idempotencyKey || ""
     },
     body: JSON.stringify(childData)
   });

@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
+import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument, getDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
-import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
+import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar, WifiOff, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 import { registerChild } from "../lib/api";
+import { v4 as uuidv4 } from "uuid";
 
 export default function ParentDashboard() {
   const { user, userData, role, roles } = useAuth();
@@ -33,6 +34,12 @@ export default function ParentDashboard() {
   const [newGuardian, setNewGuardian] = useState({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [pendingSyncIds, setPendingSyncIds] = useState<string[]>(() => {
+    const cached = localStorage.getItem("pending_child_sync");
+    return cached ? JSON.parse(cached) : [];
+  });
 
   const RELATIONSHIPS = ["Mother", "Father", "Grandparent", "Aunt", "Uncle", "Sibling", "Nanny", "Other"];
   const GENDERS = ["Male", "Female", "Other"];
@@ -44,7 +51,21 @@ export default function ParentDashboard() {
         where("churchId", "==", churchId)
       ];
       const unsubscribeChildren = subscribeToCollection("children", constraints, (data) => {
-        setChildren(data);
+        // Merge with pending children from localStorage if any
+        const pendingIds = JSON.parse(localStorage.getItem("pending_child_sync") || "[]");
+        const pendingChildren = pendingIds.map((syncId: string) => {
+          const stored = localStorage.getItem(`pending_child_data_${syncId}`);
+          if (!stored) return null;
+          const { childData, tempId } = JSON.parse(stored);
+          return { 
+            id: tempId, 
+            ...childData, 
+            qrCode: `child:${tempId}`,
+            isPending: true 
+          };
+        }).filter(Boolean);
+
+        setChildren([...data, ...pendingChildren]);
       });
       const unsubscribeGuardians = subscribeToCollection("guardians", constraints, (data) => {
         setGuardians(data);
@@ -118,6 +139,141 @@ export default function ParentDashboard() {
     }
   }, [userData, guardians, user]);
 
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const saveOfflineSyncData = (syncId: string, childData: any, idempotencyKey: string, tempId: string, guardianIdAffected: string) => {
+    localStorage.setItem(`pending_child_data_${syncId}`, JSON.stringify({
+      childData,
+      idempotencyKey,
+      tempId,
+      guardianIdAffected
+    }));
+
+    const currentPending = JSON.parse(localStorage.getItem("pending_child_sync") || "[]");
+    if (!currentPending.includes(syncId)) {
+      const newPending = [...currentPending, syncId];
+      localStorage.setItem("pending_child_sync", JSON.stringify(newPending));
+    }
+  };
+
+  const syncPendingChildren = useCallback(async () => {
+    if (!isOnline || isSyncing || pendingSyncIds.length === 0 || !user) return;
+    
+    setIsSyncing(true);
+    const remainingIds = [...pendingSyncIds];
+    const syncedIds: string[] = [];
+
+    for (const syncId of pendingSyncIds) {
+      const data = localStorage.getItem(`pending_child_data_${syncId}`);
+      if (!data) {
+        syncedIds.push(syncId);
+        continue;
+      }
+
+      try {
+        const { childData, idempotencyKey, tempId, guardianIdAffected } = JSON.parse(data);
+        const token = await user.getIdToken();
+        const { childId } = await registerChild(token, childData, idempotencyKey);
+        
+        // Remap temporary ID to real ID in guardian record if applicable
+        let targetGuardianId = guardianIdAffected;
+        if (!targetGuardianId && user.uid && userData?.churchId) {
+          try {
+            const googleGuardiansList = await getCollection("guardians", [
+              where("parentId", "==", user.uid),
+              where("phone", "==", "Account Holder"),
+              where("churchId", "==", userData.churchId)
+            ]);
+            if (googleGuardiansList && googleGuardiansList.length > 0) {
+              targetGuardianId = googleGuardiansList[0].id;
+              console.log(`Resolved empty guardian ID to: ${targetGuardianId}`);
+            }
+          } catch (queryErr) {
+            console.error("Failed to query parent guardian for remapping:", queryErr);
+          }
+        }
+
+        if (targetGuardianId && tempId && childId) {
+          try {
+            const guardianDoc = await getDocument("guardians", targetGuardianId) as any;
+            if (guardianDoc && guardianDoc.childIds) {
+              const updatedChildIds = guardianDoc.childIds.map((id: string) => id === tempId ? childId : id);
+              // Ensure uniqueness
+              const uniqueChildIds = Array.from(new Set(updatedChildIds));
+              await updateDocument("guardians", targetGuardianId, {
+                childIds: uniqueChildIds
+              });
+              console.log(`Successfully remapped child ID in guardian doc ${targetGuardianId} from ${tempId} to ${childId}`);
+            }
+          } catch (remapErr) {
+            console.error("Failed to remap child ID in guardian doc:", remapErr);
+          }
+        }
+
+        // Remap any check-ins that were made using the temporary ID
+        if (tempId && childId && churchId) {
+          try {
+            const checkinQuery = [
+              where("childId", "==", tempId),
+              where("churchId", "==", churchId)
+            ];
+            const matchingCheckins = await getCollection("checkins", checkinQuery);
+            for (const checkin of matchingCheckins) {
+              console.log(`Attempting to remap check-in ${checkin.id} from ${tempId} to ${childId}...`);
+              await updateDocument("checkins", checkin.id, {
+                childId: childId,
+                updatedAt: new Date().toISOString(),
+                syncStatus: "remapped"
+              });
+              console.log(`Successfully remapped check-in ${checkin.id}`);
+            }
+            if (matchingCheckins.length === 0) {
+              console.log(`No matching check-ins found for temporary ID ${tempId} to remap.`);
+            }
+          } catch (checkinRemapErr) {
+            console.error("Failed to remap check-ins:", checkinRemapErr);
+          }
+        }
+
+        // Success - cleanup
+        localStorage.removeItem(`pending_child_data_${syncId}`);
+        syncedIds.push(syncId);
+      } catch (err) {
+        console.error(`Sync failed for ${syncId}:`, err);
+        // If error is 400 or 403, it might be a payload issue, maybe we should stop?
+        // For now, continue but don't remove from list if it's a network error
+        if (err instanceof Error && (err.message.includes("400") || err.message.includes("403"))) {
+          localStorage.removeItem(`pending_child_data_${syncId}`);
+          syncedIds.push(syncId);
+        }
+      }
+    }
+
+    const newPending = remainingIds.filter(id => !syncedIds.includes(id));
+    setPendingSyncIds(newPending);
+    localStorage.setItem("pending_child_sync", JSON.stringify(newPending));
+    setIsSyncing(false);
+    
+    if (syncedIds.length > 0) {
+      showSuccessToast("Synchronization complete", `Synced ${syncedIds.length} pending registrations.`);
+    }
+  }, [isOnline, isSyncing, pendingSyncIds, user]);
+
+  useEffect(() => {
+    if (isOnline && pendingSyncIds.length > 0) {
+      syncPendingChildren();
+    }
+  }, [isOnline, pendingSyncIds.length, syncPendingChildren]);
+
   const handleAddChild = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -125,18 +281,94 @@ export default function ParentDashboard() {
       showErrorToast("You must select a church in your profile before adding children.");
       return;
     }
+
+    const { notes, ...childData } = newChild;
+    const finalChildData = {
+      ...childData,
+      age: Number(newChild.age),
+      notes: notes || ""
+    };
+
+    const idempotencyKey = uuidv4();
+
+    // Use a captured online status to be more resilient to independent state updates
+    const isActuallyOnline = navigator.onLine;
+
+    if (!isActuallyOnline) {
+      // Close modal and reset form immediately for snappy feel
+      setShowAddModal(false);
+      const tempId = `temp_${uuidv4().substring(0, 8)}`;
+      
+      // Add to local state so user sees it immediately
+      const tempChild = {
+        id: tempId,
+        ...finalChildData,
+        notes: notes || "",
+        qrCode: `child:${tempId}`,
+        parentId: user.uid,
+        churchId: userData.churchId,
+        isPending: true
+      };
+      setChildren(prev => [...prev, tempChild]);
+
+      const syncId = `offline_${Date.now()}`;
+      
+      // Handle guardian link offline
+      let guardianIdAffected = "";
+      const parentFirstName = userData?.firstName || user.displayName?.split(" ")[0] || "Parent";
+      const parentLastName = userData?.lastName || user.displayName?.split(" ").slice(1).join(" ") || "";
+      const parentPhotoUrl = userData?.photoUrl || userData?.photoURL || user.photoURL || "";
+      
+      const existingParentGuardian = guardians.find(g => 
+        g.phone === "Account Holder" && 
+        g.parentId === user.uid
+      );
+
+      if (existingParentGuardian) {
+        guardianIdAffected = existingParentGuardian.id;
+        const updatedChildIds = [...(existingParentGuardian.childIds || []), tempId];
+        updateDocument("guardians", existingParentGuardian.id, {
+          childIds: updatedChildIds,
+        }).catch(err => console.error("Offline guardian update failed:", err));
+        
+        saveOfflineSyncData(syncId, finalChildData, idempotencyKey, tempId, guardianIdAffected);
+      } else {
+        const qrToken = `guardian_${Math.random().toString(36).substr(2, 12)}`;
+        addDocument("guardians", {
+          firstName: parentFirstName,
+          lastName: parentLastName,
+          phone: "Account Holder",
+          relationship: "Parent",
+          childIds: [tempId],
+          parentId: user.uid,
+          churchId: userData.churchId,
+          qrToken,
+          photoUrl: parentPhotoUrl,
+          photoURL: parentPhotoUrl,
+          active: true
+        }).then(id => {
+          if (id) {
+            guardianIdAffected = id;
+            saveOfflineSyncData(syncId, finalChildData, idempotencyKey, tempId, guardianIdAffected);
+          }
+        }).catch(err => console.error("Offline guardian create failed:", err));
+        
+        // Initial save
+        saveOfflineSyncData(syncId, finalChildData, idempotencyKey, tempId, "");
+      }
+
+      const newPending = [...pendingSyncIds, syncId];
+      setPendingSyncIds(newPending);
+      
+      showInfoToast("Working Offline", "Your child has been saved locally and will sync when you are back online.");
+      setNewChild({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
+      return;
+    }
+
     setLoading(true);
     try {
-      const parentName = `${userData?.firstName} ${userData?.lastName}`;
-      // Split sensitive data
-      const { notes, ...childData } = newChild;
-      
       const token = await user.getIdToken();
-      const { childId } = await registerChild(token, {
-        ...childData,
-        age: Number(newChild.age),
-        notes: notes || ""
-      });
+      const { childId } = await registerChild(token, finalChildData, idempotencyKey);
 
       // Check if parent guardian already exists for this account
       const parentFirstName = userData?.firstName || user.displayName?.split(" ")[0] || "Parent";
@@ -448,6 +680,21 @@ export default function ParentDashboard() {
           </div>
         </div>
         <div className="flex items-center space-x-3">
+          {(!isOnline || pendingSyncIds.length > 0) && (
+            <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider ${!isOnline ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400" : "bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"}`}>
+              {!isOnline ? (
+                <>
+                  <WifiOff className="h-3 w-3" />
+                  <span>Offline Mode</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className={`h-3 w-3 ${isSyncing ? "animate-spin" : ""}`} />
+                  <span>{pendingSyncIds.length} Pending Sync</span>
+                </>
+              )}
+            </div>
+          )}
           {children.length > 1 && (
             <button
               onClick={() => setShowGroupQRModal(true)}
@@ -523,7 +770,15 @@ export default function ParentDashboard() {
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</h3>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{child.firstName} {child.lastName}</h3>
+                {child.isPending && (
+                  <span className="flex items-center space-x-1 px-2 py-0.5 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded text-[10px] font-bold uppercase tracking-tighter animate-pulse">
+                    <WifiOff className="h-2.5 w-2.5" />
+                    <span>Pending Sync</span>
+                  </span>
+                )}
+              </div>
               {child.allergies && (
                 <div className="flex items-center space-x-2 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-1 rounded-lg text-sm font-medium">
                   <AlertCircle className="h-4 w-4" />
@@ -540,7 +795,7 @@ export default function ParentDashboard() {
 
             <div className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl flex flex-col items-center justify-center space-y-4 border border-dashed border-gray-200 dark:border-gray-700 group-hover:border-primary/30 dark:group-hover:border-primary/50 transition-colors">
               <div className="bg-white p-4 rounded-xl shadow-sm">
-                <QRCode id={`qr-child-${child.id}`} value={child.qrCode} size={120} />
+                <QRCode id={`qr-child-${child.id}`} value={child.qrCode || ""} size={120} />
               </div>
               <div className="flex flex-col items-center space-y-2">
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Child ID Card</p>
@@ -768,7 +1023,7 @@ export default function ParentDashboard() {
                           <div className="bg-white p-2 rounded-lg">
                             <QRCode 
                               id={`qr-${guardian.id}`}
-                              value={guardian.qrToken} 
+                              value={guardian.qrToken || ""} 
                               size={100} 
                             />
                           </div>
@@ -1223,7 +1478,7 @@ export default function ParentDashboard() {
                   {selectedForGroup.length > 0 && (
                     <div className="bg-gray-50 dark:bg-gray-800/50 p-8 rounded-3xl flex flex-col items-center space-y-4 border border-dashed border-gray-200 dark:border-gray-700">
                       <div className="bg-white p-4 rounded-xl shadow-sm">
-                        <QRCode value={groupQRValue} size={180} />
+                        <QRCode value={groupQRValue || ""} size={180} />
                       </div>
                       <div className="text-center">
                         <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Group QR Code</p>

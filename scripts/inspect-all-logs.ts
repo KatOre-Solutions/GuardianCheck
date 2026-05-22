@@ -52,7 +52,7 @@ async function inspectAllLogs() {
       const data = doc.data();
       const timestamp = data.timestamp;
       // Filter for logs from today (May 7th)
-      if (timestamp && timestamp.startsWith("2026-05-07")) {
+      if (timestamp && (timestamp.startsWith("2026-05-22") || timestamp.startsWith("2026-05-23"))) {
         console.log(`[${timestamp}] ${data.level}: ${data.message}`);
         if (data.context && Object.keys(data.context).length > 0) {
             console.log("Context:", JSON.stringify(data.context, null, 2));

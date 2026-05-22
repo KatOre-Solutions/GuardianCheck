@@ -1,4 +1,3 @@
-
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
@@ -24,7 +23,7 @@ function formatPrivateKey(key: string) {
   return privateKey;
 }
 
-async function checkUser() {
+async function inspectAllTypesOfLogs() {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
   
@@ -41,17 +40,46 @@ async function checkUser() {
   }
   
   const db = getFirestore(firebaseConfig.firestoreDatabaseId);
-  const uid = "kBVohDvHzCPzAHZvI0l8TzS6ksw2";
-  const userRef = db.collection("users").doc(uid);
+  const todayStr = "2026-05-22";
   
-  await userRef.update({
-    churchId: "9HuAV8EUTom5SRvm5uQr",
-    churchSlug: "people-church",
-    role: "admin",
-    roles: ["admin", "volunteer"]
-  });
-  
-  console.log("Successfully updated user fitopoc634@gixpos.com to be admin of people-church.");
+  console.log(`--- SYSTEM LOGS FOR ${todayStr} ---`);
+  const logsSnap = await db.collection("logs")
+    .where("timestamp", ">=", todayStr)
+    .orderBy("timestamp", "desc")
+    .limit(200)
+    .get();
+    
+  if (logsSnap.empty) {
+    console.log("No system logs found for today.");
+  } else {
+    for (const doc of logsSnap.docs) {
+      const data = doc.data();
+      const time = data.timestamp;
+      console.log(`[${time}] ${data.level || "INFO"}: ${data.message}`);
+      if (data.context) {
+        console.log("  Context:", JSON.stringify(data.context, null, 2));
+      }
+    }
+  }
+
+  console.log(`\n--- EMAIL LOGS FOR ${todayStr} ---`);
+  const emailLogsSnap = await db.collection("email_logs")
+    .where("timestamp", ">=", todayStr)
+    .orderBy("timestamp", "desc")
+    .limit(50)
+    .get();
+    
+  if (emailLogsSnap.empty) {
+    console.log("No email logs found for today.");
+  } else {
+    for (const doc of emailLogsSnap.docs) {
+      const data = doc.data();
+      console.log(`[${data.timestamp}] Event: ${data.eventType} | Recipient: ${data.recipientEmail} | Status: ${data.status} | Error: ${data.errorMessage || "None"}`);
+      if (data.metadata) {
+        console.log("  Metadata:", JSON.stringify(data.metadata));
+      }
+    }
+  }
 }
 
-checkUser().catch(console.error);
+inspectAllTypesOfLogs().catch(console.error);

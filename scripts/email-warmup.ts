@@ -1,9 +1,9 @@
-
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import { EmailService } from "../emailService.js";
 
 dotenv.config();
 
@@ -24,7 +24,7 @@ function formatPrivateKey(key: string) {
   return privateKey;
 }
 
-async function checkUser() {
+async function warmupEmail() {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
   
@@ -41,17 +41,38 @@ async function checkUser() {
   }
   
   const db = getFirestore(firebaseConfig.firestoreDatabaseId);
-  const uid = "kBVohDvHzCPzAHZvI0l8TzS6ksw2";
-  const userRef = db.collection("users").doc(uid);
+  const emailService = new EmailService(db);
   
-  await userRef.update({
-    churchId: "9HuAV8EUTom5SRvm5uQr",
-    churchSlug: "people-church",
-    role: "admin",
-    roles: ["admin", "volunteer"]
-  });
+  const targetEmail = "oreutlwilediutlwileng@gmail.com";
+  console.log(`[WARM-UP] Starting Warm-Up email delivery to ${targetEmail}...`);
   
-  console.log("Successfully updated user fitopoc634@gixpos.com to be admin of people-church.");
+  try {
+    // Override isDev for verbose logging
+    (process.env as any).VITE_DEV_MODE = "true";
+    
+    // Check if key is available
+    if (!process.env.RESEND_API_KEY || process.env.RESEND_API_KEY === "re_...") {
+      throw new Error("RESEND_API_KEY environment variable is not defined or is placeholder. Please check your settings.");
+    }
+    
+    await emailService.sendVerificationEmail(
+      targetEmail, 
+      "Demo Owner", 
+      "GuardianCheck Demo Center", 
+      "https://guardiancheck.co.za/verify?token=demo-warmup-token"
+    );
+    console.log("-----------------------------------------");
+    console.log("SUCCESS: Warm-Up email was sent successfully to " + targetEmail);
+    console.log("Your Resend API is warm, and the connection is active and ready for the demo!");
+    console.log("-----------------------------------------");
+  } catch (error: any) {
+    console.error("-----------------------------------------");
+    console.error("WARM-UP FAILURE:");
+    console.error(error.message || error);
+    console.error("Please ensure RESEND_API_KEY is correctly set in your environment variables / Settings configuration.");
+    console.error("-----------------------------------------");
+    process.exit(1);
+  }
 }
 
-checkUser().catch(console.error);
+warmupEmail().catch(console.error);
