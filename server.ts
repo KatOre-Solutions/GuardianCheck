@@ -595,9 +595,17 @@ app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, asy
     res.json({ success: true, message: "Verification email sent via Resend" });
   } catch (error: any) {
     console.error(`[VERIFICATION_ERROR] UID: ${uid}, Email: ${email}, Error: ${error.message}`);
-    // If it's a "user not found" error from Firebase Auth, or something else
-    res.status(500).json({ 
-      error: "Failed to send verification email", 
+    
+    let status = 500;
+    let userMessage = "Failed to send verification email";
+    
+    if (error.message?.includes("TOO_MANY_ATTEMPTS_TRY_LATER") || error.code === "auth/too-many-attempts") {
+      status = 429;
+      userMessage = "Too many verification requests. Please check your inbox or try again in a minute.";
+    }
+
+    res.status(status).json({ 
+      error: userMessage, 
       details: error.message,
       traceId: req.traceId 
     });
@@ -1393,48 +1401,47 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      // 6. Send Verification Email (Fire-and-forget but logged)
-      (async () => {
-        try {
-          // Get church name if missing
-          let churchName = inviteData.churchName;
-          if (!churchName) {
-            const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
-            if (churchDoc.exists) {
-              churchName = churchDoc.data().name;
-            }
+      // 6. Send Verification Email (Awaited to ensure CPU allocation on serverless container runtimes)
+      try {
+        // Get church name if missing
+        let churchName = inviteData.churchName;
+        if (!churchName) {
+          const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
+          req.firestoreOps.reads++;
+          if (churchDoc.exists) {
+            churchName = churchDoc.data().name;
           }
-
-          const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
-          const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-          
-          const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
-            url: `${process.env.APP_URL || baseUrl}/login`
-          });
-
-          await emailService.sendVerificationEmail(
-            inviteData.email, 
-            inviteData.firstName, 
-            churchName || "Your Church",
-            verificationLink
-          );
-          
-          logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
-        } catch (error: any) {
-          console.error("Async verification email failed for volunteer signup:", error.message);
-          // Log to general logs for visibility
-          await db.collection("logs").add({
-            level: "error",
-            message: `Verification email failed during invite acceptance: ${error.message}`,
-            context: { 
-                email: inviteData.email, 
-                churchId: inviteData.churchId,
-                traceId: req.traceId
-            },
-            timestamp: new Date().toISOString()
-          }).catch(console.error);
         }
-      })();
+
+        const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
+        const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+        
+        const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
+          url: `${process.env.APP_URL || baseUrl}/login`
+        });
+
+        await emailService.sendVerificationEmail(
+          inviteData.email, 
+          inviteData.firstName, 
+          churchName || "Your Church",
+          verificationLink
+        );
+        
+        logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
+      } catch (error: any) {
+        console.error("Verification email failed for volunteer signup:", error.message);
+        // Log to general logs for visibility
+        await db.collection("logs").add({
+          level: "error",
+          message: `Verification email failed during invite acceptance: ${error.message}`,
+          context: { 
+              email: inviteData.email, 
+              churchId: inviteData.churchId,
+              traceId: req.traceId
+          },
+          timestamp: new Date().toISOString()
+        }).catch(console.error);
+      }
 
       res.json({ 
         success: true, 
