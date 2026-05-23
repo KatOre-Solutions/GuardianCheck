@@ -584,7 +584,7 @@ app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, asy
     const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
 
     const actionCodeSettings = {
-      url: `${process.env.APP_URL || baseUrl}/login`
+      url: `${process.env.VITE_APP_URL || process.env.APP_URL || baseUrl}/login`
     };
     
     const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
@@ -1283,7 +1283,7 @@ async function startServer() {
       req.firestoreOps.writes++;
 
       // 6. Send Invitation Email
-      const inviteLink = `${process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
+      const inviteLink = `${process.env.VITE_APP_URL || process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
       
       try {
         await emailService.sendInvitation(email, {
@@ -1417,7 +1417,7 @@ async function startServer() {
         const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
         
         const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
-          url: `${process.env.APP_URL || baseUrl}/login`
+          url: `${process.env.VITE_APP_URL || process.env.APP_URL || baseUrl}/login`
         });
 
         await emailService.sendVerificationEmail(
@@ -1947,7 +1947,7 @@ async function startServer() {
 
       // 4. Send Verification Email (Async)
       const actionCodeSettings = {
-        url: `${process.env.APP_URL || req.get("origin")}/login`
+        url: `${process.env.VITE_APP_URL || process.env.APP_URL || req.get("origin") || "https://guardiancheck.co.za"}/login`
       };
       getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings)
         .then(link => emailService.sendVerificationEmail(email, adminFirstName, churchName, link))
