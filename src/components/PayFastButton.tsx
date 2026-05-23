@@ -64,7 +64,13 @@ export default function PayFastButton({
   // Configuration warning for developers
   const isMissingConfig = !merchantId || !merchantKey;
 
-  const appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+  let appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+
+  // Prevent dynamic authenticated preview environments from failing PayFast's external webhooks.
+  if (!import.meta.env.VITE_APP_URL || appUrl.includes("run.app") || appUrl.includes("localhost") || appUrl.includes("127.0.0.1")) {
+    appUrl = "https://guardiancheck.co.za";
+  }
+
   const returnUrl = `${appUrl}/admin?payment=success&plan=${plan}`;
   const cancelUrl = `${appUrl}/admin?payment=cancel`;
   const notifyUrl = import.meta.env.VITE_PAYFAST_NOTIFY_URL || `${appUrl}/api/payfast-itn`;
