@@ -2012,7 +2012,7 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
@@ -2046,9 +2046,11 @@ async function startServer() {
     }
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
+  }
 }
 
 startServer();

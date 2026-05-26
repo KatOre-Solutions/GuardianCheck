@@ -89,7 +89,7 @@ export default function PayFastButton({
   }
 
   return (
-    <form action={baseUrl} method="post" target="_blank" rel="noopener noreferrer">
+    <form action={baseUrl} method="post">
       <input type="hidden" name="merchant_id" value={merchantId} />
       <input type="hidden" name="merchant_key" value={merchantKey} />
       <input type="hidden" name="return_url" value={returnUrl} />
