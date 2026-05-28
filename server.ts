@@ -158,6 +158,14 @@ const initializeFirebase = () => {
     try {
       const dbId = firebaseConfig.firestoreDatabaseId || "(default)";
       db = getFirestore(adminApp, dbId);
+      
+      try {
+        db.settings({ ignoreUndefinedProperties: true });
+        console.log("Firestore configured with ignoreUndefinedProperties: true");
+      } catch (settingsError: any) {
+        console.warn("Failed to set ignoreUndefinedProperties on Firestore settings:", settingsError.message);
+      }
+
       console.log(`Firestore initialized with database ID: ${dbId}`);
       
       // Verify access immediately
@@ -1021,15 +1029,19 @@ async function startServer() {
         console.error("Failed to fetch guardian QR token:", err);
       }
 
-      emailService.sendNotification(churchId, childId, {
-        childName: `${child.firstName} ${child.lastName}`,
-        time: new Date().toISOString(),
-        roomName: room.name,
-        churchName,
-        serviceName: service.name,
-        eventType: 'check-in',
-        guardianQrToken
-      }).catch(err => console.error("Async check-in notification failed:", err.message));
+      try {
+        await emailService.sendNotification(churchId, childId, {
+          childName: `${child.firstName} ${child.lastName}`,
+          time: new Date().toISOString(),
+          roomName: room.name,
+          churchName,
+          serviceName: service.name,
+          eventType: 'check-in',
+          guardianQrToken
+        });
+      } catch (err: any) {
+        console.error("Check-in notification failed:", err.message);
+      }
 
       res.json({ success: true, checkinId });
     } catch (error: any) {
@@ -1081,22 +1093,26 @@ async function startServer() {
         return { ...cData, ...updateData };
       });
 
-      // Send Checkout Notification (Fire and forget)
+      // Send Checkout Notification (Await execution)
       if (checkinData) {
         // Use cached church data for the name
         const churchData = await getCachedDoc(req, "churches", churchId, churchId);
         const churchName = churchData?.name || "Church";
 
-        emailService.sendNotification(churchId, checkinData.childId, {
-          childName: checkinData.childName,
-          time: checkinData.checkOutTime,
-          roomName: checkinData.roomName,
-          churchName,
-          serviceName: checkinData.serviceName,
-          eventType: 'check-out',
-          volunteerName: checkinData.checkOutVolunteerName,
-          guardianName: checkinData.guardianName
-        }).catch(err => console.error("Async notification failed:", err));
+        try {
+          await emailService.sendNotification(churchId, checkinData.childId, {
+            childName: checkinData.childName,
+            time: checkinData.checkOutTime,
+            roomName: checkinData.roomName,
+            churchName,
+            serviceName: checkinData.serviceName,
+            eventType: 'check-out',
+            volunteerName: checkinData.checkOutVolunteerName,
+            guardianName: checkinData.guardianName
+          });
+        } catch (err: any) {
+          console.error("Checkout notification failed:", err.message);
+        }
       }
 
       res.json({ success: true });
@@ -1128,9 +1144,12 @@ async function startServer() {
       const churchDoc = await db.collection("churches").doc(churchId).get();
       const churchName = churchDoc.exists ? churchDoc.data().name : "Church";
 
-      // Trigger emergency alerts (Async)
-      emailService.sendEmergencyAlert(churchId, churchName)
-        .catch(err => console.error("Emergency alert failed:", err));
+      // Trigger emergency alerts (Await execution)
+      try {
+        await emailService.sendEmergencyAlert(churchId, churchName);
+      } catch (err: any) {
+        console.error("Emergency alert failed:", err.message);
+      }
 
       // Log audit
       await db.collection("audit_logs").add({
@@ -1345,57 +1364,58 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      // 6. Send Verification Email (Fire-and-forget but logged)
-      (async () => {
-        try {
-          // Get church name if missing
-          let churchName = inviteData.churchName;
-          if (!churchName) {
-            const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
-            if (churchDoc.exists) {
-              churchName = churchDoc.data().name;
-            }
+      // 6. Send Verification Email (Await system confirmation before returning response)
+      try {
+        // Get church name if missing
+        let churchName = inviteData.churchName;
+        if (!churchName) {
+          const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
+          if (churchDoc.exists) {
+            churchName = churchDoc.data().name;
           }
-
-          const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
-          const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-          
-          const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
-            url: `${process.env.APP_URL || baseUrl}/login`
-          });
-
-          await emailService.sendVerificationEmail(
-            inviteData.email, 
-            inviteData.firstName, 
-            churchName || "Your Church",
-            verificationLink
-          );
-          
-          logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
-        } catch (error: any) {
-          console.error("Async verification email failed for volunteer signup:", error.message);
-          // Log to general logs for visibility
-          await db.collection("logs").add({
-            level: "error",
-            message: `Verification email failed during invite acceptance: ${error.message}`,
-            context: { 
-                email: inviteData.email, 
-                churchId: inviteData.churchId,
-                traceId: req.traceId
-            },
-            timestamp: new Date().toISOString()
-          }).catch(console.error);
         }
-      })();
+
+        const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
+        const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+        
+        const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
+          url: `${process.env.APP_URL || baseUrl}/login`
+        });
+
+        await emailService.sendVerificationEmail(
+          inviteData.email, 
+          inviteData.firstName, 
+          churchName || "Your Church",
+          verificationLink
+        );
+        
+        logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
+      } catch (error: any) {
+        console.error("Verification email failed for volunteer signup:", error.message);
+        // Log to general logs for visibility
+        await db.collection("logs").add({
+          level: "error",
+          message: `Verification email failed during invite acceptance: ${error.message}`,
+          context: { 
+              email: inviteData.email, 
+              churchId: inviteData.churchId,
+              traceId: req.traceId
+          },
+          timestamp: new Date().toISOString()
+        }).catch(console.error);
+        
+        // Propagate the email system's failure to the client
+        throw new Error(`Failed to send verification email: ${error.message}`);
+      }
 
       res.json({ 
         success: true, 
-        message: "Account created successfully. A verification email is being sent.",
+        message: "Account created successfully. A verification email has been sent.",
         userId: userRecord.uid
       });
     } catch (error: any) {
       console.error("Accept invite failed:", error.message);
-      res.status(500).json({ error: "Internal server error" });
+      res.status(500).json({ error: error.message || "Internal server error" });
     }
   });
 
@@ -1483,7 +1503,7 @@ async function startServer() {
         req.firestoreOps.writes++;
       });
 
-      // 2. Send Move Notification (Async)
+      // 2. Send Move Notification (Await execution)
       const checkinDoc = await db.collection("checkins").doc(checkinId).get();
       req.firestoreOps.reads++;
       const cData = checkinDoc.data();
@@ -1491,14 +1511,18 @@ async function startServer() {
         const churchData = await getCachedDoc(req, "churches", churchId, churchId);
         const churchName = churchData?.name || "Church";
 
-        emailService.sendNotification(churchId, cData.childId, {
-          childName: cData.childName,
-          time: new Date().toISOString(),
-          roomName: room.name,
-          churchName,
-          serviceName: cData.serviceName,
-          eventType: 'room_move'
-        }).catch(err => console.error("Async room-move notification failed:", err.message));
+        try {
+          await emailService.sendNotification(churchId, cData.childId, {
+            childName: cData.childName,
+            time: new Date().toISOString(),
+            roomName: room.name,
+            churchName,
+            serviceName: cData.serviceName,
+            eventType: 'room_move'
+          });
+        } catch (err: any) {
+          console.error("Room-move notification failed:", err.message);
+        }
       }
 
       res.json({ success: true });
@@ -1513,7 +1537,7 @@ async function startServer() {
 
   // PayFast ITN Webhook
   app.post("/api/payfast-itn", async (req, res) => {
-    const data = req.body;
+    const data = req.body || {};
     const traceId = uuidv4().substring(0, 8);
     
     try {
@@ -1524,12 +1548,12 @@ async function startServer() {
         level: "info",
         message: `[ITN_${traceId}] ITN received [Sandbox: ${sandbox}]`,
         metadata: { 
-          churchId: data.custom_str1,
-          plan: data.custom_str2,
-          payment_status: data.payment_status,
-          m_payment_id: data.m_payment_id,
-          pf_payment_id: data.pf_payment_id,
-          amount_gross: data.amount_gross,
+          churchId: data.custom_str1 || null,
+          plan: data.custom_str2 || null,
+          payment_status: data.payment_status || null,
+          m_payment_id: data.m_payment_id || null,
+          pf_payment_id: data.pf_payment_id || null,
+          amount_gross: data.amount_gross || null,
           sandbox
         },
         source: "payfast_itn",
@@ -1559,9 +1583,9 @@ async function startServer() {
           level: "error",
           message: `[ITN_${traceId}] Signature mismatch`,
           metadata: { 
-            expected: signature, 
-            received: data.signature, 
-            signatureString,
+            expected: signature || null, 
+            received: data.signature || null, 
+            signatureString: signatureString || null,
             sandbox 
           },
           source: "payfast_itn",
@@ -1589,7 +1613,7 @@ async function startServer() {
         await db.collection("logs").add({
           level: "error",
           message: `[ITN_${traceId}] Ping-back validation failed`,
-          metadata: { response: validationResponse.data, sandbox },
+          metadata: { response: validationResponse.data || "No response data", sandbox },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });
@@ -1620,8 +1644,8 @@ async function startServer() {
           const now = new Date();
           const updateData: any = {
             updatedAt: now.toISOString(),
-            payfast_m_payment_id: data.m_payment_id,
-            payfast_pf_payment_id: data.pf_payment_id
+            payfast_m_payment_id: data.m_payment_id || null,
+            payfast_pf_payment_id: data.pf_payment_id || null
           };
 
           if (token) updateData["subscription.payfast_token"] = token;
@@ -1664,9 +1688,9 @@ async function startServer() {
           
           await db.collection("transactions").add({
             churchId,
-            amount,
+            amount: amount || 0,
             plan: plan || churchDoc.data()?.plan || "starter",
-            payfast_pf_payment_id: data.pf_payment_id,
+            payfast_pf_payment_id: data.pf_payment_id || null,
             status: "complete",
             token: token || null,
             m_payment_id: data.m_payment_id || null,
@@ -1676,7 +1700,11 @@ async function startServer() {
           await db.collection("logs").add({
             level: "info",
             message: `[ITN_${traceId}] Sync Successful: ${churchId}`,
-            metadata: { amount, plan, status: updateData.status },
+            metadata: { 
+              amount: amount || 0, 
+              plan: plan || null, 
+              status: updateData.status || null 
+            },
             source: "payfast_itn",
             timestamp: now.toISOString()
           });
@@ -1690,7 +1718,7 @@ async function startServer() {
         await db.collection("logs").add({
           level: "error",
           message: `[ITN_${traceId}] Critical Exception`,
-          metadata: { error: err.message, stack: err.stack },
+          metadata: { error: err.message || "Unknown error", stack: err.stack || null },
           source: "payfast_itn",
           timestamp: new Date().toISOString()
         });
@@ -1878,15 +1906,21 @@ async function startServer() {
       req.firestoreOps.writes++;
       console.log(`Created admin user document: ${uid}`);
 
-      res.json({ success: true, churchId: churchRef.id, slug: slug });
-
-      // 4. Send Verification Email (Async)
+      // 4. Send Verification Email (Await system confirmation before returning response)
       const actionCodeSettings = {
         url: `${process.env.APP_URL || req.get("origin")}/login`
       };
-      getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings)
-        .then(link => emailService.sendVerificationEmail(email, adminFirstName, churchName, link))
-        .catch(err => console.error(`[VERIFICATION_ERROR] Async registration verification failed: ${err.message}`));
+      
+      try {
+        const link = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
+        await emailService.sendVerificationEmail(email, adminFirstName, churchName, link);
+        console.log(`Verification email sent successfully for admin: ${email}`);
+      } catch (err: any) {
+        console.error(`[VERIFICATION_ERROR] Registration verification email failed: ${err.message}`);
+        throw new Error(`Failed to send verification email: ${err.message}`);
+      }
+
+      res.json({ success: true, churchId: churchRef.id, slug: slug });
 
     } catch (error: any) {
       console.error(`[REGISTRATION_ERROR] ${error.message} [Trace: ${req.traceId}]`);
