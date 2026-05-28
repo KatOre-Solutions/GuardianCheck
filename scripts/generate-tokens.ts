@@ -11,13 +11,7 @@ dotenv.config();
 // Use the web API key for your Firebase project
 const API_KEY = process.env.VITE_FIREBASE_API_KEY || "YOUR_WEB_API_KEY";
 
-if (!API_KEY || API_KEY === "YOUR_WEB_API_KEY") {
-  console.error("ERROR: VITE_FIREBASE_API_KEY is missing. Please set it in your .env or as an environment variable.");
-  process.exit(1);
-}
-
 function formatPrivateKey(key: string) {
-  if (!key) return "";
   let privateKey = key.trim();
   if (privateKey.startsWith('"') && privateKey.endsWith('"')) privateKey = privateKey.slice(1, -1);
   if (privateKey.startsWith("'") && privateKey.endsWith("'")) privateKey = privateKey.slice(1, -1);
@@ -36,25 +30,14 @@ function formatPrivateKey(key: string) {
 
 async function getTokens() {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (!fs.existsSync(configPath)) {
-     console.error(`ERROR: Could not find ${configPath}. Are you running the command from the root of the project?`);
-     process.exit(1);
-  }
-  
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
   
   if (getApps().length === 0) {
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-    if (!privateKey) {
-        console.error("ERROR: FIREBASE_PRIVATE_KEY is missing from .env.");
-        process.exit(1);
-    }
-
     initializeApp({
       credential: cert({
         projectId: firebaseConfig.projectId,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: formatPrivateKey(privateKey),
+        privateKey: formatPrivateKey(process.env.FIREBASE_PRIVATE_KEY!),
       }),
     });
   }

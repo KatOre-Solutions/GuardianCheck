@@ -52,12 +52,10 @@ async function preparePerfData() {
     return {
       uid: doc.id,
       email: data.email,
-      churchId: "perf-test-church",
+      churchId: data.churchId || "9HuAV8EUTom5SRvm5uQr",
       volunteerId: doc.id,
-      childId: "perf-test-child", 
-      roomId: "perf-test-room",
-      serviceId: "perf-test-service",
-      token: "PLACEHOLDER_TOKEN"
+      childId: "SAMPLE_CHILD_ID", // You can replace this with real IDs
+      token: "PLACEHOLDER_TOKEN" // Replace with actual ID token
     };
   });
 
@@ -66,11 +64,9 @@ async function preparePerfData() {
     testUsers.push({
       uid: `dummy-${testUsers.length}`,
       email: `dummy-${testUsers.length}@example.com`,
-      churchId: "perf-test-church",
+      churchId: "9HuAV8EUTom5SRvm5uQr",
       volunteerId: `dummy-vol-${testUsers.length}`,
-      childId: "perf-test-child",
-      roomId: "perf-test-room",
-      serviceId: "perf-test-service",
+      childId: "SAMPLE_CHILD_ID",
       token: "PLACEHOLDER_TOKEN"
     });
   }

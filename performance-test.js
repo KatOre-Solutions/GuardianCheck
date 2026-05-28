@@ -39,11 +39,11 @@ export default function () {
   };
 
   const contextData = {
-    churchId: user.churchId,
-    childId: user.childId,
-    roomId: user.roomId || 'perf-test-room',
-    serviceId: user.serviceId || 'perf-test-service',
-    volunteerId: user.volunteerId,
+    churchId: user.churchId || '9HuAV8EUTom5SRvm5uQr',
+    childId: user.childId || 'test-child-id',
+    roomId: 'test-room-id',
+    serviceId: 'test-service-id',
+    volunteerId: user.volunteerId || 'test-volunteer-id',
   };
 
   group('System Health', function () {

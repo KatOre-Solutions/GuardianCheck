@@ -64,9 +64,10 @@ export default function PayFastButton({
   // Configuration warning for developers
   const isMissingConfig = !merchantId || !merchantKey;
 
-  const appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
-  const returnUrl = `${window.location.origin}/admin?payment=success&plan=${plan}`;
-  const cancelUrl = `${window.location.origin}/admin?payment=cancel`;
+  const rawAppUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+  const appUrl = rawAppUrl.endsWith("/") ? rawAppUrl.slice(0, -1) : rawAppUrl;
+  const returnUrl = `${appUrl}/admin?payment=success&plan=${plan}`;
+  const cancelUrl = `${appUrl}/admin?payment=cancel`;
   const notifyUrl = import.meta.env.VITE_PAYFAST_NOTIFY_URL || `${appUrl}/api/payfast-itn`;
 
   if (isMissingConfig) {
