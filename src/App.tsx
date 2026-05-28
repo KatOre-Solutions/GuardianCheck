@@ -167,12 +167,20 @@ function Navigation() {
                 </button>
               </>
             ) : (
-              <Link
-                to={church ? `${churchPrefix}/login` : "/login"}
-                className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
-              >
-                Login
-              </Link>
+              <div className="flex items-center space-x-3">
+                <Link
+                  to={church ? `${churchPrefix}/login?mode=signup` : "/login?mode=signup"}
+                  className="border border-gray-300 dark:border-gray-700 text-gray-750 dark:text-gray-250 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Sign Up
+                </Link>
+                <Link
+                  to={church ? `${churchPrefix}/login` : "/login"}
+                  className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+                >
+                  Login
+                </Link>
+              </div>
             )}
           </div>
         </div>

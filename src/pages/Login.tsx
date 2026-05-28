@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
@@ -21,7 +21,14 @@ type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
 
 export default function Login() {
   const { church } = useTenant();
-  const [mode, setMode] = useState<AuthMode>("signin");
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState<AuthMode>(() => {
+    const q = searchParams.get("mode");
+    if (q === "signup" || q === "signin" || q === "forgot" || q === "verify" || q === "must-change") {
+      return q as AuthMode;
+    }
+    return "signin";
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -39,6 +46,13 @@ export default function Login() {
   useEffect(() => {
     namesRef.current = { firstName, lastName };
   }, [firstName, lastName]);
+
+  useEffect(() => {
+    const q = searchParams.get("mode");
+    if (q === "signup" || q === "signin" || q === "forgot" || q === "verify" || q === "must-change") {
+      setMode(q as AuthMode);
+    }
+  }, [searchParams]);
 
   const performAuthCheck = React.useCallback(async (user: any, manual = false, retryCount = 0): Promise<void> => {
     try {
