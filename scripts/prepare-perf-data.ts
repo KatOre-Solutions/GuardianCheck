@@ -41,9 +41,10 @@ async function preparePerfData() {
   
   const db = getFirestore(firebaseConfig.firestoreDatabaseId);
   
-  console.log("Fetching performance test users from Firestore...");
+  console.log("Fetching volunteers for performance test pool...");
   const snapshot = await db.collection("users")
-    .where("churchId", "==", "perf-test-church")
+    .where("role", "in", ["volunteer", "admin"])
+    .limit(50)
     .get();
 
   const testUsers = snapshot.docs.map(doc => {
@@ -60,8 +61,18 @@ async function preparePerfData() {
     };
   });
 
-  if (testUsers.length < 150) {
-    console.warn(`Only found ${testUsers.length} test users. Performance results may be limited.`);
+  // If we don't have enough users, fill with dummies
+  while (testUsers.length < 50) {
+    testUsers.push({
+      uid: `dummy-${testUsers.length}`,
+      email: `dummy-${testUsers.length}@example.com`,
+      churchId: "perf-test-church",
+      volunteerId: `dummy-vol-${testUsers.length}`,
+      childId: "perf-test-child",
+      roomId: "perf-test-room",
+      serviceId: "perf-test-service",
+      token: "PLACEHOLDER_TOKEN"
+    });
   }
 
   const outputPath = path.join(process.cwd(), "test-users.json");

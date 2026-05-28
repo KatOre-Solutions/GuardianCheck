@@ -80,16 +80,10 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row gap-4">
               <Link
                 to="/register-church"
-                className="bg-primary text-white px-8 py-4 rounded-xl font-semibold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none flex items-center justify-center space-x-2 animate-none"
+                className="bg-primary text-white px-8 py-4 rounded-xl font-semibold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none flex items-center justify-center space-x-2"
               >
-                <span>Start Free Trial</span>
+                <span>Start 14-Day Free Trial</span>
                 <ArrowRight className="h-5 w-5" />
-              </Link>
-              <Link
-                to="/login?mode=signup"
-                className="bg-purple-50 dark:bg-purple-900/10 text-purple-600 dark:text-purple-400 border border-purple-100 dark:border-purple-900/30 px-8 py-4 rounded-xl font-semibold hover:bg-purple-100 dark:hover:bg-purple-900/20 transition-all flex items-center justify-center"
-              >
-                Join us as Parent
               </Link>
               <Link
                 to="/login"

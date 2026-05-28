@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useNavigate, useLocation, useMatch } from "react-router-dom";
-import { where, limit, query, collection, getDocs, doc, getDoc } from "firebase/firestore";
+import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 
@@ -35,7 +35,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const isReserved = !!urlChurchSlug && reservedKeywords.includes(urlChurchSlug);
   
   // Use slug from URL if it's not a reserved keyword, otherwise fallback to user's church slug
-  const finalSlug = isReserved ? userData?.churchSlug : (urlChurchSlug || userData?.churchSlug);
+  const churchSlug = isReserved ? userData?.churchSlug : (urlChurchSlug || userData?.churchSlug);
   
   const [church, setChurch] = useState<Church | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,7 +48,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       // If we're still loading auth and don't have a valid URL slug, wait
       if (authLoading && (!urlChurchSlug || isReserved)) return;
 
-      if (!finalSlug && !userData?.churchId) {
+      if (!churchSlug) {
         setChurch(null);
         setLoading(false);
         return;
@@ -57,35 +57,19 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       setError(null);
       try {
-        let churchData: Church | null = null;
+        const q = query(
+          collection(db, "churches"),
+          where("slug", "==", churchSlug),
+          limit(1)
+        );
+        const querySnapshot = await getDocs(q);
         
-        if (finalSlug) {
-          const q = query(
-            collection(db, "churches"),
-            where("slug", "==", finalSlug),
-            limit(1)
-          );
-          const querySnapshot = await getDocs(q);
-          if (!querySnapshot.empty) {
-            const document = querySnapshot.docs[0];
-            churchData = { id: document.id, ...document.data() } as Church;
-          }
-        } else if (userData?.churchId) {
-          // Fallback to fetch by ID if slug is missing from URL and user profile
-          const docSnap = await getDoc(doc(db, "churches", userData.churchId));
-          if (docSnap.exists()) {
-            churchData = { id: docSnap.id, ...docSnap.data() } as Church;
-          }
-        }
-        
-        if (!churchData) {
-          // If we are on a reserved route and still have no church, it's fine (global app state)
-          // Otherwise, it's an error
-          if (!isReserved) {
-            setError("Church not found");
-          }
+        if (querySnapshot.empty) {
+          setError("Church not found");
           setChurch(null);
         } else {
+          const doc = querySnapshot.docs[0];
+          const churchData = { id: doc.id, ...doc.data() } as Church;
           setChurch(churchData);
           
           // Apply branding if available
@@ -110,7 +94,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     }
 
     fetchChurch();
-  }, [finalSlug, authLoading, userData?.churchId, urlChurchSlug, isReserved]);
+  }, [churchSlug, authLoading]);
 
   return (
     <TenantContext.Provider value={{ church, loading, error }}>

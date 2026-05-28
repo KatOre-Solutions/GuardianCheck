@@ -72,8 +72,8 @@ async function getTokens() {
   for (let i = 0; i < users.length; i++) {
     const user = users[i];
     try {
-      // 1. Create a custom token for the UID with email claim
-      const customToken = await getAuth().createCustomToken(user.uid, { email: user.email });
+      // 1. Create a custom token for the UID
+      const customToken = await getAuth().createCustomToken(user.uid);
 
       // 2. Exchange custom token for an ID token via REST API
       const response = await axios.post(

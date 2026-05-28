@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
@@ -21,18 +21,7 @@ type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
 
 export default function Login() {
   const { church } = useTenant();
-  const [searchParams] = useSearchParams();
-  const initialMode = searchParams.get("mode") === "signup" ? "signup" : "signin";
-  const [mode, setMode] = useState<AuthMode>(initialMode as AuthMode);
-
-  useEffect(() => {
-    const qMode = searchParams.get("mode");
-    if (qMode === "signup") {
-      setMode("signup");
-    } else if (qMode === "signin") {
-      setMode("signin");
-    }
-  }, [searchParams]);
+  const [mode, setMode] = useState<AuthMode>("signin");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");

@@ -200,7 +200,7 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
         navigate("/rejected");
       } else if (church && userData?.churchId !== church.id && !roles.includes("master_admin")) {
         // Cross-tenant access prevention
-        const userChurchSlug = userData?.churchSlug || church?.slug || "dashboard";
+        const userChurchSlug = userData?.churchSlug || "dashboard";
         navigate(`/${userChurchSlug}`);
       } else if (roles.length > 0 && !allowedRoles.some(r => roles.includes(r as any))) {
         const churchPrefix = church ? `/${church.slug}` : "";

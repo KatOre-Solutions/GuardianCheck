@@ -8,31 +8,11 @@ export type UserStatus = "incomplete_profile" | "pending" | "approved" | "reject
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
-  const [userData, setUserData] = useState<any>(() => {
-    if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('auth_userData');
-      return cached ? JSON.parse(cached) : null;
-    }
-    return null;
-  });
-  const [roles, setRoles] = useState<UserRole[]>(() => {
-    if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('auth_roles');
-      return cached ? JSON.parse(cached) : [];
-    }
-    return [];
-  });
-  const [status, setStatus] = useState<UserStatus>(() => {
-    if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('auth_status');
-      return cached ? JSON.parse(cached) as UserStatus : null;
-    }
-    return null;
-  });
+  const [userData, setUserData] = useState<any>(null);
+  const [roles, setRoles] = useState<UserRole[]>([]);
+  const [status, setStatus] = useState<UserStatus>(null);
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
-      const cachedPref = localStorage.getItem('darkModePreference');
-      if (cachedPref !== null) return cachedPref === 'true';
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
     return false;
@@ -71,22 +51,18 @@ export function useAuth() {
         unsubscribeDoc = subscribeToDocument("users", user.uid, (userDoc) => {
           if (userDoc) {
             setUserData(userDoc);
-            localStorage.setItem('auth_userData', JSON.stringify(userDoc));
             
             // Handle both legacy single role and new roles array
             const userRoles = userDoc.roles || (userDoc.role ? [userDoc.role] : []);
             setRoles(userRoles as UserRole[]);
-            localStorage.setItem('auth_roles', JSON.stringify(userRoles));
             
             setStatus(userDoc.status as UserStatus);
-            localStorage.setItem('auth_status', JSON.stringify(userDoc.status));
             
             // If user has a preference, use it. Otherwise, use system preference.
             const userPreference = userDoc.darkMode;
             const finalDarkMode = userPreference !== undefined ? userPreference : window.matchMedia('(prefers-color-scheme: dark)').matches;
             
             setDarkMode(finalDarkMode);
-            localStorage.setItem('darkModePreference', String(finalDarkMode));
             if (finalDarkMode) {
               document.documentElement.classList.add('dark');
             } else {
@@ -96,9 +72,6 @@ export function useAuth() {
             setUserData(null);
             setRoles([]);
             setStatus(null);
-            localStorage.removeItem('auth_userData');
-            localStorage.removeItem('auth_roles');
-            localStorage.removeItem('auth_status');
             // Default to system preference if no document
             const systemPref = window.matchMedia('(prefers-color-scheme: dark)').matches;
             setDarkMode(systemPref);
@@ -118,9 +91,6 @@ export function useAuth() {
         setRoles([]);
         setStatus(null);
         setUserData(null);
-        localStorage.removeItem('auth_userData');
-        localStorage.removeItem('auth_roles');
-        localStorage.removeItem('auth_status');
         // Follow system preference when logged out
         const systemPref = window.matchMedia('(prefers-color-scheme: dark)').matches;
         setDarkMode(systemPref);

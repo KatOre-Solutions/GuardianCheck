@@ -5,19 +5,16 @@ import { motion, AnimatePresence } from "motion/react";
 export default function NetworkStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [showRestored, setShowRestored] = useState(false);
-  const [isDismissed, setIsDismissed] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       setShowRestored(true);
-      setIsDismissed(false);
       setTimeout(() => setShowRestored(false), 5000);
     };
     const handleOffline = () => {
       setIsOnline(false);
       setShowRestored(false);
-      setIsDismissed(false);
     };
 
     window.addEventListener("online", handleOnline);
@@ -32,12 +29,12 @@ export default function NetworkStatus() {
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] w-full max-w-md px-4 pointer-events-none">
       <AnimatePresence>
-        {!isOnline && !isDismissed && (
+        {!isOnline && (
           <motion.div
             initial={{ opacity: 0, y: 50, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 50, scale: 0.9 }}
-            className="bg-gray-900 text-white p-4 rounded-2xl shadow-2xl flex items-center space-x-4 border border-gray-800 pointer-events-auto relative"
+            className="bg-gray-900 text-white p-4 rounded-2xl shadow-2xl flex items-center space-x-4 border border-gray-800 pointer-events-auto"
           >
             <div className="h-10 w-10 bg-amber-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
               <WifiOff className="h-5 w-5 text-amber-500" />
@@ -46,13 +43,6 @@ export default function NetworkStatus() {
               <p className="font-bold text-sm">You are offline</p>
               <p className="text-xs text-gray-400">Your actions will sync when connection is restored.</p>
             </div>
-            <button 
-              onClick={() => setIsDismissed(true)}
-              className="p-1 hover:bg-white/10 rounded-lg transition-colors flex-shrink-0"
-              aria-label="Dismiss offline notification"
-            >
-              <X className="h-4 w-4 text-gray-400" />
-            </button>
           </motion.div>
         )}
 

@@ -239,16 +239,9 @@ const keyGenerator = (req: any) => {
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200, // Increased to 200 to reduce accidental 429s for active users
+  max: 100,
   keyGenerator,
   message: { error: "Too many requests, please try again later." }
-});
-
-const dashboardLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500, // Higher limit for polling-heavy routes (health, transactions)
-  keyGenerator,
-  message: { error: "Dashboard polling limit reached, please refresh in a few minutes." }
 });
 
 const peakLimiter = rateLimit({
@@ -528,7 +521,7 @@ const PLAN_PRICES: Record<string, number> = {
 };
 
 // Transactions List Endpoint
-app.get("/api/transactions", dashboardLimiter, authenticateToken, async (req, res) => {
+app.get("/api/transactions", authenticateToken, async (req, res) => {
   const churchId = req.user.churchId;
   if (!churchId) return res.status(403).json({ error: "Unauthorized" });
 
@@ -557,7 +550,7 @@ app.get("/api/transactions", dashboardLimiter, authenticateToken, async (req, re
   }
 });
 
-app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, async (req, res) => {
+app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
   const { uid, email } = req.user;
   if (!email) return res.status(400).json({ error: "Email not found" });
 
@@ -584,7 +577,7 @@ app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, asy
     const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
 
     const actionCodeSettings = {
-      url: `${process.env.VITE_APP_URL || process.env.APP_URL || baseUrl}/login`
+      url: `${process.env.APP_URL || baseUrl}/login`
     };
     
     const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
@@ -594,21 +587,8 @@ app.post("/api/auth/send-verification", sensitiveLimiter, authenticateToken, asy
 
     res.json({ success: true, message: "Verification email sent via Resend" });
   } catch (error: any) {
-    console.error(`[VERIFICATION_ERROR] UID: ${uid}, Email: ${email}, Error: ${error.message}`);
-    
-    let status = 500;
-    let userMessage = "Failed to send verification email";
-    
-    if (error.message?.includes("TOO_MANY_ATTEMPTS_TRY_LATER") || error.code === "auth/too-many-attempts") {
-      status = 429;
-      userMessage = "Too many verification requests. Please check your inbox or try again in a minute.";
-    }
-
-    res.status(status).json({ 
-      error: userMessage, 
-      details: error.message,
-      traceId: req.traceId 
-    });
+    console.error(`[VERIFICATION_ERROR] ${error.message}`);
+    res.status(500).json({ error: "Failed to send verification email" });
   }
 });
 
@@ -710,7 +690,7 @@ async function startServer() {
     res.json({ version: CURRENT_POLICY_VERSION });
   });
 
-  app.get("/api/health", dashboardLimiter, async (req, res) => {
+  app.get("/api/health", async (req, res) => {
     const status: any = {
       status: "healthy",
       timestamp: new Date().toISOString(),
@@ -838,23 +818,12 @@ async function startServer() {
   app.post("/api/children", authenticateToken, validate(RegisterChildSchema), async (req, res) => {
     const childData = req.body;
     const { uid, churchId, firstName, lastName } = req.user;
-    const idempotencyKey = req.headers["x-idempotency-key"] as string;
 
     if (!churchId) {
       return res.status(400).json({ error: "Church ID not found in profile. Please select a church first." });
     }
 
     try {
-      // 0. Handle Idempotency
-      if (idempotencyKey) {
-        const existingOp = await db.collection("idempotency_keys").doc(idempotencyKey).get();
-        if (existingOp.exists) {
-          const data = existingOp.data();
-          logger.info(`[IDEMPOTENCY] Key ${idempotencyKey} already processed. Returning cached result.`);
-          return res.status(200).json(data.response);
-        }
-      }
-
       // 1. Get Church Data for Plan
       const churchData = await getCachedDoc(req, "churches", churchId, churchId);
       if (!churchData) {
@@ -906,22 +875,11 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      const successResponse = { 
+      res.status(201).json({ 
         success: true, 
         childId, 
         message: "Child registered successfully." 
-      };
-
-      // Store response for idempotency
-      if (idempotencyKey) {
-        await db.collection("idempotency_keys").doc(idempotencyKey).set({
-          response: successResponse,
-          uid,
-          createdAt: new Date().toISOString()
-        });
-      }
-
-      res.status(201).json(successResponse);
+      });
 
     } catch (error: any) {
       console.error(`[CHILD_REG_ERROR] ${error.message} [Trace: ${req.traceId}]`);
@@ -1283,7 +1241,7 @@ async function startServer() {
       req.firestoreOps.writes++;
 
       // 6. Send Invitation Email
-      const inviteLink = `${process.env.VITE_APP_URL || process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
+      const inviteLink = `${process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
       
       try {
         await emailService.sendInvitation(email, {
@@ -1339,27 +1297,13 @@ async function startServer() {
         return res.status(400).json({ error: "This invitation has expired." });
       }
 
-      // 3. Create or Fetch/Update Auth User
-      let userRecord;
-      try {
-        const existingUser = await getAuth(adminApp).getUserByEmail(inviteData.email);
-        // If they already exist in Auth, update password and displayName to complete setup
-        userRecord = await getAuth(adminApp).updateUser(existingUser.uid, {
-          password: password,
-          displayName: `${inviteData.firstName} ${inviteData.lastName}`
-        });
-      } catch (authError: any) {
-        if (authError.code === "auth/user-not-found") {
-          userRecord = await getAuth(adminApp).createUser({
-            email: inviteData.email,
-            password: password,
-            displayName: `${inviteData.firstName} ${inviteData.lastName}`,
-            emailVerified: false
-          });
-        } else {
-          throw authError;
-        }
-      }
+      // 3. Create Auth User
+      const userRecord = await getAuth().createUser({
+        email: inviteData.email,
+        password: password,
+        displayName: `${inviteData.firstName} ${inviteData.lastName}`,
+        emailVerified: false
+      });
 
       // 4. Atomic Transaction: Create User Doc and Update Invite
       await db.runTransaction(async (transaction) => {
@@ -1401,47 +1345,48 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      // 6. Send Verification Email (Awaited to ensure CPU allocation on serverless container runtimes)
-      try {
-        // Get church name if missing
-        let churchName = inviteData.churchName;
-        if (!churchName) {
-          const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
-          req.firestoreOps.reads++;
-          if (churchDoc.exists) {
-            churchName = churchDoc.data().name;
+      // 6. Send Verification Email (Fire-and-forget but logged)
+      (async () => {
+        try {
+          // Get church name if missing
+          let churchName = inviteData.churchName;
+          if (!churchName) {
+            const churchDoc = await db.collection("churches").doc(inviteData.churchId).get();
+            if (churchDoc.exists) {
+              churchName = churchDoc.data().name;
+            }
           }
+
+          const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
+          const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+          
+          const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
+            url: `${process.env.APP_URL || baseUrl}/login`
+          });
+
+          await emailService.sendVerificationEmail(
+            inviteData.email, 
+            inviteData.firstName, 
+            churchName || "Your Church",
+            verificationLink
+          );
+          
+          logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
+        } catch (error: any) {
+          console.error("Async verification email failed for volunteer signup:", error.message);
+          // Log to general logs for visibility
+          await db.collection("logs").add({
+            level: "error",
+            message: `Verification email failed during invite acceptance: ${error.message}`,
+            context: { 
+                email: inviteData.email, 
+                churchId: inviteData.churchId,
+                traceId: req.traceId
+            },
+            timestamp: new Date().toISOString()
+          }).catch(console.error);
         }
-
-        const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
-        const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-        
-        const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
-          url: `${process.env.VITE_APP_URL || process.env.APP_URL || baseUrl}/login`
-        });
-
-        await emailService.sendVerificationEmail(
-          inviteData.email, 
-          inviteData.firstName, 
-          churchName || "Your Church",
-          verificationLink
-        );
-        
-        logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
-      } catch (error: any) {
-        console.error("Verification email failed for volunteer signup:", error.message);
-        // Log to general logs for visibility
-        await db.collection("logs").add({
-          level: "error",
-          message: `Verification email failed during invite acceptance: ${error.message}`,
-          context: { 
-              email: inviteData.email, 
-              churchId: inviteData.churchId,
-              traceId: req.traceId
-          },
-          timestamp: new Date().toISOString()
-        }).catch(console.error);
-      }
+      })();
 
       res.json({ 
         success: true, 
@@ -1449,18 +1394,8 @@ async function startServer() {
         userId: userRecord.uid
       });
     } catch (error: any) {
-      console.error("Accept invite failed:", error.message || error);
-      const errCode = error.code || "";
-      if (errCode.startsWith("auth/")) {
-        let msg = error.message;
-        if (errCode === "auth/invalid-password" || errCode === "auth/weak-password") {
-          msg = "Password must be at least 6 characters long.";
-        } else if (errCode === "auth/email-already-in-use") {
-          msg = "This email is already registered.";
-        }
-        return res.status(400).json({ error: msg });
-      }
-      res.status(500).json({ error: error.message || "Internal server error" });
+      console.error("Accept invite failed:", error.message);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 
@@ -1947,7 +1882,7 @@ async function startServer() {
 
       // 4. Send Verification Email (Async)
       const actionCodeSettings = {
-        url: `${process.env.VITE_APP_URL || process.env.APP_URL || req.get("origin") || "https://guardiancheck.co.za"}/login`
+        url: `${process.env.APP_URL || req.get("origin")}/login`
       };
       getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings)
         .then(link => emailService.sendVerificationEmail(email, adminFirstName, churchName, link))
@@ -2012,7 +1947,7 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else if (!process.env.VERCEL) {
+  } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
@@ -2046,11 +1981,9 @@ async function startServer() {
     }
   });
 
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  }
 }
 
 startServer();

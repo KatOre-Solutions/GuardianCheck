@@ -13,49 +13,24 @@ const users = new SharedArray('test users', function () {
 const checkinTrend = new Trend('api_checkin_duration');
 const checkoutTrend = new Trend('api_checkout_duration');
 const emailTriggerCounter = new Counter('emails_triggered');
-const rateLimitCounter = new Counter('rate_limit_hits');
-const serverErrorCounter = new Counter('server_errors');
 
 export const options = {
   stages: [
-    { duration: '1m', target: 150 }, 
-    { duration: '3m', target: 150 }, 
+    { duration: '1m', target: 50 }, 
+    { duration: '3m', target: 50 }, 
     { duration: '1m', target: 0 },  
   ],
   thresholds: {
     'http_req_duration': ['p(95)<2000'],
-    // We expect some 429s, so we'll only fail if actual server errors (5xx) exceed 1%
-    // or if unexpected 4xx (not 429, 409, 403) appear.
-    'server_errors': ['count<10'], 
+    'http_req_failed': ['rate<0.01'],    
   },
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
 
-/**
- * Enhanced Check Utility
- * Checks for expected statuses and logs details on unexpected failures.
- */
-function safeCheck(res, name, expectedStatuses = [200]) {
-  const isExpected = expectedStatuses.includes(res.status);
-  
-  if (!isExpected) {
-    if (res.status === 429) {
-      rateLimitCounter.add(1);
-    } else if (res.status >= 500) {
-      serverErrorCounter.add(1);
-      console.error(`[CRITICAL] ${name} failed with ${res.status}: ${res.body}`);
-    } else {
-      console.warn(`[UNEXPECTED] ${name} returned ${res.status}: ${res.body}`);
-    }
-  }
-
-  return check(res, {
-    [`${name} (Status: ${res.status})`]: (r) => expectedStatuses.includes(r.status),
-  });
-}
-
 export default function () {
+  // 2. Pick a user from the pool based on the VU ID
+  // If we have 50 VUs, VU #1 gets users[0], VU #50 gets users[49]
   const user = users[(__VU - 1) % users.length];
 
   const headers = {
@@ -73,8 +48,9 @@ export default function () {
 
   group('System Health', function () {
     const res = http.get(`${BASE_URL}/api/health`);
-    // Health check can also be limited under heavy load
-    safeCheck(res, 'Health Check', [200, 429]);
+    check(res, {
+      'health status is 200': (r) => r.status === 200,
+    });
   });
 
   sleep(1);
@@ -91,23 +67,27 @@ export default function () {
 
     const res = http.post(`${BASE_URL}/api/check-in`, payload, { headers: headers });
     
-    const success = safeCheck(res, 'Check-In Request', [200, 409, 429]);
+    const success = check(res, {
+      'check-in status is valid': (r) => [200, 409, 429].includes(r.status),
+    });
 
     if (res.status === 429) {
-      sleep(10); 
+      sleep(10); // Back off during the rush
     }
 
     if (success && res.status === 200) {
       checkinTrend.add(res.timings.duration);
-      emailTriggerCounter.add(1); 
+      emailTriggerCounter.add(1); // Check-in sends success email to parents
       
       const resJson = res.json();
       const checkinId = resJson.checkinId;
 
       if (checkinId) {
+        // --- 3. Verification/Email Tasks ---
+        // Simulating the user triggering a verification email during the wait
         group('Email & Identity Tasks', function () {
-            const vRes = http.post(`${BASE_URL}/api/auth/send-verification`, JSON.stringify({ email: user.email }), { headers: headers });
-            safeCheck(vRes, 'Trigger Verification', [200, 429, 400]); // 400 might happen if already verified
+            const vRes = http.post(`${BASE_URL}/api/auth/send-verification`, {}, { headers: headers });
+            check(vRes, { 'verification triggered': (r) => [200, 429].includes(r.status) });
             if (vRes.status === 200) emailTriggerCounter.add(1);
         });
 
@@ -122,14 +102,15 @@ export default function () {
 
           const outRes = http.post(`${BASE_URL}/api/check-out`, checkoutPayload, { headers: headers });
           
-          // 400 is expected if the child was already checked out in a concurrent/previous run
-          safeCheck(outRes, 'Check-Out Request', [200, 429, 400]);
+          check(outRes, {
+            'check-out status is valid': (r) => [200, 429].includes(r.status),
+          });
 
           if (outRes.status === 429) {
             sleep(10);
           } else if (outRes.status === 200) {
             checkoutTrend.add(outRes.timings.duration);
-            emailTriggerCounter.add(1); 
+            emailTriggerCounter.add(1); // Check-out also sends confirmation email
           }
         });
       }
@@ -138,10 +119,10 @@ export default function () {
 
   group('Discovery & Admin', function () {
     const res = http.get(`${BASE_URL}/api/health`);
-    safeCheck(res, 'API Health Repeat', [200, 429]);
+    check(res, { 'api healthy': (r) => r.status === 200 });
 
     const transRes = http.get(`${BASE_URL}/api/transactions`, { headers: headers });
-    safeCheck(transRes, 'Dashboard Access', [200, 403, 429]);
+    check(transRes, { 'dashboard loaded': (r) => [200, 403, 429].includes(r.status) });
   });
 
   sleep(Math.random() * 3 + 1);

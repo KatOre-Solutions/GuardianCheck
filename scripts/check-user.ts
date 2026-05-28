@@ -41,17 +41,14 @@ async function checkUser() {
   }
   
   const db = getFirestore(firebaseConfig.firestoreDatabaseId);
-  const uid = "kBVohDvHzCPzAHZvI0l8TzS6ksw2";
-  const userRef = db.collection("users").doc(uid);
+  const uid = "snJ3JJXtRzbQXZ2FqXT403pEAwc2";
+  const userSnap = await db.collection("users").doc(uid).get();
   
-  await userRef.update({
-    churchId: "9HuAV8EUTom5SRvm5uQr",
-    churchSlug: "people-church",
-    role: "admin",
-    roles: ["admin", "volunteer"]
-  });
-  
-  console.log("Successfully updated user fitopoc634@gixpos.com to be admin of people-church.");
+  if (userSnap.exists) {
+    console.log("User Data:", JSON.stringify(userSnap.data(), null, 2));
+  } else {
+    console.log("User document not found for UID:", uid);
+  }
 }
 
 checkUser().catch(console.error);

@@ -64,15 +64,9 @@ export default function PayFastButton({
   // Configuration warning for developers
   const isMissingConfig = !merchantId || !merchantKey;
 
-  let appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
-
-  // Prevent dynamic authenticated preview environments from failing PayFast's external webhooks.
-  if (!import.meta.env.VITE_APP_URL || appUrl.includes("run.app") || appUrl.includes("localhost") || appUrl.includes("127.0.0.1")) {
-    appUrl = "https://guardiancheck.co.za";
-  }
-
-  const returnUrl = `${appUrl}/admin?payment=success&plan=${plan}`;
-  const cancelUrl = `${appUrl}/admin?payment=cancel`;
+  const appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+  const returnUrl = `${window.location.origin}/admin?payment=success&plan=${plan}`;
+  const cancelUrl = `${window.location.origin}/admin?payment=cancel`;
   const notifyUrl = import.meta.env.VITE_PAYFAST_NOTIFY_URL || `${appUrl}/api/payfast-itn`;
 
   if (isMissingConfig) {
@@ -89,7 +83,7 @@ export default function PayFastButton({
   }
 
   return (
-    <form action={baseUrl} method="post">
+    <form action={baseUrl} method="post" target="_blank" rel="noopener noreferrer">
       <input type="hidden" name="merchant_id" value={merchantId} />
       <input type="hidden" name="merchant_key" value={merchantKey} />
       <input type="hidden" name="return_url" value={returnUrl} />

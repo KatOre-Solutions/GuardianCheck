@@ -72,7 +72,7 @@ async function seedPerfData() {
     churchId: "perf-test-church",
     name: "Sunday Morning Service",
     startTime: "09:00",
-    status: "active",
+    isActive: true,
     days: ["Sunday"],
     createdAt: new Date().toISOString()
   });
