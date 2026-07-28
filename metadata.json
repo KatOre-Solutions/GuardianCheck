@@ -1,5 +1,5 @@
 {
-  "name": "GuardianCheckIn",
+  "name": "GuardianCheck",
   "description": "A secure, full-stack SaaS platform for churches to manage child check-in and pickup with QR codes, real-time tracking, and offline resilience.",
   "requestFramePermissions": ["camera"]
 }
