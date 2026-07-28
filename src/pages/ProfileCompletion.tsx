@@ -7,6 +7,7 @@ import { useTenant } from "../contexts/TenantContext";
 import { getChurches, updateDocument, createMembershipRequest } from "../lib/firestore";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
+import { Seo } from "../components/Seo";
 
 export default function ProfileCompletion() {
   const { user, userData, roles, status, loading: authLoading } = useAuth();
@@ -167,6 +168,7 @@ export default function ProfileCompletion() {
 
   return (
     <div className="max-w-md mx-auto">
+      <Seo title="Complete your profile" noindex />
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

@@ -1,0 +1,94 @@
+import { useEffect } from "react";
+
+/**
+ * Per-route document head management.
+ *
+ * ## Why this is imperative rather than declarative
+ *
+ * React 19 hoists `<title>` and `<meta>` rendered anywhere in the tree into
+ * `<head>`, which looks like it removes the need for a head library. It does
+ * not work here, because React appends its tags and never reconciles them with
+ * the static tags already in `index.html`. Measured in a real build:
+ *
+ *   - two `<title>` elements, and per the HTML spec `document.title` resolves
+ *     to the *first* one — so React's title is silently ignored;
+ *   - two `<meta name="description">`, leaving crawlers to pick between them.
+ *
+ * Deleting the static tags from `index.html` would fix that, but they are the
+ * only head content a non-JS consumer ever sees, and #17 requires keeping them
+ * as a fallback. So this component upserts the existing tags instead: exactly
+ * one of each stays in the document, the static values act as the no-JS
+ * default, and routes override them on mount. This is the same strategy
+ * `react-helmet-async` uses, minus a dependency that has not shipped since 2023.
+ *
+ * ## Known ceiling
+ *
+ * This is a client-rendered SPA, so these values only exist once React runs.
+ * Googlebot executes JS and will see them; most social unfurlers do not and
+ * keep reading the static `index.html` tags. Closing that gap needs SSR/SSG,
+ * which is Epic 6 (#47). If a rendering strategy lands there, revisit this
+ * component — the declarative React 19 form becomes correct once the head is
+ * server-rendered per route.
+ *
+ * ## Contract
+ *
+ * Every route should render exactly one `<Seo>`. Tags are shared mutable state,
+ * so a route that renders none inherits whatever the previous route set.
+ * Authenticated routes get theirs from `ProtectedRoute` and must not add
+ * another.
+ */
+
+export const SITE_NAME = "GuardianCheck";
+
+interface SeoProps {
+  /**
+   * Page title without the brand suffix — "Register your church" renders as
+   * "Register your church | GuardianCheck". Omit on the home page, where the
+   * brand should lead rather than trail.
+   */
+  title?: string;
+  /** Meta description. Aim for 120-160 characters. */
+  description?: string;
+  /**
+   * Keep this route out of search results. Use for anything behind auth and
+   * for utility routes that would be dead ends in a search listing.
+   */
+  noindex?: boolean;
+}
+
+/** Sets `content` on an existing meta tag, creating it only if absent. */
+function upsertMeta(name: string, content: string) {
+  let tag = document.head.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+
+  if (!tag) {
+    tag = document.createElement("meta");
+    tag.setAttribute("name", name);
+    document.head.appendChild(tag);
+  }
+
+  tag.setAttribute("content", content);
+}
+
+function removeMeta(name: string) {
+  document.head.querySelector(`meta[name="${name}"]`)?.remove();
+}
+
+export function Seo({ title, description, noindex = false }: SeoProps) {
+  useEffect(() => {
+    document.title = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
+
+    if (description) {
+      upsertMeta("description", description);
+    }
+
+    // Absence of the tag means indexable, so clear it rather than writing
+    // "index, follow" — otherwise a stale noindex would survive navigation.
+    if (noindex) {
+      upsertMeta("robots", "noindex, nofollow");
+    } else {
+      removeMeta("robots");
+    }
+  }, [title, description, noindex]);
+
+  return null;
+}

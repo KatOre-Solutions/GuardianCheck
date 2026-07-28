@@ -16,6 +16,7 @@ import { showErrorToast, showSuccessToast, getHumanReadableError } from "../lib/
 import { sendCustomVerificationEmail } from "../lib/api";
 import { useTenant } from "../contexts/TenantContext";
 import { ChurchLogo } from "../components/ChurchLogo";
+import { Seo } from "../components/Seo";
 
 type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
 
@@ -506,6 +507,7 @@ export default function Login() {
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4">
+      <Seo title="Sign in" description="Sign in to your GuardianCheck account to manage check-in, pickup and attendance for your church." noindex />
       <div className="max-w-md w-full space-y-8 p-8 bg-white dark:bg-gray-900 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-800">
         <div className="text-center space-y-2">
           <div className="mx-auto h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center mb-4">

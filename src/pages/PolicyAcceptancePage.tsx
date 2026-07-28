@@ -7,6 +7,7 @@ import { LEGAL_CONTENT, CURRENT_POLICY_VERSION } from "../constants/legalContent
 import { motion } from "motion/react";
 import { Shield, CheckCircle2, AlertTriangle, Info } from "lucide-react";
 import { toast } from "sonner";
+import { Seo } from "../components/Seo";
 
 export default function PolicyAcceptancePage() {
   const { user, userData, roles } = useAuth();
@@ -97,6 +98,7 @@ export default function PolicyAcceptancePage() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
+      <Seo title="Policy update" noindex />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

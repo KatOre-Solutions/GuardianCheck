@@ -4,6 +4,7 @@ import { XCircle, Shield, LogOut } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { auth } from "../lib/firebase";
 import { motion } from "motion/react";
+import { Seo } from "../components/Seo";
 
 export default function Rejected() {
   const { status } = useAuth();
@@ -26,6 +27,7 @@ export default function Rejected() {
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4">
+      <Seo title="Access not approved" noindex />
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}

@@ -6,6 +6,7 @@ import { safeFetch } from "../lib/api";
 import { getInvitationByToken } from "../lib/firestore";
 import { Shield, Lock, User, Mail, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
+import { Seo } from "../components/Seo";
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams();
@@ -138,6 +139,7 @@ export default function AcceptInvite() {
 
   return (
     <div className="max-w-md mx-auto mt-12">
+      <Seo title="Accept invitation" noindex />
       <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-800 space-y-8">
         <div className="text-center space-y-2">
           <div className="h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
