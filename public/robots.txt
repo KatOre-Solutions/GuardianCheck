@@ -1,0 +1,28 @@
+# robots.txt for GuardianCheck — https://guardiancheck.co.za
+# Public marketing and tenant landing pages are crawlable.
+# Authenticated application routes are not.
+
+User-agent: *
+
+# Application routes behind auth — no crawl value, and they only ever
+# render a redirect or a login gate to an anonymous crawler.
+Disallow: /admin
+Disallow: /volunteer
+Disallow: /parent
+Disallow: /master-admin
+Disallow: /profile
+Disallow: /complete-profile
+Disallow: /accept-invite
+Disallow: /pending-approval
+Disallow: /rejected
+Disallow: /policy-acceptance
+
+# Same routes scoped under a church slug, e.g. /randmeth/admin
+Disallow: /*/admin
+Disallow: /*/volunteer
+Disallow: /*/parent
+
+# API surface
+Disallow: /api/
+
+Sitemap: https://guardiancheck.co.za/sitemap.xml
