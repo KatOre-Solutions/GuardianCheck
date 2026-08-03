@@ -67,8 +67,12 @@ function DashboardRedirect() {
     }
   }, [userData, roles, loading, navigate, user]);
 
+  // /admin, /volunteer and /parent are authenticated-app entry points that
+  // never reach ProtectedRoute, so they need their own noindex rather than
+  // inheriting whatever head tags the previous route left behind.
   return (
     <div className="min-h-[60vh] flex items-center justify-center">
+      <Seo title="Dashboard" noindex />
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
