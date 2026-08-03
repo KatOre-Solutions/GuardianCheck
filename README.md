@@ -30,10 +30,21 @@ incident, so changes should come with a test.
 npm run test:rules
 ```
 
-This boots the Firestore emulator and runs [tests/firestore-rules.test.mjs](tests/firestore-rules.test.mjs),
-which covers the `users` collection: privilege escalation must be denied, and
-the real onboarding flows must still pass. It was written for #68, where any
-signed-up account could grant itself `master_admin`.
+This boots the Firestore emulator and runs the suites in [tests/](tests):
+
+- [firestore-rules.test.mjs](tests/firestore-rules.test.mjs) — the `users`
+  collection. Privilege escalation must be denied and the real onboarding flows
+  must still pass. Written for #68, where any signed-up account could grant
+  itself `master_admin`.
+- [firestore-churches.test.mjs](tests/firestore-churches.test.mjs) — the
+  `churches` collection. A church admin must not be able to write `name`,
+  `slug`, `plan`, `status` or `subscription` from the browser. Written for #65,
+  where the role check was correct but nothing constrained *which fields* an
+  admin could change.
+
+Both follow the same shape: a block of writes that **must be denied**, and a
+block of real user flows that **must still succeed**. The second block is the
+important half — a rule that denies everything passes the first block.
 
 **Java version caveat:** `firebase-tools` v14+ requires JDK 21 or newer. On an
 older JDK, run the suite through a pinned CLI instead — the tests themselves are

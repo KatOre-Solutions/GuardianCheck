@@ -293,7 +293,33 @@ service cloud.firestore {
         isMasterAdmin() || 
         (request.resource.data.adminEmail == request.auth.token.email && request.resource.data.status == 'trialing')
       );
-      allow update: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
+      // A church admin may only touch the fields the client legitimately owns.
+      // The role check alone was not enough: it let any admin write `plan`,
+      // `status` and `subscription` on their own church straight from the
+      // browser, which is a billing bypass. Identity (`name`, `slug`) and
+      // commercial state are server-only -- see POST /api/church/settings.
+      //
+      // `setupCompleted` is SetupWizard.tsx; `updatedAt` rides along with it.
+      //
+      // The PIN fields are a separate, narrower grant. AdminDashboard scrubs
+      // legacy copies off the church document after writing the real PIN to
+      // church_security, and that cleanup is worth keeping -- the church doc is
+      // widely readable. But allowlisting the keys outright would permit
+      // *arbitrary* values, and a client-writable field named "...PinHash" is a
+      // bypass waiting for someone to read it again. So the scrub is permitted
+      // only in the direction it is meant to go: to null.
+      allow update: if isMasterAdmin() || (
+        isAdmin() &&
+        getUserData().churchId == churchId && (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['setupCompleted', 'updatedAt']) ||
+          (request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['adminOverridePinHash', 'adminOverridePin', 'pinLastUpdatedAt']) &&
+           request.resource.data.get('adminOverridePinHash', null) == null &&
+           request.resource.data.get('adminOverridePin', null) == null &&
+           request.resource.data.get('pinLastUpdatedAt', null) == null)
+        )
+      );
       allow delete: if isMasterAdmin();
     }
     
