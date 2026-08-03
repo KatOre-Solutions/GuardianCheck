@@ -12,13 +12,12 @@
  * Deliberately excluded:
  *   - `/login` and every authenticated route — noindex, and robots-disallowed.
  *   - Utility routes (`/accept-invite`, `/pending-approval`, …) — noindex.
- *   - Per-tenant URLs (`/:churchSlug`) — out of scope for #20. They are real
- *     public pages, but enumerating them means reading the church collection at
- *     build time, which is a separate decision about exposing the tenant list.
+ *   - Per-tenant URLs (`/:churchSlug`) — `noindex` as of #18. Enumerating them
+ *     would also mean reading the church collection at build time, which is a
+ *     separate decision about exposing the tenant list.
+ *
+ * The origin these paths are joined to lives in `./site.ts`.
  */
-
-/** Production origin. No trailing slash. */
-export const SITE_URL = "https://guardiancheck.co.za";
 
 export interface PublicRoute {
   /** Root-relative path, always starting with "/". */

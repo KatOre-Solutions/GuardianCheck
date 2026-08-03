@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
+import { SITE_NAME, canonicalUrl } from "../constants/site";
 
 /**
  * Per-route document head management.
@@ -30,6 +32,21 @@ import { useEffect } from "react";
  * component — the declarative React 19 form becomes correct once the head is
  * server-rendered per route.
  *
+ * ## Canonicals
+ *
+ * An indexable route gets a self-referential `<link rel="canonical">` derived
+ * from its own path — no page has to remember to ask for one. A `noindex`
+ * route gets the link *removed* instead: `noindex` plus a canonical is a
+ * contradiction (one says "don't index this", the other says "index it under
+ * this URL"), and Google's guidance is to send one signal, not both.
+ *
+ * There is deliberately no static canonical in `index.html`. Unlike the title
+ * and description, there is no value a static canonical could hold that would
+ * be right for more than one route — every URL serves the same `index.html`,
+ * so a hard-coded `<link rel="canonical" href="…/">` would tell a non-JS
+ * consumer that `/register-church` is the home page, contradicting the sitemap
+ * that lists it. Absent is better than wrong.
+ *
  * ## Contract
  *
  * Every route should render exactly one `<Seo>`. Tags are shared mutable state,
@@ -38,7 +55,7 @@ import { useEffect } from "react";
  * another.
  */
 
-export const SITE_NAME = "GuardianCheck";
+export { SITE_NAME };
 
 interface SeoProps {
   /**
@@ -51,9 +68,16 @@ interface SeoProps {
   description?: string;
   /**
    * Keep this route out of search results. Use for anything behind auth and
-   * for utility routes that would be dead ends in a search listing.
+   * for utility routes that would be dead ends in a search listing. Also
+   * suppresses the canonical link — see "Canonicals" above.
    */
   noindex?: boolean;
+  /**
+   * Root-relative path to canonicalise to, when the page's own URL is not the
+   * one that should be indexed. Defaults to the current path (a self-referential
+   * canonical), which is what almost every page wants. Ignored when `noindex`.
+   */
+  canonicalPath?: string;
 }
 
 /** Sets `content` on an existing meta tag, creating it only if absent. */
@@ -73,7 +97,26 @@ function removeMeta(name: string) {
   document.head.querySelector(`meta[name="${name}"]`)?.remove();
 }
 
-export function Seo({ title, description, noindex = false }: SeoProps) {
+/** Sets `href` on the canonical link, creating it only if absent. */
+function upsertCanonical(href: string) {
+  let tag = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+
+  if (!tag) {
+    tag = document.createElement("link");
+    tag.setAttribute("rel", "canonical");
+    document.head.appendChild(tag);
+  }
+
+  tag.setAttribute("href", href);
+}
+
+function removeCanonical() {
+  document.head.querySelector('link[rel="canonical"]')?.remove();
+}
+
+export function Seo({ title, description, noindex = false, canonicalPath }: SeoProps) {
+  const { pathname } = useLocation();
+
   useEffect(() => {
     document.title = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
 
@@ -85,10 +128,12 @@ export function Seo({ title, description, noindex = false }: SeoProps) {
     // "index, follow" — otherwise a stale noindex would survive navigation.
     if (noindex) {
       upsertMeta("robots", "noindex, nofollow");
+      removeCanonical();
     } else {
       removeMeta("robots");
+      upsertCanonical(canonicalUrl(canonicalPath ?? pathname));
     }
-  }, [title, description, noindex]);
+  }, [title, description, noindex, canonicalPath, pathname]);
 
   return null;
 }

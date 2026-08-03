@@ -21,7 +21,7 @@ View your app in AI Studio: https://ai.studio/apps/6c817cfc-8d14-458a-b0a8-7f40f
 
 ## SEO / document head
 
-Per-route titles and meta descriptions come from `<Seo>`
+Per-route titles, meta descriptions and canonical URLs come from `<Seo>`
 ([src/components/Seo.tsx](src/components/Seo.tsx)).
 
 ```tsx
@@ -48,6 +48,22 @@ Omit `title` on the home page so the brand leads instead of trailing.
 - **`index.html` keeps the static `<title>` and description** as the no-JS
   fallback. `<Seo>` overwrites them in place, so exactly one of each tag exists
   at any time — do not delete them.
+- **Canonicals are automatic.** An indexable route gets a self-referential
+  `<link rel="canonical">` from its own path; a `noindex` route gets none,
+  because `noindex` + canonical is a contradictory pair of signals. Pass
+  `canonicalPath` only when a page should be indexed under a *different* URL.
+- **The canonical origin is always production** (`SITE_URL` in
+  [src/constants/site.ts](src/constants/site.ts)), never `window.location.origin`
+  or `VITE_APP_URL` — otherwise every Vercel preview deployment would emit
+  canonicals pointing at its own hostname. The sitemap generator reads the same
+  constant, so the two cannot disagree.
+
+**Indexable routes are `/` and `/register-church`** — the list in
+[src/constants/publicRoutes.ts](src/constants/publicRoutes.ts). Everything else
+is `noindex`, including church landing pages at `/:churchSlug`: they render the
+identical `Home` body as the marketing root, so only their head tags differ.
+That is thin duplicate content, and the decision is recorded in #18. Revisit it
+if churches ever get genuinely distinct landing-page content.
 
 **Why not `react-helmet-async` or React 19's native metadata?** React 19 hoists
 `<title>`/`<meta>` into `<head>` but never reconciles them with the tags already
@@ -60,6 +76,7 @@ docstring.
 runs. Googlebot executes JS and sees them; most social unfurlers do not and keep
 reading the static `index.html` tags. Closing that gap requires SSR/SSG — see
 Epic 6 (#47).
+
 ## Sitemap
 
 `sitemap.xml` is **generated at build time**, not committed. To add a page,
