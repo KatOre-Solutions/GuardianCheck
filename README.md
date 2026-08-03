@@ -224,3 +224,31 @@ The output carries `<loc>` only. Google ignores `<changefreq>` and
 `<priority>`, and a `<lastmod>` set to build time would claim every page changed
 on every deploy — a signal search engines learn to distrust. Add `<lastmod>` per
 route only when there is a real content-modified date for it.
+
+## llms.txt
+
+`/llms.txt` is a curated summary for AI answer engines — what the product is,
+who it serves, what it costs, and which URLs matter. Like the sitemap it is
+**generated at build time** by
+[scripts/generate-llms-txt.ts](scripts/generate-llms-txt.ts), not committed:
+URLs come from `PUBLIC_ROUTES` and pricing from `PLAN_LIMITS`, so the two things
+that go stale can't.
+
+```bash
+npm run generate:llms-txt   # requires an existing dist/
+```
+
+**Only put things in it that are true today.** This file exists to be quoted
+back verbatim by a model, which is a different bar from a marketing page — there
+is no reader applying a pinch of salt. Concretely:
+
+- The product is sold to **churches**. It has no school, daycare or aftercare
+  offering, and the file says so explicitly, because an engine asked "does
+  GuardianCheck work for schools?" should not infer yes from silence.
+- Wider audience positioning belongs with the vertical pages in #40, once those
+  pages exist to support it.
+- Pricing is per church per month in ZAR. If you change a price, change it in
+  [src/constants/plans.ts](src/constants/plans.ts) — and note that
+  `Home.tsx`, `AdminDashboard.tsx`, `ChurchSettings.tsx` and
+  `MasterAdminDashboard.tsx` still carry their own copies that predate that
+  constant.
