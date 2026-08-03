@@ -97,6 +97,32 @@ Omit `title` on the home page so the brand leads instead of trailing.
   or `VITE_APP_URL` — otherwise every Vercel preview deployment would emit
   canonicals pointing at its own hostname. The sitemap generator reads the same
   constant, so the two cannot disagree.
+- **Social cards follow the title, description and URL automatically.** Pass
+  `image` (root-relative or absolute) to override the card per route, and
+  `imageAlt` with it — a custom image without alt clears the tag rather than
+  inheriting the previous route's.
+
+### Social cards
+
+The default card is [public/og-image.png](public/og-image.png), 1200×630,
+self-hosted. It replaced a hot-linked Unsplash photo — the brand's first
+impression should not sit on a third party who can rotate or remove it.
+
+Regenerate or restyle it by editing the SVG in the PR that introduced it; the
+constants (`OG_IMAGE_PATH`, dimensions, alt text) live in
+[src/constants/site.ts](src/constants/site.ts) so `index.html` and `<Seo>` agree.
+
+**`og:*` uses `property=`, `twitter:*` uses `name=`.** They are not
+interchangeable — an og tag written with `name=` is invisible to unfurlers, and
+a `twitter:card` written with `property=` gets dropped by strict readers, which
+silently downgrades the link to a small summary card.
+
+**Know what per-route cards actually reach.** Slack, LinkedIn, WhatsApp and
+Facebook do not execute JavaScript, so they read the static tags in
+`index.html` and never see what `<Seo>` writes. Those static tags therefore
+describe the **home page** and must stay accurate; the per-route values are an
+upgrade for crawlers that render, such as Googlebot. Making them universal needs
+SSR — Epic 6 (#47).
 
 **Indexable routes are `/` and `/register-church`** — the list in
 [src/constants/publicRoutes.ts](src/constants/publicRoutes.ts). Everything else
