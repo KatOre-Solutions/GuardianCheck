@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
+import { isKnownAppPath } from "./src/constants/appRoutes.js";
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -2068,8 +2069,18 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
+
+    // SPA fallback. Always serves the shell so the client can render, but the
+    // status line depends on whether the URL corresponds to a real route --
+    // returning 200 for every path is a soft 404, which wastes crawl budget and
+    // lets junk URLs into the index.
+    //
+    // This mirrors the `routes` block in vercel.json, which is what production
+    // actually uses; both read src/constants/appRoutes.ts so they cannot
+    // disagree about what a real route is.
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const status = isKnownAppPath(req.path) ? 200 : 404;
+      res.status(status).sendFile(path.join(distPath, "index.html"));
     });
   }
 
