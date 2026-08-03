@@ -27,6 +27,7 @@ import MasterAdminLogs from "./pages/MasterAdminLogs";
 import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
+import { Seo } from "./components/Seo";
 
 function DashboardRedirect() {
   const { user, userData, roles, loading } = useAuth();
@@ -66,8 +67,12 @@ function DashboardRedirect() {
     }
   }, [userData, roles, loading, navigate, user]);
 
+  // /admin, /volunteer and /parent are authenticated-app entry points that
+  // never reach ProtectedRoute, so they need their own noindex rather than
+  // inheriting whatever head tags the previous route left behind.
   return (
     <div className="min-h-[60vh] flex items-center justify-center">
+      <Seo title="Dashboard" noindex />
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>
   );
@@ -231,8 +236,16 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
 
   const hasAccess = roles.some(r => allowedRoles.includes(r as any));
   const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
-  
-  return user && isEmailVerified && hasAccess ? <>{children}</> : null;
+
+  // Every route behind auth is noindex by definition, so it is set here once
+  // rather than in each dashboard. Pages rendered as `children` must not
+  // render their own <Seo> — see the contract in components/Seo.tsx.
+  return user && isEmailVerified && hasAccess ? (
+    <>
+      <Seo title="Dashboard" noindex />
+      {children}
+    </>
+  ) : null;
 }
 
 function Layout({ children }: { children: React.ReactNode }) {

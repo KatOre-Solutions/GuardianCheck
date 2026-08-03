@@ -1,10 +1,24 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Shield, QrCode, ClipboardCheck, Users, ArrowRight, CheckCircle2, Star, Zap, Globe, Heart } from "lucide-react";
 import { motion } from "motion/react";
 import WhatsAppSupport from "../components/WhatsAppSupport";
+import { Seo } from "../components/Seo";
+import { useTenant } from "../contexts/TenantContext";
 
 export default function Home() {
+  // This page serves both the marketing root and a church's landing page at
+  // /:churchSlug, which need different titles to avoid competing for the same
+  // query.
+  //
+  // The discriminator has to be the route, not `church`. TenantProvider falls
+  // back to the signed-in user's own churchSlug when the URL has none, so
+  // `church` is non-null on `/` for any authenticated user — branching on it
+  // would title the marketing home page after whichever church they belong to.
+  // `useParams().churchSlug` is only defined under the /:churchSlug route.
+  const { churchSlug } = useParams();
+  const { church } = useTenant();
+
   const features = [
     {
       icon: <QrCode className="h-6 w-6 text-primary" />,
@@ -57,6 +71,14 @@ export default function Home() {
 
   return (
     <div className="space-y-32 pb-24 dark:bg-gray-950 transition-colors">
+      {churchSlug && church ? (
+        <Seo
+          title={`${church.name} children's check-in`}
+          description={`Check your children in and out of ${church.name} safely. QR-code check-in, authorised-guardian pickup verification, and real-time attendance.`}
+        />
+      ) : (
+        <Seo description="Secure QR-code child check-in and pickup for churches. Track attendance in real time, verify authorised guardians, and give parents peace of mind." />
+      )}
       {/* Hero Section */}
       <section className="relative overflow-hidden pt-12 pb-24 lg:pt-24">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">

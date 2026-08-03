@@ -7,6 +7,7 @@ import { safeFetch, sendCustomVerificationEmail } from "../lib/api";
 import { Shield, Building2, User, Mail, Lock, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import { motion } from "motion/react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
+import { Seo } from "../components/Seo";
 
 export default function RegisterChurch() {
   const navigate = useNavigate();
@@ -100,6 +101,7 @@ export default function RegisterChurch() {
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center py-12">
+      <Seo title="Register your church" description="Set up GuardianCheck for your church in minutes. Create your organisation, invite volunteers, and start secure QR-code child check-in." />
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
         {/* Left Side: Info */}
         <div className="hidden lg:block space-y-8">
