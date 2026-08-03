@@ -14,7 +14,8 @@
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { PUBLIC_ROUTES, SITE_URL } from "../src/constants/publicRoutes";
+import { PUBLIC_ROUTES } from "../src/constants/publicRoutes";
+import { SITE_URL } from "../src/constants/site";
 
 const ROOT = process.cwd();
 const ROBOTS_PATH = path.join(ROOT, "public", "robots.txt");

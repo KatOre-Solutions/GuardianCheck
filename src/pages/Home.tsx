@@ -72,9 +72,16 @@ export default function Home() {
   return (
     <div className="space-y-32 pb-24 dark:bg-gray-950 transition-colors">
       {churchSlug && church ? (
+        // noindex per #18: a tenant landing page renders this exact body, so
+        // the only thing distinguishing it from `/` is its head tags. That is
+        // thin duplicate content, and it is already excluded from the sitemap.
+        // The title and description stay — they are still the browser tab and
+        // the label a parent sees when sharing the link. Revisit if churches
+        // ever get genuinely distinct landing-page content.
         <Seo
           title={`${church.name} children's check-in`}
           description={`Check your children in and out of ${church.name} safely. QR-code check-in, authorised-guardian pickup verification, and real-time attendance.`}
+          noindex
         />
       ) : (
         <Seo description="Secure QR-code child check-in and pickup for churches. Track attendance in real time, verify authorised guardians, and give parents peace of mind." />
