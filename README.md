@@ -77,6 +77,50 @@ runs. Googlebot executes JS and sees them; most social unfurlers do not and keep
 reading the static `index.html` tags. Closing that gap requires SSR/SSG — see
 Epic 6 (#47).
 
+## Routing and 404s
+
+Every URL the app answers to is declared in
+[src/constants/appRoutes.ts](src/constants/appRoutes.ts). Adding or removing a
+`<Route>` in `App.tsx` means updating that manifest, then:
+
+```bash
+npm run generate:vercel-routes
+```
+
+**Two enforcement points, one manifest.** Production traffic never reaches
+Express — `vercel.json` serves non-API paths straight from static hosting — so a
+fix applied only to `server.ts` would look right locally and change nothing for
+real users. Both read the same manifest: `server.ts` calls `isKnownAppPath()`,
+and `vercel.json`'s `routes` are generated from it.
+
+`npm run build` runs `check:vercel-routes` and **fails if `vercel.json` is
+stale**. Vercel reads that file before the build starts, so it has to be
+committed, which means it can silently drift from the router — the check is what
+makes that loud rather than a production 404 on a real page.
+
+`routes` rather than `rewrites`, because a rewrite cannot set a status code and
+the whole point is serving the SPA shell *with* a 404. The two keys are mutually
+exclusive.
+
+**What gets which status:**
+
+| URL | Status | Renders |
+|---|---|---|
+| `/`, `/login`, `/randmeth/admin/settings` | 200 | the page |
+| `/randmeth/nonsense` | 404 | "We couldn't find that page" |
+| `/a/b/c/d` | 404 | "We couldn't find that page" |
+| `/no-such-church` | **200** | "Church Not Found", `noindex` |
+
+That last row is the deliberate gap. A single segment is a valid *shape* for a
+church slug, and deciding whether a church owns it means a Firestore read on
+every request. So the edge says 200 and the client renders a not-found state
+carrying `noindex` — it never gets indexed, it just isn't a 404. Closing it
+properly needs slug validation at the edge.
+
+A 404 still returns the full SPA shell in the body. The client needs it to
+render anything at all; only the status line changes, and that is the part
+crawlers act on.
+
 ## Sitemap
 
 `sitemap.xml` is **generated at build time**, not committed. To add a page,
