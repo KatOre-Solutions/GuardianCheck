@@ -19,6 +19,35 @@ View your app in AI Studio: https://ai.studio/apps/6c817cfc-8d14-458a-b0a8-7f40f
 3. Run the app:
    `npm run dev`
 
+## Security rules tests
+
+`firestore.rules` decides who can read and write every collection, and it is
+deployed **separately from the app** — `firebase deploy --only firestore:rules`.
+A rules change is live only after that command, and a bad one is a production
+incident, so changes should come with a test.
+
+```bash
+npm run test:rules
+```
+
+This boots the Firestore emulator and runs [tests/firestore-rules.test.mjs](tests/firestore-rules.test.mjs),
+which covers the `users` collection: privilege escalation must be denied, and
+the real onboarding flows must still pass. It was written for #68, where any
+signed-up account could grant itself `master_admin`.
+
+**Java version caveat:** `firebase-tools` v14+ requires JDK 21 or newer. On an
+older JDK, run the suite through a pinned CLI instead — the tests themselves are
+unaffected:
+
+```bash
+npx firebase-tools@13 emulators:exec --only firestore --project gc-rules-test "node tests/firestore-rules.test.mjs"
+```
+
+**Deploy order matters.** When a rules change tightens a field the client
+currently writes, ship the client change *first* and deploy rules *after* —
+otherwise the running app starts getting permission errors. Rollback is the
+reverse.
+
 ## SEO / document head
 
 Per-route titles, meta descriptions and canonical URLs come from `<Seo>`
