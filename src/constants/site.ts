@@ -17,6 +17,31 @@ export const SITE_NAME = "GuardianCheck";
 export const SITE_URL = "https://guardiancheck.co.za";
 
 /**
+ * Default social-card image, 1200x630, served from `public/`.
+ *
+ * Self-hosted on purpose: the previous card hot-linked an Unsplash photo, which
+ * put the brand's first impression on a third party who can rotate or remove it
+ * without notice.
+ *
+ * Root-relative here and resolved against {@link SITE_URL} at use, because
+ * `og:image` must be absolute — relative values are simply dropped by most
+ * unfurlers.
+ */
+export const OG_IMAGE_PATH = "/og-image.png";
+export const OG_IMAGE_WIDTH = 1200;
+export const OG_IMAGE_HEIGHT = 630;
+export const OG_IMAGE_ALT = "GuardianCheck — secure child check-in for churches";
+
+/** Locale for `og:locale` and `<html lang>`. */
+export const SITE_LOCALE = "en_ZA";
+
+/** Absolute form of a root-relative asset path; passes absolute URLs through. */
+export function absoluteUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  return `${SITE_URL}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
+}
+
+/**
  * Absolute, canonical form of a root-relative path.
  *
  * Always built on {@link SITE_URL} rather than the origin actually serving the
