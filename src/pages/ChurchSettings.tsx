@@ -9,7 +9,15 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { uploadFile, getPathFromUrl, deleteFile } from "../lib/storage";
-import { updateDocument } from "../lib/firestore";
+import { safeFetch } from "../lib/api";
+import { SITE_URL } from "../constants/site";
+
+/** Host only, for the slug field's prefix label. */
+const SITE_HOST = SITE_URL.replace(/^https?:\/\//, "");
+
+/** Mirrors churchNameSchema on the server; the server stays authoritative. */
+const NAME_MIN = 3;
+const NAME_MAX = 100;
 
 type Tab = "branding" | "subscription";
 
@@ -17,6 +25,11 @@ export default function ChurchSettings() {
   const { userData, token } = useAuth();
   const [church, setChurch] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  // Distinct from `loading`: the form must never render bound to a document
+  // that is not there. It used to, because loading was cleared regardless of
+  // whether a snapshot arrived, so the empty initial state was presented as if
+  // it were the church -- and saving wrote those blanks over the record.
+  const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("branding");
@@ -34,22 +47,37 @@ export default function ChurchSettings() {
   });
 
   useEffect(() => {
-    if (userData?.churchId) {
-      const unsub = subscribeToDocument("churches", userData.churchId, (data) => {
-        if (data) {
-          setChurch(data);
-          setFormData({
-            name: data.name || "",
-            slug: data.slug || "",
-            primaryColor: data.branding?.primaryColor || "#2563eb",
-            secondaryColor: data.branding?.secondaryColor || "#1e40af",
-            logoUrl: data.branding?.logoUrl || ""
-          });
-        }
-        setLoading(false);
-      });
-      return () => unsub();
+    // A master admin can reach this page without belonging to a church. That
+    // used to leave `loading` true forever, because the subscription that
+    // clears it was never created.
+    if (!userData?.churchId) {
+      setNotFound(true);
+      setLoading(false);
+      return;
     }
+
+    setNotFound(false);
+    const unsub = subscribeToDocument("churches", userData.churchId, (data) => {
+      if (data) {
+        setChurch(data);
+        setNotFound(false);
+        setFormData({
+          name: data.name || "",
+          slug: data.slug || "",
+          primaryColor: data.branding?.primaryColor || "#2563eb",
+          secondaryColor: data.branding?.secondaryColor || "#1e40af",
+          logoUrl: data.branding?.logoUrl || ""
+        });
+      } else {
+        // This is a live subscription, so it also fires if the document is
+        // deleted while the form is open -- not only when it is missing on
+        // first load. Both cases must take the form away.
+        setChurch(null);
+        setNotFound(true);
+      }
+      setLoading(false);
+    });
+    return () => unsub();
   }, [userData?.churchId]);
 
   useEffect(() => {
@@ -129,6 +157,14 @@ export default function ChurchSettings() {
     e.preventDefault();
     if (!userData?.churchId) return;
 
+    // Fast local feedback only. The server re-validates with the same bounds
+    // registration uses, and it is the one that decides.
+    const name = formData.name.trim();
+    if (name.length < NAME_MIN || name.length > NAME_MAX) {
+      showErrorToast(`Church name must be between ${NAME_MIN} and ${NAME_MAX} characters.`);
+      return;
+    }
+
     setSaving(true);
     try {
       let finalLogoUrl = formData.logoUrl;
@@ -146,22 +182,34 @@ export default function ChurchSettings() {
         finalLogoUrl = await uploadFile(path, logoFile);
       }
 
-      await updateDocument("churches", userData.churchId, {
-        name: formData.name,
-        slug: formData.slug,
-        branding: {
-          primaryColor: formData.primaryColor,
-          secondaryColor: formData.secondaryColor,
-          logoUrl: finalLogoUrl
+      // Name and branding go in one request. They used to be written
+      // separately -- name over HTTP, branding straight to Firestore -- which
+      // meant either could fail on its own and leave the form half-saved
+      // behind a toast that claimed success. `slug` is deliberately not sent:
+      // renaming has to propagate to users and pending invitations (#66).
+      const { ok, error } = await safeFetch("/api/church/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
-        updatedAt: new Date().toISOString()
+        body: JSON.stringify({
+          name,
+          branding: {
+            primaryColor: formData.primaryColor,
+            secondaryColor: formData.secondaryColor,
+            logoUrl: finalLogoUrl
+          }
+        })
       });
+
+      if (!ok) throw new Error(error || "Failed to update settings");
 
       setLogoFile(null);
       showSuccessToast("Settings updated successfully!");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showErrorToast("Failed to update settings");
+      showErrorToast(err.message || "Failed to update settings");
     } finally {
       setSaving(false);
     }
@@ -171,6 +219,21 @@ export default function ChurchSettings() {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <div className="max-w-md mx-auto text-center space-y-4 py-20">
+        <div className="h-16 w-16 bg-red-50 dark:bg-red-900/20 rounded-2xl flex items-center justify-center mx-auto">
+          <AlertCircle className="h-8 w-8 text-red-600 dark:text-red-400" />
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white">Church settings unavailable</h2>
+        <p className="text-gray-500 dark:text-gray-400">
+          We couldn't load a church for your account. If this keeps happening, contact support
+          rather than re-entering your details — saving from here would overwrite the record.
+        </p>
       </div>
     );
   }
@@ -235,15 +298,21 @@ export default function ChurchSettings() {
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">URL Slug</label>
                         <div className="flex items-center">
                           <span className="px-4 py-3 bg-gray-100 dark:bg-gray-700 border border-r-0 border-gray-100 dark:border-gray-700 rounded-l-xl text-gray-500 text-sm">
-                            guardiancheck.app/
+                            {SITE_HOST}/
                           </span>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             value={formData.slug}
-                            onChange={(e) => setFormData({ ...formData, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
-                            className="flex-1 px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-r-xl outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                            readOnly
+                            aria-readonly="true"
+                            className="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 border border-gray-100 dark:border-gray-700 rounded-r-xl outline-none text-gray-500 dark:text-gray-400 cursor-not-allowed"
                           />
                         </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Your church URL is set when you register and can't be changed here. Parents
+                          already have this link, and it's embedded in invitations you've sent — changing
+                          it would break both. Contact support if you need it changed.
+                        </p>
                       </div>
                     </div>
                   </section>

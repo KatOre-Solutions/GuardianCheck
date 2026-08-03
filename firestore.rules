@@ -123,12 +123,33 @@ service cloud.firestore {
 
 
 
+    // A user document confers privilege through BOTH `role` and the `roles`
+    // array -- isMasterAdmin() reads either. Any rule that guards one must
+    // guard the other, or it guards nothing.
+    function grantsElevatedRole(data) {
+      return data.get('role', '') in ['admin', 'master_admin'] ||
+             data.get('roles', []).hasAny(['admin', 'master_admin']);
+    }
+
+    // True when an update leaves `role` and `roles` exactly as they were.
+    // Self-service updates must satisfy this: a user may complete their own
+    // profile, but may never decide their own privileges. Role assignment
+    // happens through the admin/master-admin branches or server-side only.
+    function preservesRoleFields() {
+      return request.resource.data.get('role', null) == resource.data.get('role', null) &&
+             request.resource.data.get('roles', []) == resource.data.get('roles', []);
+    }
+
     function isValidUser(data) {
       // Core requirements for any active user document
       return data.email is string &&
              data.status in ['incomplete_profile', 'pending', 'approved', 'rejected'] &&
              // Role validation if present
              (!('role' in data) || data.role in ['parent', 'volunteer', 'admin', 'master_admin']) &&
+             // `roles` drives isMasterAdmin() just as `role` does, so it is
+             // constrained to the same vocabulary rather than left free-form.
+             (!('roles' in data) || (data.roles is list &&
+                                     data.roles.hasOnly(['parent', 'volunteer', 'admin', 'master_admin']))) &&
              // Type and size constraints for profile fields - only check if present
              (!('firstName' in data) || (data.firstName is string && data.firstName.size() < 128)) &&
              (!('lastName' in data) || (data.lastName is string && data.lastName.size() < 128)) &&
@@ -198,26 +219,41 @@ service cloud.firestore {
         isMasterAdmin() || 
         (isApproved() && resource != null && getUserData().churchId == resource.data.churchId && (isAdmin() || isVolunteer()))
       );
-      allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
+      // Self-create must not mint privilege. Signup legitimately writes
+      // role 'parent'; the real master admin still passes because
+      // isMasterAdmin() short-circuits on the known uid/email before ever
+      // reading this document. Admin and invited-user documents are created
+      // server-side with the Admin SDK, which bypasses rules entirely.
+      allow create: if isAuthenticated() && request.auth.uid == userId &&
+                       isValidUser(request.resource.data) &&
+                       (isMasterAdmin() || !grantsElevatedRole(request.resource.data));
       allow update: if isAuthenticated() && (
-        (request.auth.uid == userId && (
+        (request.auth.uid == userId && preservesRoleFields() && (
           // Branch A: Initial setup - allowing the transition from incomplete
           // We allow the update if the document is currently in 'incomplete_profile'
+          //
+          // Onboarding legitimately sets profile fields, churchId and status
+          // here, but never a role -- preservesRoleFields() above covers both
+          // branches so neither can be used to self-elevate.
           (resource.data.status == 'incomplete_profile' && isValidUser(request.resource.data)) ||
-          
+
           // Branch B: Protecting immutable fields for approved users
-          (resource.data.status == 'approved' && 
+          (resource.data.status == 'approved' &&
            isValidUser(request.resource.data) &&
-           request.resource.data.role == resource.data.role && 
            request.resource.data.churchId == resource.data.churchId)
         )) ||
         isMasterAdmin() ||
-        (isAdmin() && resource != null && 
+        (isAdmin() && resource != null &&
          isValidUser(request.resource.data) &&
          // Admins can't touch each other's roles or master admin
          (!('role' in resource.data) || resource.data.role != 'master_admin') &&
          (!('role' in request.resource.data) || request.resource.data.role != 'master_admin') &&
-         resource.data.churchId == getUserData().churchId && 
+         // Same guard on the `roles` array. Without this an admin could grant
+         // master_admin -- to another user or to themselves, since this branch
+         // is not self-excluding -- while leaving `role` untouched.
+         !resource.data.get('roles', []).hasAny(['master_admin']) &&
+         !request.resource.data.get('roles', []).hasAny(['master_admin']) &&
+         resource.data.churchId == getUserData().churchId &&
          request.resource.data.churchId == getUserData().churchId)
       );
       allow delete: if isMasterAdmin() || (
@@ -257,7 +293,33 @@ service cloud.firestore {
         isMasterAdmin() || 
         (request.resource.data.adminEmail == request.auth.token.email && request.resource.data.status == 'trialing')
       );
-      allow update: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
+      // A church admin may only touch the fields the client legitimately owns.
+      // The role check alone was not enough: it let any admin write `plan`,
+      // `status` and `subscription` on their own church straight from the
+      // browser, which is a billing bypass. Identity (`name`, `slug`) and
+      // commercial state are server-only -- see POST /api/church/settings.
+      //
+      // `setupCompleted` is SetupWizard.tsx; `updatedAt` rides along with it.
+      //
+      // The PIN fields are a separate, narrower grant. AdminDashboard scrubs
+      // legacy copies off the church document after writing the real PIN to
+      // church_security, and that cleanup is worth keeping -- the church doc is
+      // widely readable. But allowlisting the keys outright would permit
+      // *arbitrary* values, and a client-writable field named "...PinHash" is a
+      // bypass waiting for someone to read it again. So the scrub is permitted
+      // only in the direction it is meant to go: to null.
+      allow update: if isMasterAdmin() || (
+        isAdmin() &&
+        getUserData().churchId == churchId && (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['setupCompleted', 'updatedAt']) ||
+          (request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['adminOverridePinHash', 'adminOverridePin', 'pinLastUpdatedAt']) &&
+           request.resource.data.get('adminOverridePinHash', null) == null &&
+           request.resource.data.get('adminOverridePin', null) == null &&
+           request.resource.data.get('pinLastUpdatedAt', null) == null)
+        )
+      );
       allow delete: if isMasterAdmin();
     }
     

@@ -1,21 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-ZA">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GuardianCheck</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'%3E%3C/path%3E%3C/svg%3E" />
     <meta name="description" content="Secure, real-time child check-in and pickup system for churches." />
+
+    <!--
+      Social cards. These static values describe the home page and are what most
+      unfurlers actually read: Slack, LinkedIn, WhatsApp and Facebook do not run
+      JavaScript, so they never see the per-route values <Seo> writes. Keep them
+      accurate for `/` and treat the component's overrides as an upgrade for the
+      crawlers that do execute JS. Closing that gap needs SSR — Epic 6 (#47).
+    -->
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="GuardianCheck" />
+    <meta property="og:locale" content="en_ZA" />
+    <meta property="og:url" content="https://guardiancheck.co.za/" />
     <meta property="og:title" content="GuardianCheck" />
     <meta property="og:description" content="Secure, real-time child check-in and pickup system for churches." />
-    <meta property="og:image" content="https://images.unsplash.com/photo-1510511233900-1982d92bd835?auto=format&fit=crop&q=80&w=1200&h=630" />
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:title" content="GuardianCheck" />
-    <meta property="twitter:description" content="Secure, real-time child check-in and pickup system for churches." />
-    <meta property="twitter:image" content="https://images.unsplash.com/photo-1510511233900-1982d92bd835?auto=format&fit=crop&q=80&w=1200&h=630" />
+    <meta property="og:image" content="https://guardiancheck.co.za/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="GuardianCheck — secure child check-in for churches" />
+
+    <!-- Twitter. `name=`, not `property=`: the Twitter Cards spec uses name, and
+         strict unfurlers that ignore `property` would drop twitter:card and
+         downgrade the link to a small summary card. -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="GuardianCheck" />
+    <meta name="twitter:description" content="Secure, real-time child check-in and pickup system for churches." />
+    <meta name="twitter:image" content="https://guardiancheck.co.za/og-image.png" />
+    <meta name="twitter:image:alt" content="GuardianCheck — secure child check-in for churches" />
   </head>
   <body>
     <div id="root"></div>

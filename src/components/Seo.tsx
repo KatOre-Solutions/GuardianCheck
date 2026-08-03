@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { SITE_NAME, canonicalUrl } from "../constants/site";
+import { SITE_NAME, OG_IMAGE_ALT, OG_IMAGE_PATH, absoluteUrl, canonicalUrl } from "../constants/site";
 
 /**
  * Per-route document head management.
@@ -47,6 +47,21 @@ import { SITE_NAME, canonicalUrl } from "../constants/site";
  * consumer that `/register-church` is the home page, contradicting the sitemap
  * that lists it. Absent is better than wrong.
  *
+ * ## Social cards
+ *
+ * `og:*` and `twitter:*` are kept in step with the page's title, description
+ * and canonical URL, and `image` overrides the default card per route.
+ *
+ * Be clear-eyed about the reach of that: Slack, LinkedIn, WhatsApp and Facebook
+ * do not execute JavaScript, so they read the static tags in `index.html` and
+ * never see anything written here. The per-route values only reach crawlers
+ * that render — Googlebot does. So the static tags stay accurate for the home
+ * page and these are the upgrade on top, not a replacement. SSR (#47) is what
+ * would make them universal.
+ *
+ * OG tags use `property=`; Twitter's spec uses `name=`. They are not
+ * interchangeable, which is why there are two upsert helpers below.
+ *
  * ## Contract
  *
  * Every route should render exactly one `<Seo>`. Tags are shared mutable state,
@@ -78,6 +93,14 @@ interface SeoProps {
    * canonical), which is what almost every page wants. Ignored when `noindex`.
    */
   canonicalPath?: string;
+  /**
+   * Social-card image for this route — root-relative (`/foo.png`) or absolute.
+   * Defaults to the site card. Must be at least 1200x630 to render as a large
+   * card rather than a thumbnail.
+   */
+  image?: string;
+  /** Describes {@link SeoProps.image}. Pass whenever `image` is passed. */
+  imageAlt?: string;
 }
 
 /** Sets `content` on an existing meta tag, creating it only if absent. */
@@ -97,6 +120,26 @@ function removeMeta(name: string) {
   document.head.querySelector(`meta[name="${name}"]`)?.remove();
 }
 
+/**
+ * Same as {@link upsertMeta} but keyed on `property=`, which is what Open Graph
+ * uses. Writing an og tag with `name=` leaves it invisible to unfurlers.
+ */
+function upsertMetaProperty(property: string, content: string) {
+  let tag = document.head.querySelector<HTMLMetaElement>(`meta[property="${property}"]`);
+
+  if (!tag) {
+    tag = document.createElement("meta");
+    tag.setAttribute("property", property);
+    document.head.appendChild(tag);
+  }
+
+  tag.setAttribute("content", content);
+}
+
+function removeMetaProperty(property: string) {
+  document.head.querySelector(`meta[property="${property}"]`)?.remove();
+}
+
 /** Sets `href` on the canonical link, creating it only if absent. */
 function upsertCanonical(href: string) {
   let tag = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
@@ -114,7 +157,14 @@ function removeCanonical() {
   document.head.querySelector('link[rel="canonical"]')?.remove();
 }
 
-export function Seo({ title, description, noindex = false, canonicalPath }: SeoProps) {
+export function Seo({
+  title,
+  description,
+  noindex = false,
+  canonicalPath,
+  image,
+  imageAlt,
+}: SeoProps) {
   const { pathname } = useLocation();
 
   useEffect(() => {
@@ -124,6 +174,39 @@ export function Seo({ title, description, noindex = false, canonicalPath }: SeoP
       upsertMeta("description", description);
     }
 
+    // The page's own address. Unlike the canonical link this is set even on
+    // noindex routes -- "don't index this" and "this is what was shared" are
+    // different statements, and a shared link still needs to resolve.
+    const pageUrl = canonicalUrl(canonicalPath ?? pathname);
+
+    // Bare title, no brand suffix: og:site_name already carries the brand, and
+    // unfurlers that show both would otherwise render it twice.
+    upsertMetaProperty("og:title", title || SITE_NAME);
+    upsertMetaProperty("og:url", pageUrl);
+    upsertMeta("twitter:title", title || SITE_NAME);
+
+    if (description) {
+      upsertMetaProperty("og:description", description);
+      upsertMeta("twitter:description", description);
+    }
+
+    const cardUrl = absoluteUrl(image ?? OG_IMAGE_PATH);
+    const cardAlt = image ? imageAlt ?? "" : OG_IMAGE_ALT;
+
+    upsertMetaProperty("og:image", cardUrl);
+    upsertMeta("twitter:image", cardUrl);
+
+    // A custom image with no alt clears the tag rather than inheriting the
+    // previous route's — a stale alt describing a different picture is worse
+    // than none, for screen readers and for anyone reading the card's markup.
+    if (cardAlt) {
+      upsertMetaProperty("og:image:alt", cardAlt);
+      upsertMeta("twitter:image:alt", cardAlt);
+    } else {
+      removeMetaProperty("og:image:alt");
+      removeMeta("twitter:image:alt");
+    }
+
     // Absence of the tag means indexable, so clear it rather than writing
     // "index, follow" — otherwise a stale noindex would survive navigation.
     if (noindex) {
@@ -131,9 +214,9 @@ export function Seo({ title, description, noindex = false, canonicalPath }: SeoP
       removeCanonical();
     } else {
       removeMeta("robots");
-      upsertCanonical(canonicalUrl(canonicalPath ?? pathname));
+      upsertCanonical(pageUrl);
     }
-  }, [title, description, noindex, canonicalPath, pathname]);
+  }, [title, description, noindex, canonicalPath, pathname, image, imageAlt]);
 
   return null;
 }

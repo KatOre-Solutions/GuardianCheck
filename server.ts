@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
+import { isKnownAppPath } from "./src/constants/appRoutes.js";
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -346,12 +347,29 @@ const RegisterChildSchema = z.object({
   photoUrl: z.string().url().optional().or(z.literal(""))
 });
 
+// Shared by registration and the settings endpoint so the two entry points
+// cannot drift into enforcing different rules for the same field.
+const churchNameSchema = z.string().min(3).max(100);
+
 const RegisterChurchSchema = z.object({
-  churchName: z.string().min(3).max(100),
+  churchName: churchNameSchema,
   adminFirstName: z.string().min(1),
   adminLastName: z.string().min(1),
   plan: z.string().optional()
 });
+
+// `.strict()` is load-bearing. Zod strips unknown keys by default, so a request
+// carrying `slug`, `plan` or `subscription` would get a 200 for a write that
+// never happened. Rejecting is the honest answer -- those fields are not
+// settable here, and silence would hide that.
+const UpdateChurchSettingsSchema = z.object({
+  name: churchNameSchema,
+  branding: z.object({
+    primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    secondaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    logoUrl: z.string().url().or(z.literal(""))
+  })
+}).strict();
 
 const VerifyPinSchema = z.object({
   pin: z.string().length(4)
@@ -1745,6 +1763,73 @@ async function startServer() {
     return crypto.createHash("md5").update(queryString).digest("hex");
   }
 
+  // Church Settings Endpoint
+  //
+  // Owns every field the settings form can change. The client used to write
+  // these straight to Firestore, which meant registration's validation was
+  // trivially bypassed -- and `slug` could be set to a value another church
+  // already held, making one of them unreachable at its own URL. `slug` is not
+  // accepted here at all; renaming needs to propagate to users and pending
+  // invitations, which is #66.
+  app.post("/api/church/settings", generalLimiter, authenticateToken, requireAdmin, validate(UpdateChurchSettingsSchema), async (req, res) => {
+    const { name, branding } = req.body;
+    const churchId = req.user.churchId;
+
+    // requireAdmin admits master_admin, who may belong to no church, and
+    // authenticateToken falls back to the bare token when the user document is
+    // missing. Either way churchId can be absent -- without this it would be
+    // db.collection("churches").doc(undefined).
+    if (!churchId) {
+      return res.status(400).json({ error: "No church is associated with this account.", traceId: req.traceId });
+    }
+
+    if (!db) {
+      console.error(`[CHURCH_SETTINGS_ERROR] Firebase not initialized [Trace: ${req.traceId}]`);
+      return res.status(500).json({ error: "System configuration error.", traceId: req.traceId });
+    }
+
+    try {
+      const churchRef = db.collection("churches").doc(churchId);
+      const churchDoc = await churchRef.get();
+      req.firestoreOps.reads++;
+
+      if (!churchDoc.exists) {
+        return res.status(404).json({ error: "Church not found.", traceId: req.traceId });
+      }
+
+      const previousName = churchDoc.data()?.name ?? null;
+
+      await churchRef.update({
+        name,
+        branding,
+        updatedAt: new Date().toISOString()
+      });
+      req.firestoreOps.writes++;
+
+      // A rename changes how the church is identified to its own members and
+      // in every email sent on its behalf. An unlogged rename is what made the
+      // original bug so hard to trace.
+      if (previousName !== name) {
+        await db.collection("audit_logs").add({
+          churchId,
+          userId: req.user.uid,
+          action: "church_renamed",
+          category: "security",
+          details: { previousName, newName: name },
+          timestamp: new Date().toISOString(),
+          source: "server"
+        });
+        req.firestoreOps.writes++;
+      }
+
+      console.log(`Church settings updated: ${churchId} [Trace: ${req.traceId}]`);
+      res.json({ success: true, name, branding });
+    } catch (error: any) {
+      console.error(`[CHURCH_SETTINGS_ERROR] ${error.message} [Trace: ${req.traceId}]`);
+      res.status(500).json({ error: "Failed to update church settings.", traceId: req.traceId });
+    }
+  });
+
   // Cancel Subscription Endpoint
   app.post("/api/subscriptions/cancel", authenticateToken, async (req, res) => {
     try {
@@ -1984,8 +2069,18 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
+
+    // SPA fallback. Always serves the shell so the client can render, but the
+    // status line depends on whether the URL corresponds to a real route --
+    // returning 200 for every path is a soft 404, which wastes crawl budget and
+    // lets junk URLs into the index.
+    //
+    // This mirrors the `routes` block in vercel.json, which is what production
+    // actually uses; both read src/constants/appRoutes.ts so they cannot
+    // disagree about what a real route is.
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const status = isKnownAppPath(req.path) ? 200 : 404;
+      res.status(status).sendFile(path.join(distPath, "index.html"));
     });
   }
 

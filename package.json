@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node dist/server.js",
-    "build": "vite build && npm run generate:sitemap && npm run generate:llms-txt && esbuild server.ts --bundle --platform=node --format=esm --outfile=dist/server.js --packages=external",
+    "build": "npm run check:vercel-routes && vite build && npm run generate:sitemap && npm run generate:llms-txt && esbuild server.ts --bundle --platform=node --format=esm --outfile=dist/server.js --packages=external",
     "generate:sitemap": "tsx scripts/generate-sitemap.ts",
     "generate:llms-txt": "tsx scripts/generate-llms-txt.ts",
+    "generate:vercel-routes": "tsx scripts/generate-vercel-routes.ts",
+    "check:vercel-routes": "tsx scripts/generate-vercel-routes.ts --check",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:rules": "firebase emulators:exec --only firestore --project gc-rules-test \"node tests/firestore-rules.test.mjs && node tests/firestore-churches.test.mjs\""
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -45,6 +48,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/express": "^4.17.21",
     "@types/he": "^1.2.3",
     "@types/node": "^22.14.0",

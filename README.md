@@ -19,6 +19,46 @@ View your app in AI Studio: https://ai.studio/apps/6c817cfc-8d14-458a-b0a8-7f40f
 3. Run the app:
    `npm run dev`
 
+## Security rules tests
+
+`firestore.rules` decides who can read and write every collection, and it is
+deployed **separately from the app** — `firebase deploy --only firestore:rules`.
+A rules change is live only after that command, and a bad one is a production
+incident, so changes should come with a test.
+
+```bash
+npm run test:rules
+```
+
+This boots the Firestore emulator and runs the suites in [tests/](tests):
+
+- [firestore-rules.test.mjs](tests/firestore-rules.test.mjs) — the `users`
+  collection. Privilege escalation must be denied and the real onboarding flows
+  must still pass. Written for #68, where any signed-up account could grant
+  itself `master_admin`.
+- [firestore-churches.test.mjs](tests/firestore-churches.test.mjs) — the
+  `churches` collection. A church admin must not be able to write `name`,
+  `slug`, `plan`, `status` or `subscription` from the browser. Written for #65,
+  where the role check was correct but nothing constrained *which fields* an
+  admin could change.
+
+Both follow the same shape: a block of writes that **must be denied**, and a
+block of real user flows that **must still succeed**. The second block is the
+important half — a rule that denies everything passes the first block.
+
+**Java version caveat:** `firebase-tools` v14+ requires JDK 21 or newer. On an
+older JDK, run the suite through a pinned CLI instead — the tests themselves are
+unaffected:
+
+```bash
+npx firebase-tools@13 emulators:exec --only firestore --project gc-rules-test "node tests/firestore-rules.test.mjs"
+```
+
+**Deploy order matters.** When a rules change tightens a field the client
+currently writes, ship the client change *first* and deploy rules *after* —
+otherwise the running app starts getting permission errors. Rollback is the
+reverse.
+
 ## SEO / document head
 
 Per-route titles, meta descriptions and canonical URLs come from `<Seo>`
@@ -57,6 +97,32 @@ Omit `title` on the home page so the brand leads instead of trailing.
   or `VITE_APP_URL` — otherwise every Vercel preview deployment would emit
   canonicals pointing at its own hostname. The sitemap generator reads the same
   constant, so the two cannot disagree.
+- **Social cards follow the title, description and URL automatically.** Pass
+  `image` (root-relative or absolute) to override the card per route, and
+  `imageAlt` with it — a custom image without alt clears the tag rather than
+  inheriting the previous route's.
+
+### Social cards
+
+The default card is [public/og-image.png](public/og-image.png), 1200×630,
+self-hosted. It replaced a hot-linked Unsplash photo — the brand's first
+impression should not sit on a third party who can rotate or remove it.
+
+Regenerate or restyle it by editing the SVG in the PR that introduced it; the
+constants (`OG_IMAGE_PATH`, dimensions, alt text) live in
+[src/constants/site.ts](src/constants/site.ts) so `index.html` and `<Seo>` agree.
+
+**`og:*` uses `property=`, `twitter:*` uses `name=`.** They are not
+interchangeable — an og tag written with `name=` is invisible to unfurlers, and
+a `twitter:card` written with `property=` gets dropped by strict readers, which
+silently downgrades the link to a small summary card.
+
+**Know what per-route cards actually reach.** Slack, LinkedIn, WhatsApp and
+Facebook do not execute JavaScript, so they read the static tags in
+`index.html` and never see what `<Seo>` writes. Those static tags therefore
+describe the **home page** and must stay accurate; the per-route values are an
+upgrade for crawlers that render, such as Googlebot. Making them universal needs
+SSR — Epic 6 (#47).
 
 **Indexable routes are `/` and `/register-church`** — the list in
 [src/constants/publicRoutes.ts](src/constants/publicRoutes.ts). Everything else
@@ -76,6 +142,50 @@ docstring.
 runs. Googlebot executes JS and sees them; most social unfurlers do not and keep
 reading the static `index.html` tags. Closing that gap requires SSR/SSG — see
 Epic 6 (#47).
+
+## Routing and 404s
+
+Every URL the app answers to is declared in
+[src/constants/appRoutes.ts](src/constants/appRoutes.ts). Adding or removing a
+`<Route>` in `App.tsx` means updating that manifest, then:
+
+```bash
+npm run generate:vercel-routes
+```
+
+**Two enforcement points, one manifest.** Production traffic never reaches
+Express — `vercel.json` serves non-API paths straight from static hosting — so a
+fix applied only to `server.ts` would look right locally and change nothing for
+real users. Both read the same manifest: `server.ts` calls `isKnownAppPath()`,
+and `vercel.json`'s `routes` are generated from it.
+
+`npm run build` runs `check:vercel-routes` and **fails if `vercel.json` is
+stale**. Vercel reads that file before the build starts, so it has to be
+committed, which means it can silently drift from the router — the check is what
+makes that loud rather than a production 404 on a real page.
+
+`routes` rather than `rewrites`, because a rewrite cannot set a status code and
+the whole point is serving the SPA shell *with* a 404. The two keys are mutually
+exclusive.
+
+**What gets which status:**
+
+| URL | Status | Renders |
+|---|---|---|
+| `/`, `/login`, `/randmeth/admin/settings` | 200 | the page |
+| `/randmeth/nonsense` | 404 | "We couldn't find that page" |
+| `/a/b/c/d` | 404 | "We couldn't find that page" |
+| `/no-such-church` | **200** | "Church Not Found", `noindex` |
+
+That last row is the deliberate gap. A single segment is a valid *shape* for a
+church slug, and deciding whether a church owns it means a Firestore read on
+every request. So the edge says 200 and the client renders a not-found state
+carrying `noindex` — it never gets indexed, it just isn't a 404. Closing it
+properly needs slug validation at the edge.
+
+A 404 still returns the full SPA shell in the body. The client needs it to
+render anything at all; only the status line changes, and that is the part
+crawlers act on.
 
 ## Sitemap
 

@@ -27,6 +27,8 @@ import MasterAdminLogs from "./pages/MasterAdminLogs";
 import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
+import NotFound from "./pages/NotFound";
+import { isKnownAppPath } from "./constants/appRoutes";
 import { Seo } from "./components/Seo";
 
 function DashboardRedirect() {
@@ -261,6 +263,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function TenantLayout() {
   const { church, loading, error } = useTenant();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -271,8 +274,28 @@ function TenantLayout() {
   }
 
   if (error || !church) {
+    // `/:churchSlug/*` is greedy, so it also swallows paths that were never
+    // church URLs at all -- /a/b/c/d matches with churchSlug="a". Telling
+    // someone their church wasn't found is misleading when they typed junk, so
+    // defer to the real not-found page for anything the route manifest doesn't
+    // recognise. Same function the server uses to pick the status code.
+    if (!isKnownAppPath(location.pathname)) {
+      return (
+        <Layout>
+          <NotFound />
+        </Layout>
+      );
+    }
+
     return (
       <Layout>
+        {/*
+          The one case the edge cannot catch. `/:churchSlug` is a valid URL
+          shape, so the server answers 200 without knowing whether a church owns
+          that slug -- proving otherwise means a Firestore read per request.
+          noindex is what keeps a mistyped slug out of the index anyway.
+        */}
+        <Seo title="Church not found" noindex />
         <div className="p-12 text-center space-y-4">
           <div className="h-20 w-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto">
             <Shield className="h-10 w-10 text-red-600 dark:text-red-400" />
@@ -380,7 +403,17 @@ export default function App() {
                     </PolicyGuard>
                   </ProtectedRoute>
                 } />
+                {/* Unmatched child of a real church, e.g. /randmeth/nonsense.
+                    Without this the Outlet renders nothing and the page is
+                    simply blank. */}
+                <Route path="*" element={<NotFound />} />
               </Route>
+
+              {/* Backstop. `/:churchSlug/*` above is greedy enough to swallow
+                  every non-root path today, so this rarely fires -- TenantLayout
+                  delegates here instead. It stays as the safety net for if that
+                  route is ever narrowed. */}
+              <Route path="*" element={<Layout><NotFound /></Layout>} />
             </Routes>
             <Toaster position="top-right" richColors />
             <NetworkStatus />
