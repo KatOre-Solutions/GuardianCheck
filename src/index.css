@@ -6,3 +6,14 @@
 }
 
 @variant dark (&:where(.dark, .dark *));
+
+/* html5-qrcode injects a <video> with an inline pixel width and no height, so the
+   element sizes itself from the camera stream's intrinsic aspect ratio. On iOS that
+   yields a small landscape strip inside the square frame. Force it to fill the
+   scanner area instead. !important is required to beat the library's inline width. */
+#qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  display: block;
+}
