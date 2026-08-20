@@ -131,7 +131,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
   return (
     <div className="w-full max-w-md mx-auto space-y-4">
       <div className="relative aspect-square bg-black rounded-2xl overflow-hidden border-2 border-gray-100 shadow-inner group">
-        <div id="qr-reader" className="w-full h-full"></div>
+        <div id="qr-reader" className="w-full aspect-square"></div>
         
         {!isCameraActive && !isInitializing && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm text-white p-6 text-center space-y-4">
