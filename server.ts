@@ -1,3 +1,15 @@
+// MUST be first: populates process.env from .env before any other module's
+// top-level code reads it. Firebase Admin credentials and the Resend key are
+// both read during module initialisation below, so importing this second would
+// be too late.
+//
+// This is only load-bearing locally. Vercel injects environment variables into
+// the process directly, so in production there is no .env file and this is a
+// no-op. Google AI Studio used to do the same, which is why the server ran for
+// months without ever loading dotenv -- and why `npm run dev` broke the moment
+// it was run outside AI Studio.
+import "dotenv/config";
+
 import express from "express";
 import path from "path";
 import crypto from "crypto";
