@@ -14,12 +14,14 @@ Takes a PR number. If none given, use the PR for the current branch (`gh pr view
 
 | Thing | Value |
 |---|---|
-| Repo | `Oreginal/GuardianCheck` |
-| Project | `GuardianCheck Discoverability Initiative` (number `2`, `PVT_kwHOBu0XKc4BeqeG`) |
-| Status field | `PVTSSF_lAHOBu0XKc4BeqeGzhZC-5o` |
-| Status options | Backlog `7679e51c` · Ready `f3d28f1f` · In Progress `e12b98a7` · In Review `8fc96ae8` · Blocked `b7733c1b` · Done `f79d269b` |
+| Repo | `KatOre-Solutions/GuardianCheck` |
+| Project | `GuardianCheck Discoverability Initiative` (number `5`, `PVT_kwDOEa6bbc4BhnrI`) |
+| Status field | `PVTSSF_lADOEa6bbc4BhnrIzhgiv_c` |
+| Status options | Backlog `310c650e` · Ready `c3cc43ea` · In Progress `ee337333` · In Review `2d1106d1` · Blocked `ecf6829e` · Done `dd66a66a` |
+| Sprint field | `PVTSSF_lADOEa6bbc4BhnrIzhgiwRQ` |
+| Sprint options | M1 `6468553c` · M2 `dbb65e43` · M3 `a2bbe769` · M4 `8f8ccaf3` · M5 `bc2d2b75` · M6 `2a2bf809` · M7 `d8baf279` · M8 `0b908721` · Future `d54c2907` |
 
-Re-derive with `gh project field-list 2 --owner "@me" --format json` if a call 404s.
+Re-derive with `gh project field-list 5 --owner KatOre-Solutions --format json` if a call 404s.
 
 ---
 
@@ -28,8 +30,8 @@ Re-derive with `gh project field-list 2 --owner "@me" --format json` if a call 4
 ```bash
 gh pr view N --json title,body,state,mergeable,headRefName,statusCheckRollup
 gh pr diff N
-gh api repos/Oreginal/GuardianCheck/pulls/N/reviews    --jq '.[]|{u:.user.login,s:.state,b:.body[:300]}'
-gh api repos/Oreginal/GuardianCheck/pulls/N/comments   --jq '.[]|{u:.user.login,p:.path,l:.line,b:.body[:300]}'
+gh api repos/KatOre-Solutions/GuardianCheck/pulls/N/reviews    --jq '.[]|{u:.user.login,s:.state,b:.body[:300]}'
+gh api repos/KatOre-Solutions/GuardianCheck/pulls/N/comments   --jq '.[]|{u:.user.login,p:.path,l:.line,b:.body[:300]}'
 ```
 
 Read the **linked issue** (`Closes #N` in the PR body) before judging the diff. Half of review is "does this actually satisfy what was asked", which you cannot assess without the acceptance criteria.
@@ -112,9 +114,9 @@ Labels — one from each axis: `epic:*`, `type:{feature,bug,chore,documentation,
 Then add it to the board and set status:
 
 ```bash
-ITEM=$(gh project item-add 2 --owner "@me" --url <issue-url> --format json | python -c "import json,sys;print(json.load(sys.stdin)['id'])")
-gh project item-edit --id "$ITEM" --project-id PVT_kwHOBu0XKc4BeqeG \
-  --field-id PVTSSF_lAHOBu0XKc4BeqeGzhZC-5o --single-select-option-id f3d28f1f  # Ready
+ITEM=$(gh project item-add 5 --owner KatOre-Solutions --url <issue-url> --format json | python -c "import json,sys;print(json.load(sys.stdin)['id'])")
+gh project item-edit --id "$ITEM" --project-id PVT_kwDOEa6bbc4BhnrI \
+  --field-id PVTSSF_lADOEa6bbc4BhnrIzhgiv_c --single-select-option-id c3cc43ea  # Ready
 ```
 
 **If the new issue overlaps a planned one, write the sequencing into both.** "If #22 lands first it should absorb this; if this lands first, #22 must preserve it." Two issues editing one block without that note is a merge conflict waiting to happen.
@@ -138,7 +140,7 @@ If the PR is clean, say so plainly and stop. **Do not manufacture findings to lo
 Move the reviewed PR's issue to **In Review** (`8fc96ae8`), or **Done** (`f79d269b`) if it merged. Verify the write landed — `item-edit` exits 0 silently on a bad field id:
 
 ```bash
-gh project item-list 2 --owner "@me" --limit 60 --format json | python -c "
+gh project item-list 5 --owner KatOre-Solutions --limit 60 --format json | python -c "
 import json,sys
 for i in json.load(sys.stdin).get('items',[]):
     c=i.get('content') or {}
