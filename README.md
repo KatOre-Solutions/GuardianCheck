@@ -1,23 +1,81 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# GuardianCheck
 
-# Run and deploy your AI Studio app
+Child check-in and safeguarding for churches. Multi-tenant SaaS: each church
+gets its own tenant at `/{churchSlug}`, with QR-based check-in, authorised-
+guardian verification on pickup, and allergy visibility for volunteers on the
+day.
 
-This contains everything you need to run your app locally.
+**Production:** [guardiancheck.co.za](https://guardiancheck.co.za)
 
-View your app in AI Studio: https://ai.studio/apps/6c817cfc-8d14-458a-b0a8-7f40fc186536
+## Stack
 
-## Run Locally
+| Layer | What |
+|---|---|
+| Frontend | React 19 + Vite SPA, TypeScript, Tailwind |
+| Server | Express ([server.ts](server.ts)) — API routes, plus Vite middleware in dev |
+| Data | Firebase Auth + Firestore (a **named** database, not `(default)`) |
+| Email | Resend ([emailService.ts](emailService.ts)) |
+| Payments | PayFast |
+| Hosting | Vercel, deployed from GitHub Actions ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)) |
 
-**Prerequisites:**  Node.js
+Authorisation lives in [firestore.rules](firestore.rules), not in the Express
+layer — the browser talks to Firestore directly for most reads. That makes the
+rules file the real security boundary; see **Security rules tests** below before
+changing it.
 
+## Run locally
+
+**Prerequisites:** Node.js 22+. A JDK is additionally needed for the security-
+rules tests — see the Java caveat below.
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```bash
+   npm install
+   ```
+2. Create `.env` in the repo root. [.env.example](.env.example) lists every
+   variable; the ones the app will not start without are the Firebase Admin
+   credentials (`FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`) and
+   `RESEND_API_KEY`. Client-side Firebase config is committed in
+   [firebase-applet-config.json](firebase-applet-config.json).
+3. Start it:
+   ```bash
+   npm run dev
+   ```
+4. Open <http://localhost:3000>
+
+One process serves both the API and the frontend — Express with Vite as
+middleware ([server.ts](server.ts)). There is no separate frontend dev server
+and no second port.
+
+### ⚠️ Local development runs against the production database
+
+There is no local Firestore in the dev path. `npm run dev` connects to the same
+live database that serves real churches, because both
+[src/lib/firebase.ts](src/lib/firebase.ts) and [server.ts](server.ts) read
+`firestoreDatabaseId` from the committed
+[firebase-applet-config.json](firebase-applet-config.json).
+
+Reading and clicking around is safe. **Creating, editing or deleting anything
+locally changes real customer data** — children, guardians, check-ins. Treat
+local development as production access, and never point a test script at it
+casually.
+
+The Firestore emulator is used only by `npm run test:rules`, which runs against
+a throwaway project and never touches live data.
+
+## Scripts
+
+| Command | Does |
+|---|---|
+| `npm run dev` | Express + Vite on :3000 |
+| `npm run build` | Route/DB checks, `vite build`, sitemap, `llms.txt`, bundles the server |
+| `npm run lint` | `tsc --noEmit` |
+| `npm run test:rules` | Firestore security-rules suites (needs a JDK) |
+| `npm run generate:vercel-routes` | Regenerates `vercel.json` routes from the route manifest |
+| `npm run check:firebase-db` | Fails if the rules deploy target and the app's database disagree |
+
+`npm run build` deliberately fails on stale generated files rather than shipping
+them — see **Routing and 404s**.
 
 ## Security rules tests
 
