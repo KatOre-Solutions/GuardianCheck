@@ -26,6 +26,21 @@ deployed **separately from the app** — `firebase deploy --only firestore:rules
 A rules change is live only after that command, and a bad one is a production
 incident, so changes should come with a test.
 
+**Which database the rules land on.** This project does not use Firestore's
+`(default)` database. Both the client ([src/lib/firebase.ts](src/lib/firebase.ts))
+and the Admin SDK ([server.ts](server.ts)) connect to the *named* database in
+[firebase-applet-config.json](firebase-applet-config.json), and the rules deploy
+has to be pointed at the same one — there is no CLI flag for it, so
+[firebase.json](firebase.json) uses the multi-database array form with an
+explicit `database` key.
+
+This matters because getting it wrong fails *quietly*. The single-database form
+deploys to `(default)`, prints a green success, and leaves the live database on
+its old rules — which is how the #68 privilege-escalation fix sat merged and
+unenforced (#75). `npm run check:firebase-db` runs as part of `npm run build`
+and fails if `firebase.json` and `firebase-applet-config.json` ever disagree
+again.
+
 ```bash
 npm run test:rules
 ```
