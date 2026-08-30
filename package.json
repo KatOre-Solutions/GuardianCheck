@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test:rules": "firebase emulators:exec --only firestore --project gc-rules-test \"node tests/firestore-rules.test.mjs && node tests/firestore-churches.test.mjs\""
+    "test:rules": "firebase emulators:exec --only firestore --project gc-rules-test \"node tests/firestore-rules.test.mjs && node tests/firestore-churches.test.mjs\"",
+    "test:pin-limiter": "node tests/pin-limiter.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
