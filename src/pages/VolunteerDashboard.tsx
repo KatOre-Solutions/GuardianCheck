@@ -611,6 +611,14 @@ export default function VolunteerDashboard() {
         body: JSON.stringify({ churchId: userData.churchId, pin: overridePin })
       });
       
+      // A throttled request is not a wrong PIN. Without this branch the 429 falls
+      // through to the failure path below, tells the volunteer the PIN is
+      // incorrect, and writes a failed_admin_override the volunteer never made.
+      if (result.status === 429) {
+        showErrorToast("Too many PIN attempts. Please wait a few minutes and try again.");
+        return;
+      }
+
       const isValid = result.ok && result.data?.isValid;
       
       if (isValid) {
