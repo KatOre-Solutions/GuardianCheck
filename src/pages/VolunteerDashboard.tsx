@@ -127,6 +127,18 @@ export default function VolunteerDashboard() {
     };
   }, []);
 
+  // Scanning is the volunteer's whole interaction on this tab, and on a phone
+  // the match card renders below the fold. Bring it into view so a successful
+  // scan is visibly acknowledged rather than only toasted.
+  useEffect(() => {
+    if (scannedChildren.length === 0) return;
+    // Wait for AnimatePresence to mount the card before measuring it.
+    const raf = requestAnimationFrame(() => {
+      document.getElementById("scan-result")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [scannedChildren.length]);
+
   useEffect(() => {
     if (!churchId) return;
 
@@ -803,6 +815,7 @@ export default function VolunteerDashboard() {
           <AnimatePresence>
             {scannedChildren.length > 0 && (
               <motion.div
+                id="scan-result"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 20 }}
