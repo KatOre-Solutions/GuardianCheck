@@ -4,8 +4,6 @@ import {
   initializeFirestore, 
   persistentLocalCache, 
   persistentMultipleTabManager,
-  doc, 
-  getDocFromServer,
   terminate,
   clearIndexedDbPersistence
 } from "firebase/firestore";
@@ -37,13 +35,8 @@ export const db = initializeFirestore(app, {
 
 export const storage = getStorage(app);
 
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, "test", "connection"));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("Please check your Firebase configuration. The client is offline.");
-    }
-  }
-}
-testConnection();
+// A connectivity probe used to read `test/connection` on every page load. The
+// `test` collection was world-readable -- `allow read: if true` -- which is the
+// only reason the probe worked, and that rule is gone. The probe swallowed
+// every error except a specific offline string, so it never surfaced anything
+// either; keeping it would just mean a permission-denied on every load.

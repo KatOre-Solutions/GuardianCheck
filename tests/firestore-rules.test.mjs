@@ -117,6 +117,41 @@ await check("approved user edits own profile fields", "allow", () =>
 await check("approved user toggles darkMode", "allow", () =>
   updateDoc(doc(as("approved"), "users", "approved"), { darkMode: true }));
 
+// A `volunteer` in this product reads every child in a church -- names, ages,
+// photos, allergies -- plus child_medical notes and the guardians collection,
+// including the qrToken that authorises collecting a child. User documents are
+// written from the browser at signup, and `churchId` is in that same payload,
+// so anyone able to sign up could have minted themselves a volunteer in a
+// church of their choosing. `volunteer` is an elevated role.
+await check("signup cannot self-create as a volunteer", "deny", () =>
+  setDoc(doc(as("signup2"), "users", "signup2"), {
+    uid: "signup2", email: "s2@x.com", role: "volunteer", roles: ["volunteer"],
+    churchId: CHURCH, churchSlug: null, status: "incomplete_profile",
+  }));
+
+// `role` and `roles` both drive the role helpers, so guarding one guards
+// nothing.
+await check("signup cannot smuggle volunteer through the roles array", "deny", () =>
+  setDoc(doc(as("signup3"), "users", "signup3"), {
+    uid: "signup3", email: "s3@x.com", role: "parent", roles: ["parent", "volunteer"],
+    churchId: CHURCH, churchSlug: null, status: "incomplete_profile",
+  }));
+
+await check("signup cannot self-create as an admin", "deny", () =>
+  setDoc(doc(as("signup4"), "users", "signup4"), {
+    uid: "signup4", email: "s4@x.com", role: "admin", roles: ["admin"],
+    churchId: CHURCH, churchSlug: null, status: "incomplete_profile",
+  }));
+
+// A parent may still attach themselves to a church -- that is the normal
+// signup-on-a-church-page flow, and a parent only ever reads their own
+// children. The role is what had to be constrained, not the churchId.
+await check("signup may still attach a parent account to a church", "allow", () =>
+  setDoc(doc(as("signup5"), "users", "signup5"), {
+    uid: "signup5", email: "s5@x.com", role: "parent", roles: ["parent"],
+    churchId: CHURCH, churchSlug: "church-1", status: "incomplete_profile",
+  }));
+
 await check("public signup creates own parent doc", "allow", () =>
   setDoc(doc(as("signup1"), "users", "signup1"), {
     uid: "signup1", email: "s@x.com", role: "parent", roles: ["parent"],

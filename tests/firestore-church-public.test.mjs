@@ -24,10 +24,9 @@
  * that catches a rule which denies everything: the anonymous slug lookup is the
  * public landing page, and it has to keep working.
  *
- * SCOPE: this file covers the new public projection, plus the own-church reads
- * that must survive the `churches` lockdown. The cross-tenant DENY cases for
- * `churches` itself land with that lockdown in the follow-up change -- they
- * would fail here, because `churches` is still wide open at this commit.
+ * The churches DENY block below is the audit's proof-of-vulnerability turned
+ * into a regression test: every one of those queries succeeded before the
+ * lockdown.
  */
 
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
@@ -128,6 +127,43 @@ async function check(label, mode, fn) {
 }
 
 console.log("\nPublic church projection and churches lockdown\n");
+
+// ------------------------------------------------------- churches: DENY ----
+// The PayFast subscription token lives on these documents. Nobody outside the
+// owning church reads them, authenticated or not.
+
+await check("anonymous cannot read a church document by id", "deny", () =>
+  getDoc(doc(anon(), "churches", CHURCH_A)));
+
+// This is the exact shape the old rule permitted: `request.query.limit == 1`
+// was checked without ever consulting request.auth.
+await check("anonymous cannot run the limit(1) slug lookup against churches", "deny", () =>
+  getDocs(query(collection(anon(), "churches"), where("slug", "==", "st-marys"), limit(1))));
+
+await check("anonymous cannot list churches at all", "deny", () =>
+  getDocs(query(collection(anon(), "churches"), limit(1))));
+
+await check("a church A admin cannot read church B's document", "deny", () =>
+  getDoc(doc(as("adminA"), "churches", CHURCH_B)));
+
+await check("a church A volunteer cannot read church B's document", "deny", () =>
+  getDoc(doc(as("volunteerA"), "churches", CHURCH_B)));
+
+await check("a parent cannot read another church's document", "deny", () =>
+  getDoc(doc(as("parentA"), "churches", CHURCH_B)));
+
+// The cheapest attack in the audit: sign up, read every church in the system.
+await check("an unaffiliated signup cannot list every church", "deny", () =>
+  getDocs(collection(as("drifter"), "churches")));
+
+await check("an unaffiliated signup cannot read a church document", "deny", () =>
+  getDoc(doc(as("drifter"), "churches", CHURCH_A)));
+
+await check("an authenticated user cannot list all churches unconstrained", "deny", () =>
+  getDocs(collection(as("adminA"), "churches")));
+
+await check("an authenticated user cannot page churches with limit(1)", "deny", () =>
+  getDocs(query(collection(as("volunteerA"), "churches"), limit(1))));
 
 // -------------------------------------------------- church_public: DENY ----
 // World-readable, but never client-writable: a forged public document would
