@@ -58,6 +58,8 @@ import SetupWizard from "../components/SetupWizard";
 import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
 import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
+import ChildrenDirectory from "../components/ChildrenDirectory";
+import { toCsv, downloadCsv } from "../lib/csv";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { PLAN_LIMITS, PlanTier } from "../constants/plans";
@@ -464,24 +466,30 @@ export default function AdminDashboard() {
 
       for (const col of collections) {
         if (col.data.length === 0) continue;
-        
-        const headers = Object.keys(col.data[0]).filter(k => typeof col.data[0][k] !== 'object');
-        const rows = col.data.map(item => headers.map(h => String(item[h] || "").replace(/,/g, ";")));
-        
-        const csvContent = [
-          headers.join(","),
-          ...rows.map(r => r.join(","))
-        ].join("\n");
 
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-        const link = document.createElement("a");
-        const url = URL.createObjectURL(blob);
-        link.setAttribute("href", url);
-        link.setAttribute("download", `full_backup_${col.name}_${format(new Date(), "yyyyMMdd")}.csv`);
-        link.style.visibility = "hidden";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // Union of keys across every record, not just the first. Firestore
+        // enforces no schema, so deriving headers from `data[0]` silently
+        // dropped any column the first document happened to lack.
+        const headerSet = new Set<string>();
+        for (const item of col.data) {
+          for (const [key, value] of Object.entries(item)) {
+            if (typeof value !== "object") headerSet.add(key);
+          }
+        }
+        const headers = Array.from(headerSet);
+
+        downloadCsv(
+          `full_backup_${col.name}_${format(new Date(), "yyyyMMdd")}.csv`,
+          toCsv(
+            col.data,
+            headers.map(h => ({
+              header: h,
+              // Quoting is handled by toCsv, so values are no longer mangled
+              // by the old `replace(/,/g, ";")` comma substitution.
+              value: (item: any) => (item[h] == null ? "" : String(item[h])),
+            })),
+          ),
+        );
       }
 
       await logAudit({
@@ -1557,6 +1565,22 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      {/* Children Directory — the church's roster, with guardian and parent
+          contact for name tags and safeguarding. Reads only the data this page
+          already subscribes to; tenancy is enforced by firestore.rules. */}
+      <ChildrenDirectory
+        children={children}
+        guardians={guardians}
+        users={users}
+        churchId={churchId || ""}
+        churchName={churchData?.name}
+        currentUserId={user?.uid || ""}
+        onSelectChild={(childId) => {
+          setSelectedChildId(childId);
+          setShowChildDetailsModal(true);
+        }}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Room Management */}
         <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
