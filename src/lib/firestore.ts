@@ -271,6 +271,22 @@ export function subscribeToDocument(path: string, id: string, callback: (data: a
   });
 }
 
+/**
+ * Every church, as the public projection knows them: id, name, slug, branding.
+ *
+ * Use this anywhere the client needs to *choose* a church rather than operate
+ * inside one -- the church picker during profile completion, for instance.
+ * `churches` itself is readable only by members of that church, because it
+ * carries adminEmail, plan, subscription state and the PayFast token.
+ */
+export async function getPublicChurches() {
+  return getCollection("church_public");
+}
+
+/**
+ * The full church documents. Master-admin only under the security rules --
+ * every other caller wants getPublicChurches().
+ */
 export async function getChurches() {
   return getCollection("churches");
 }

@@ -4,7 +4,7 @@ import { updateProfile } from "firebase/auth";
 import { Shield, User, Church as ChurchIcon, ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useTenant } from "../contexts/TenantContext";
-import { getChurches, updateDocument, createMembershipRequest } from "../lib/firestore";
+import { getPublicChurches, updateDocument, createMembershipRequest } from "../lib/firestore";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { Seo } from "../components/Seo";
@@ -62,7 +62,10 @@ export default function ProfileCompletion() {
     async function loadChurches() {
       if (!user) return;
       try {
-        const data = await getChurches();
+        // The picker needs a name and a slug, nothing more. Reading the full
+        // church documents here would mean every user completing a profile
+        // could pull every church's billing state.
+        const data = await getPublicChurches();
         setChurches(data);
       } catch (error) {
         console.error("Failed to load churches", error);

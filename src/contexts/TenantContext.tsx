@@ -10,12 +10,20 @@ interface ChurchBranding {
   secondaryColor?: string;
 }
 
+/**
+ * A church as the public landing page knows it. Mirrors `church_public`
+ * exactly -- if you add a field here, add it to CHURCH_PUBLIC_FIELDS in
+ * server.ts and understand that you are publishing it to anonymous visitors.
+ *
+ * `status` used to be declared here and was never read through this context;
+ * billing state belongs to the authenticated `churches` subscription that
+ * ChurchSettings holds.
+ */
 interface Church {
   id: string;
   name: string;
   slug: string;
   branding?: ChurchBranding;
-  status?: string;
 }
 
 interface TenantContextType {
@@ -57,8 +65,14 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       setError(null);
       try {
+        // Reads `church_public`, never `churches`. This lookup runs before
+        // anyone has logged in, and the `churches` document carries
+        // adminEmail, plan, the subscription map and the PayFast subscription
+        // token -- none of which an anonymous visitor should be able to pull
+        // down. `church_public` holds only name, slug and branding, written
+        // server-side from a fixed field list.
         const q = query(
-          collection(db, "churches"),
+          collection(db, "church_public"),
           where("slug", "==", churchSlug),
           limit(1)
         );
@@ -69,7 +83,17 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           setChurch(null);
         } else {
           const doc = querySnapshot.docs[0];
-          const churchData = { id: doc.id, ...doc.data() } as Church;
+          const data = doc.data();
+          // Named fields rather than a spread. The spread is what put the
+          // PayFast token into browser state in the first place: the Church
+          // type only declares five fields, but a spread carries every field
+          // the document happens to have, and TypeScript never sees it.
+          const churchData: Church = {
+            id: data.churchId || doc.id,
+            name: data.name,
+            slug: data.slug,
+            branding: data.branding ?? undefined,
+          };
           setChurch(churchData);
           
           // Apply branding if available
