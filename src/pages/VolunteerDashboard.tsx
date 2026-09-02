@@ -1,41 +1,33 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { auth } from "../lib/firebase";
-import { addDocument, getCollection, updateDocument, subscribeToCollection, getDocument, subscribeToDocument, logAudit, setDocument } from "../lib/firestore";
-import { where, query, collection } from "firebase/firestore";
+import { getCollection, subscribeToCollection, getDocument, subscribeToDocument, logAudit, setDocument } from "../lib/firestore";
+import { where, collection } from "firebase/firestore";
 import { QRScanner } from "../components/QRScanner";
-import { 
-  ClipboardCheck, 
-  Scan, 
-  Users, 
-  Search, 
-  CheckCircle2, 
-  LogOut, 
-  AlertCircle, 
+import {
+  Scan,
+  Users,
+  Search,
+  CheckCircle2,
+  LogOut,
+  AlertCircle,
   AlertTriangle,
-  Clock, 
+  Clock,
   ChevronRight,
-  ShieldCheck,
   X,
-  UserCheck,
-  ShieldAlert,
-  Key,
-  Lock,
-  WifiOff,
-  Wifi,
-  User as UserIcon,
-  User
+  WifiOff
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { format } from "date-fns";
 import { safeFetch } from "../lib/api";
 import ChildDetailsModal from "../components/ChildDetailsModal";
 import CheckOutTab from "../components/CheckOutTab";
+import AdminOverrideModal from "../components/AdminOverrideModal";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
-import { hashPin } from "../lib/security";
+import { hasRecordedAllergies } from "../lib/child-utils";
 import { useActiveService } from "../hooks/useActiveService";
 import { activateService, closeService } from "../lib/firestore";
-import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+import { DashboardSkeleton } from "../components/Skeleton";
 import { useTenant } from "../contexts/TenantContext";
 
 export default function VolunteerDashboard() {
@@ -45,27 +37,21 @@ export default function VolunteerDashboard() {
   const { activeService, upcomingServices, loading: serviceLoading } = useActiveService();
   const [activeTab, setActiveTab] = useState<"scan" | "checkout" | "list">("scan");
   const [scannedChildren, setScannedChildren] = useState<any[]>([]);
-  const [authorizedGuardians, setAuthorizedGuardians] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [checkedInChildren, setCheckedInChildren] = useState<any[]>([]);
   const [selectedRoom, setSelectedRoom] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
-  const [checkoutChild, setCheckoutChild] = useState<any>(null);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
-  const [showChildDetailsModal, setShowChildDetailsModal] = useState(false);
+  const [overrideRecord, setOverrideRecord] = useState<any>(null);
+  const [alreadyCheckedIn, setAlreadyCheckedIn] = useState<any>(null);
   const [showOverrideModal, setShowOverrideModal] = useState(false);
+  const [showChildDetailsModal, setShowChildDetailsModal] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [moveChild, setMoveChild] = useState<any>(null);
   const [newRoomForMove, setNewRoomForMove] = useState("");
-  const [overrideReason, setOverrideReason] = useState("");
-  const [overridePin, setOverridePin] = useState("");
   const [autoAssignedRooms, setAutoAssignedRooms] = useState<Record<string, string>>({});
   const [churchData, setChurchData] = useState<any>(null);
   const [churchSecurity, setChurchSecurity] = useState<any>(null);
-  const [failedAttempts, setFailedAttempts] = useState(0);
-  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
-  const [scanningGuardian, setScanningGuardian] = useState(false);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [allChildren, setAllChildren] = useState<any[]>([]);
@@ -193,21 +179,11 @@ export default function VolunteerDashboard() {
     }
   }, [churchId]);
 
-  useEffect(() => {
-    const fetchGuardians = async () => {
-      if (scannedChildren.length === 1 && userData?.churchId) {
-        const data = await getCollection("guardians", [
-          where("churchId", "==", userData.churchId),
-          where("childIds", "array-contains", scannedChildren[0].id),
-          where("active", "==", true)
-        ]);
-        setAuthorizedGuardians(data || []);
-      } else {
-        setAuthorizedGuardians([]);
-      }
-    };
-    fetchGuardians();
-  }, [scannedChildren, userData?.churchId]);
+  // Attendance rows show the checkin document, which carries no photo or
+  // allergy field. Both come from the warm children cache already in memory.
+  const childRecord = (childId: string) => allChildren.find((c) => c.id === childId);
+  const childPhoto = (childId: string) => childRecord(childId)?.photoUrl;
+  const childHasAllergies = (childId: string) => hasRecordedAllergies(childRecord(childId)?.allergies);
 
   const handleMoveRoom = async () => {
     if (!moveChild || !newRoomForMove) return;
@@ -269,45 +245,7 @@ export default function VolunteerDashboard() {
     }
     lastScannedRef.current = { text: decodedText, time: now };
 
-    // Case 1: Scanning for Guardian during checkout
-    if (scanningGuardian && checkoutChild && userData?.churchId) {
-      const guardian = allGuardians.find(g => 
-        g.childIds?.includes(checkoutChild.childId) && 
-        g.qrToken === decodedText && 
-        g.active === true
-      );
-
-      if (guardian) {
-        await processCheckout(checkoutChild, guardian.id, `${guardian.firstName} ${guardian.lastName}`);
-      } else {
-        // Fallback to network
-        setLoading(true);
-        try {
-          const guardians = await getCollection("guardians", [
-            where("churchId", "==", userData.churchId),
-            where("childIds", "array-contains", checkoutChild.childId),
-            where("qrToken", "==", decodedText),
-            where("active", "==", true)
-          ]);
-
-          if (guardians && guardians.length > 0) {
-            const g = guardians[0] as any;
-            await processCheckout(checkoutChild, g.id, `${g.firstName} ${g.lastName}`);
-          } else {
-            showErrorToast("Unauthorized guardian QR code");
-          }
-        } catch (err) {
-          console.error(err);
-          showErrorToast("Verification failed");
-        } finally {
-          setLoading(false);
-        }
-      }
-      setScanningGuardian(false);
-      return;
-    }
-
-    // Case 2: Group Scan
+    // Case 1: Group Scan
     if (decodedText.startsWith("group:")) {
       const childIds = decodedText.replace("group:", "").split(",");
       const foundChildren = [];
@@ -322,6 +260,7 @@ export default function VolunteerDashboard() {
       }
       
       if (foundChildren.length > 0) {
+        setAlreadyCheckedIn(null);
         setScannedChildren(foundChildren);
         
         // Auto-assign rooms for group members
@@ -341,12 +280,16 @@ export default function VolunteerDashboard() {
       return;
     }
 
-    // Case 3: Scanning for Child (Check-in or initiate Check-out)
-    const alreadyCheckedIn = checkedInChildren.find(c => c.childId === decodedText || c.qrCode === decodedText);
-    
-    if (alreadyCheckedIn) {
-      setCheckoutChild(alreadyCheckedIn);
-      setShowCheckoutModal(true);
+    // Case 2: Scanning a child's QR.
+    // A child who is already in gets a signpost rather than a checkout. Routing
+    // a child's own QR into the release path was how a check-in scan could
+    // accidentally become a pickup; releasing a child now needs the collecting
+    // adult's QR, over in the Check Out tab.
+    const existing = checkedInChildren.find(c => c.childId === decodedText || c.qrCode === decodedText);
+
+    if (existing) {
+      setScannedChildren([]);
+      setAlreadyCheckedIn(existing);
       return;
     }
 
@@ -533,169 +476,6 @@ export default function VolunteerDashboard() {
     }
   };
 
-  const processCheckout = async (record: any, guardianId: string, guardianName: string = "", isOverride = false, reason = "") => {
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      const result = await safeFetch("/api/check-out", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          checkinId: record.id,
-          volunteerId: user?.uid,
-          volunteerName: userData?.firstName && userData?.lastName 
-            ? `${userData.firstName} ${userData.lastName}` 
-            : (user?.displayName || user?.email || "Volunteer"),
-          guardianId,
-          guardianName,
-          overrideReason: isOverride ? reason : null
-        })
-      });
-
-      if (!result.ok) {
-        if (result.status === 409) {
-          showErrorToast(result.error);
-          return;
-        }
-        throw new Error(result.error || "Server error");
-      }
-
-      showSuccessToast(`${record.childName} checked out successfully!`);
-      setShowCheckoutModal(false);
-      setShowOverrideModal(false);
-      setCheckoutChild(null);
-      setOverrideReason("");
-      setActiveTab("list");
-    } catch (err) {
-      console.warn("Checkout API failed, falling back to local update:", err);
-      try {
-        await updateDocument("checkins", record.id, {
-          checkOutTime: new Date().toISOString(),
-          status: "checked-out",
-          checkOutVolunteerId: user?.uid,
-          checkOutVolunteerName: userData?.firstName && userData?.lastName 
-            ? `${userData.firstName} ${userData.lastName}` 
-            : (user?.displayName || user?.email || "Volunteer"),
-          guardianId: guardianId || "admin_override",
-          guardianName: guardianName || (isOverride ? "Admin Override" : "Guardian"),
-          overrideReason: isOverride ? reason : null
-        });
-        showSuccessToast(`${record.childName} checked out successfully!`);
-        setShowCheckoutModal(false);
-        setShowOverrideModal(false);
-        setCheckoutChild(null);
-        setOverrideReason("");
-        setActiveTab("list");
-      } catch (localErr) {
-        console.error(localErr);
-        showErrorToast("Checkout failed");
-      }
-    }
-  };
-
-  const handleAdminOverride = async () => {
-    if (!overrideReason.trim()) {
-      showErrorToast("Please provide a reason for override");
-      return;
-    }
-    if (overridePin.length !== 4) {
-      showErrorToast("Please enter a 4-digit PIN");
-      return;
-    }
-
-    // Rate limiting check
-    if (lockoutUntil && Date.now() < lockoutUntil) {
-      const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
-      showErrorToast(`Too many failed attempts. Try again in ${remaining} seconds.`);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      const result = await safeFetch("/api/verify-pin", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ churchId: userData.churchId, pin: overridePin })
-      });
-      
-      // A throttled request is not a wrong PIN. Without this branch the 429 falls
-      // through to the failure path below, tells the volunteer the PIN is
-      // incorrect, and writes a failed_admin_override the volunteer never made.
-      if (result.status === 429) {
-        showErrorToast("Too many PIN attempts. Please wait a few minutes and try again.");
-        return;
-      }
-
-      const isValid = result.ok && result.data?.isValid;
-      
-      if (isValid) {
-        // Success
-        await processCheckout(checkoutChild, "admin_override", "Admin Override", true, overrideReason);
-        
-        // Log audit event via server for better security
-        const auditToken = await auth.currentUser?.getIdToken();
-        await fetch("/api/audit", {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${auditToken}`
-          },
-          body: JSON.stringify({
-            churchId: userData.churchId,
-            userId: user.uid,
-            action: "admin_override_checkout",
-            category: "security",
-            details: {
-              childId: checkoutChild.childId,
-              childName: checkoutChild.childName,
-              reason: overrideReason,
-              method: "admin_override"
-            }
-          })
-        });
-
-        setFailedAttempts(0);
-        setOverridePin("");
-      } else {
-        // Failure
-        const newAttempts = failedAttempts + 1;
-        setFailedAttempts(newAttempts);
-        
-        if (newAttempts >= 3) {
-          const lockoutTime = Date.now() + (60 * 1000); // 1 minute lockout
-          setLockoutUntil(lockoutTime);
-          showErrorToast("Incorrect PIN. Too many failed attempts. Locked for 1 minute.");
-        } else {
-          showErrorToast(`Incorrect PIN. ${3 - newAttempts} attempts remaining.`);
-        }
-        
-        // Log failed attempt
-        await logAudit({
-          action: "failed_admin_override",
-          category: "security",
-          details: {
-            childId: checkoutChild.childId,
-            childName: checkoutChild.childName,
-            attempts: newAttempts
-          },
-          churchId: userData.churchId,
-          userId: user.uid
-        });
-      }
-    } catch (err) {
-      console.error(err);
-      showErrorToast("Override verification failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (role !== "admin" && role !== "volunteer" && !roles.includes("master_admin")) {
     return <div className="text-center py-12">Access denied. Volunteer permissions required.</div>;
   }
@@ -793,12 +573,10 @@ export default function VolunteerDashboard() {
             <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-6">
               <div className="text-center space-y-2">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                  {scanningGuardian ? "Scan Guardian QR" : "Scan Child QR Code"}
+                  Scan Child QR Code
                 </h3>
                 <p className="text-gray-500 dark:text-gray-400">
-                  {scanningGuardian 
-                    ? "Verify the authorized guardian's identity" 
-                    : "Position the QR code within the frame"}
+                  Position the QR code within the frame
                 </p>
               </div>
               <QRScanner 
@@ -810,19 +588,57 @@ export default function VolunteerDashboard() {
                   }
                 }}
               />
-              
-              {scanningGuardian && (
-                <button 
-                  onClick={() => setScanningGuardian(false)}
-                  className="w-full py-2 text-sm font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                >
-                  Cancel Guardian Scan
-                </button>
-              )}
             </div>
           </div>
 
           <AnimatePresence>
+            {alreadyCheckedIn && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="bg-white dark:bg-gray-800 p-6 sm:p-8 rounded-3xl shadow-xl border-2 border-amber-200 dark:border-amber-900/50 space-y-5"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="h-12 w-12 rounded-2xl bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                    <AlertCircle className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xl font-bold text-gray-900 dark:text-white">
+                      {alreadyCheckedIn.childName} is already checked in
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      {alreadyCheckedIn.roomName}
+                      {alreadyCheckedIn.checkInTime && ` \u00b7 since ${format(new Date(alreadyCheckedIn.checkInTime), "h:mm a")}`}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  To check this child out, scan the collecting parent or guardian's QR code in the Check Out tab.
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={() => {
+                      setAlreadyCheckedIn(null);
+                      setActiveTab("checkout");
+                    }}
+                    className="flex-1 py-4 rounded-2xl bg-primary hover:bg-primary/90 text-white font-bold transition-all transform active:scale-[0.99] flex items-center justify-center gap-2"
+                  >
+                    <LogOut className="h-5 w-5" />
+                    <span>Go to Check Out</span>
+                  </button>
+                  <button
+                    onClick={() => setAlreadyCheckedIn(null)}
+                    className="py-4 px-6 rounded-2xl border-2 border-gray-100 dark:border-gray-700 font-bold text-gray-600 dark:text-gray-300 hover:border-gray-200 dark:hover:border-gray-600 transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
             {scannedChildren.length > 0 && (
               <motion.div
                 id="scan-result"
@@ -1119,9 +935,9 @@ export default function VolunteerDashboard() {
 
       {activeTab === "list" && (
         <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
-          <div className="p-6 border-b border-gray-50 dark:border-gray-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center space-x-3">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white">Currently Checked In</h3>
+          <div className="p-4 sm:p-6 border-b border-gray-50 dark:border-gray-700 flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <h3 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Currently Checked In</h3>
               <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
                 <Users className="h-4 w-4" />
                 <span>{checkedInChildren.length} children</span>
@@ -1134,7 +950,7 @@ export default function VolunteerDashboard() {
                 placeholder="Search child name..."
                 value={attendanceSearch}
                 onChange={(e) => setAttendanceSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-white"
+                className="w-full pl-10 pr-4 py-3 sm:py-2 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 dark:text-white"
               />
             </div>
           </div>
@@ -1142,74 +958,85 @@ export default function VolunteerDashboard() {
             {checkedInChildren
               .filter(record => record.childName.toLowerCase().includes(attendanceSearch.toLowerCase()))
               .map((record) => (
-              <div key={record.id} className="p-6 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors">
-                <div className="flex items-center space-x-4">
-                  <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-xl flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-primary transition-all"
+              <div
+                key={record.id}
+                className="p-4 sm:p-6 hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors"
+              >
+                <div className="flex items-center gap-3 sm:gap-4">
+                  {/* The whole identity block opens the child's details --
+                      a bigger target than the old avatar-only hit area, which
+                      matters on a phone held one-handed. */}
+                  <button
                     onClick={() => {
                       setSelectedChildId(record.childId);
+                      setOverrideRecord(record);
                       setShowChildDetailsModal(true);
                     }}
+                    className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0 text-left group"
                   >
-                    <Users className="h-6 w-6 text-primary dark:text-primary/80" />
-                  </div>
-                  <div>
-                    <p 
-                      className="font-bold text-gray-900 dark:text-white cursor-pointer hover:text-primary transition-colors"
-                      onClick={() => {
-                        setSelectedChildId(record.childId);
-                        setShowChildDetailsModal(true);
-                      }}
-                    >
-                      {record.childName}
-                    </p>
-                    <div className="flex flex-col space-y-1">
-                      <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
-                        <span className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-2 py-0.5 rounded-md font-bold uppercase">{record.roomName}</span>
-                        <span>•</span>
-                        <Clock className="h-3 w-3" />
-                        <span>{format(new Date(record.checkInTime), "h:mm a")}</span>
-                      </div>
-                      {record.eventName && (
-                        <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
-                          {record.eventName} • {record.serviceName}
-                        </p>
+                    <div className="h-12 w-12 sm:h-14 sm:w-14 bg-primary/10 dark:bg-primary/20 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0 group-hover:ring-2 group-hover:ring-primary transition-all">
+                      {childPhoto(record.childId) ? (
+                        <img
+                          src={childPhoto(record.childId)}
+                          alt={record.childName}
+                          className="h-full w-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <Users className="h-6 w-6 text-primary dark:text-primary/80" />
                       )}
                     </div>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
+
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-gray-900 dark:text-white truncate group-hover:text-primary transition-colors">
+                        {record.childName}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        {record.roomName && (
+                          <span className="bg-primary/10 dark:bg-primary/20 text-primary dark:text-primary/80 px-2 py-0.5 rounded-md font-bold uppercase text-[10px] tracking-wider">
+                            {record.roomName}
+                          </span>
+                        )}
+                        <span className="inline-flex items-center">
+                          <Clock className="h-3 w-3 mr-1" />
+                          {format(new Date(record.checkInTime), "h:mm a")}
+                        </span>
+                        {/* Indicator only. The substance stays behind a tap,
+                            where the volunteer who needs it will look. */}
+                        {childHasAllergies(record.childId) && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-900/30 text-[10px] font-bold uppercase tracking-wider text-red-700 dark:text-red-300">
+                            <AlertTriangle className="h-3 w-3 mr-1" />
+                            Allergies
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+
                   <button
                     onClick={() => {
                       setMoveChild(record);
                       setNewRoomForMove(record.roomId);
                       setShowMoveModal(true);
                     }}
-                    className="p-2 text-gray-400 hover:text-primary transition-colors"
+                    className="p-3 -mr-1 text-gray-400 hover:text-primary transition-colors flex-shrink-0"
                     title="Move Room"
+                    aria-label={`Move ${record.childName} to another room`}
                   >
                     <ChevronRight className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCheckoutChild(record);
-                      setShowCheckoutModal(true);
-                    }}
-                    className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                  >
-                    Check Out
                   </button>
                 </div>
               </div>
             ))}
             {checkedInChildren.length === 0 && (
-              <div className="p-20 text-center space-y-4">
+              <div className="p-10 sm:p-20 text-center space-y-4">
                 <div className="h-20 w-20 bg-gray-50 dark:bg-gray-900/50 rounded-full flex items-center justify-center mx-auto">
                   <Users className="h-10 w-10 text-gray-200 dark:text-gray-700" />
                 </div>
                 <div className="space-y-1">
                   <p className="text-xl font-bold text-gray-900 dark:text-white">No children checked in</p>
                   <p className="text-gray-500 dark:text-gray-400 max-w-xs mx-auto">
-                    Once children are checked in, they will appear here for management and checkout.
+                    Once children are checked in, they will appear here. Tap a child to see their details.
                   </p>
                 </div>
                 <button 
@@ -1283,165 +1110,32 @@ export default function VolunteerDashboard() {
         )}
       </AnimatePresence>
 
-      {/* Checkout Modal */}
-      <AnimatePresence>
-        {showCheckoutModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                setShowCheckoutModal(false);
-                setScanningGuardian(false);
-              }}
-              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
-            >
-              <div className="p-8 space-y-8">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <ShieldCheck className="h-6 w-6 text-green-600 dark:text-green-400" />
-                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Secure Pickup</h2>
-                  </div>
-                  <button onClick={() => setShowCheckoutModal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full">
-                    <X className="h-6 w-6 text-gray-400 dark:text-gray-500" />
-                  </button>
-                </div>
-
-                <div className="text-center space-y-2">
-                  <p className="text-gray-500 dark:text-gray-400">Verifying pickup for</p>
-                  <p className="text-3xl font-bold text-gray-900 dark:text-white">{checkoutChild?.childName}</p>
-                </div>
-
-                <div className="space-y-4">
-                  <button
-                    onClick={() => {
-                      setActiveTab("scan");
-                      setScanningGuardian(true);
-                      setShowCheckoutModal(false);
-                    }}
-                    className="w-full bg-primary text-white p-6 rounded-2xl font-bold flex flex-col items-center justify-center space-y-2 hover:bg-primary/90 transition-all"
-                  >
-                    <Scan className="h-8 w-8" />
-                    <span>Scan Guardian QR Code</span>
-                  </button>
-
-                  <div className="relative py-2">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-100 dark:border-gray-700"></div>
-                    </div>
-                    <div className="relative flex justify-center text-xs">
-                      <span className="px-2 bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500">Or Admin Override</span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setShowOverrideModal(true)}
-                    className="w-full bg-gray-50 dark:bg-gray-900/50 text-gray-600 dark:text-gray-300 p-4 rounded-2xl font-bold flex items-center justify-center space-x-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all"
-                  >
-                    <ShieldAlert className="h-5 w-5" />
-                    <span>Manual Verification</span>
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
- 
-      <ChildDetailsModal 
-        childId={selectedChildId || ""} 
-        isOpen={showChildDetailsModal} 
-        onClose={() => setShowChildDetailsModal(false)} 
+      <ChildDetailsModal
+        childId={selectedChildId || ""}
+        isOpen={showChildDetailsModal}
+        onClose={() => setShowChildDetailsModal(false)}
+        overrideCheckout={
+          // Offered only for a child who is actually checked in. This is the
+          // route for when the collecting adult has no phone or QR on them.
+          overrideRecord
+            ? {
+                childName: overrideRecord.childName,
+                onRequest: () => {
+                  setShowChildDetailsModal(false);
+                  setShowOverrideModal(true);
+                },
+              }
+            : undefined
+        }
       />
 
-      {/* Override Modal */}
-      <AnimatePresence>
-        {showOverrideModal && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowOverrideModal(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-md"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
-            >
-              <div className="p-8 space-y-6">
-                <div className="flex items-center space-x-3">
-                  <Key className="h-6 w-6 text-red-600 dark:text-red-400" />
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Admin Override</h2>
-                </div>
+      <AdminOverrideModal
+        record={overrideRecord}
+        isOpen={showOverrideModal}
+        onClose={() => setShowOverrideModal(false)}
+        onSuccess={() => setOverrideRecord(null)}
+      />
 
-                <div className="space-y-4">
-                  <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-900/30">
-                    <p className="text-sm text-red-600 dark:text-red-400 font-medium">
-                      Use this only if the guardian is physically present but cannot scan their QR code. This action will be logged.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Admin Override PIN</label>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                      <input
-                        type="password"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        maxLength={4}
-                        value={overridePin}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, '');
-                          if (val.length <= 4) setOverridePin(val);
-                        }}
-                        placeholder="Enter 4-digit PIN"
-                        className="w-full pl-12 pr-4 py-4 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 dark:text-white text-center text-2xl tracking-[1em] font-bold"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Reason for Override</label>
-                    <textarea
-                      value={overrideReason}
-                      onChange={(e) => setOverrideReason(e.target.value)}
-                      placeholder="e.g. Guardian forgot phone, verified ID manually"
-                      className="w-full p-4 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 dark:text-white h-24 resize-none"
-                    />
-                  </div>
-
-                  <div className="flex space-x-3">
-                    <button
-                      onClick={() => setShowOverrideModal(false)}
-                      className="flex-1 py-4 font-bold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleAdminOverride}
-                      disabled={!overrideReason.trim() || loading || overridePin.length !== 4}
-                      className="flex-[2] bg-red-600 text-white py-4 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-100 dark:shadow-none disabled:opacity-50"
-                    >
-                      {loading ? "Processing..." : "Confirm Override"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

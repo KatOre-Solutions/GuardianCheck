@@ -335,13 +335,17 @@ const CheckInSchema = z.object({
   parentId: z.string().optional()
 });
 
+// Override check-outs only. A guardian-QR pickup goes through
+// /api/check-out-guardian, which resolves the guardian from the scanned token
+// server-side. `guardianId`/`guardianName` are deliberately absent: this
+// endpoint used to write whatever the caller named straight into the pickup
+// record, which let any volunteer release any child under any name. Zod strips
+// unknown keys, so a caller still sending them is ignored rather than obeyed.
 const CheckOutSchema = z.object({
   checkinId: z.string().min(1),
   volunteerId: z.string().min(1),
   volunteerName: z.string().optional().nullable(),
-  guardianId: z.string().optional().nullable(),
-  guardianName: z.string().optional().nullable(),
-  overrideReason: z.string().optional().nullable()
+  overrideReason: z.string().min(1).max(500)
 });
 
 // The guardian's QR token is the credential for a normal (non-override)
@@ -1108,7 +1112,7 @@ async function startServer() {
 
   // Atomic Check-out Endpoint
   app.post("/api/check-out", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(CheckOutSchema), async (req, res) => {
-    const { checkinId, volunteerId, guardianId, guardianName, overrideReason } = req.body;
+    const { checkinId, volunteerId, overrideReason } = req.body;
     const { churchId } = req.user;
 
     try {
@@ -1138,9 +1142,9 @@ async function startServer() {
           checkOutVolunteerName: (req.user.firstName || req.user.lastName) 
             ? `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() 
             : (req.user.name || req.user.email || "Volunteer"),
-          guardianId: guardianId || (overrideReason ? "admin_override" : "unknown"),
-          guardianName: guardianName || (overrideReason ? "Admin Override" : "Guardian"),
-          overrideReason: overrideReason || null,
+          guardianId: "admin_override",
+          guardianName: "Admin Override",
+          overrideReason,
           updatedAt: new Date().toISOString()
         };
 
