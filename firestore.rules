@@ -126,9 +126,20 @@ service cloud.firestore {
     // A user document confers privilege through BOTH `role` and the `roles`
     // array -- isMasterAdmin() reads either. Any rule that guards one must
     // guard the other, or it guards nothing.
+    // `volunteer` belongs on this list. It was omitted, and a volunteer is not
+    // a minor privilege here: the role grants read access to every child in a
+    // church -- names, ages, photos, allergies -- plus child_medical notes and
+    // the guardians collection, including the qrToken that authorises
+    // collecting a child. Since user documents are created from the browser at
+    // signup and `churchId` is part of that same payload, anyone able to sign
+    // up could mint themselves a volunteer in a church of their choosing.
+    //
+    // Self-service may set `parent` and nothing else. Volunteer and admin
+    // accounts are created server-side with the Admin SDK, through the invite
+    // flow, which bypasses these rules entirely.
     function grantsElevatedRole(data) {
-      return data.get('role', '') in ['admin', 'master_admin'] ||
-             data.get('roles', []).hasAny(['admin', 'master_admin']);
+      return data.get('role', '') in ['volunteer', 'admin', 'master_admin'] ||
+             data.get('roles', []).hasAny(['volunteer', 'admin', 'master_admin']);
     }
 
     // True when an update leaves `role` and `roles` exactly as they were.
@@ -288,7 +299,30 @@ service cloud.firestore {
     }
 
     match /churches/{churchId} {
-      allow read: if isAuthenticated() || (request.query.limit == 1); // Allow slug lookup for routing
+      // Members of this church only.
+      //
+      // This rule used to read:
+      //
+      //   allow read: if isAuthenticated() || (request.query.limit == 1);
+      //
+      // Two separate holes. `isAuthenticated()` checks that someone is signed
+      // in, never which church they belong to -- so any user of any tenant, in
+      // any role, could read every church document and list the whole
+      // collection. And `request.query.limit == 1` is evaluated on list
+      // operations without ever consulting request.auth, so an anonymous
+      // visitor could page the collection one document at a time with an
+      // orderBy cursor.
+      //
+      // These documents carry adminEmail, plan, the subscription map and the
+      // PayFast subscription token. The limit(1) clause was there so the public
+      // landing page could resolve a slug; that lookup now reads
+      // `church_public`, which holds only name, slug and branding.
+      //
+      // `churchId` is the document id, so this is evaluated per document and
+      // constrains list operations as well as gets.
+      allow read: if isMasterAdmin() || (
+        isApproved() && getUserData().churchId == churchId
+      );
       allow create: if isAuthenticated() && (
         isMasterAdmin() || 
         (request.resource.data.adminEmail == request.auth.token.email && request.resource.data.status == 'trialing')
@@ -524,7 +558,14 @@ service cloud.firestore {
       // Layer 1: Access Lockdown
       // Only Admins can list or read invitations directly.
       // Recipients use the /api/validate-invite endpoint.
-      allow list: if isMasterAdmin() || (isAdmin() && getUserData().churchId != null);
+      // Scoped to the admin's own church. This checked only that the caller
+      // was an admin of *some* church, so any admin could list every
+      // invitation in the system -- each carrying a 64-character token that
+      // /api/accept-invite exchanges for a user account with that invitation's
+      // role and churchId. Cross-tenant escalation, up to and including admin.
+      allow list: if isMasterAdmin() || (
+        isAdmin() && resource.data.churchId == getUserData().churchId
+      );
       allow get: if isMasterAdmin() || 
                    (isAuthenticated() && (
                      request.auth.token.email == resource.data.email || 
@@ -550,11 +591,6 @@ service cloud.firestore {
       allow read: if isMasterAdmin();
       allow create: if isAuthenticated();
       allow update, delete: if false;
-    }
-
-    match /test/{docId} {
-      allow read: if true;
-      allow write: if false;
     }
 
     match /email_logs/{logId} {
