@@ -286,10 +286,17 @@ const registrationLimiter = rateLimit({
   message: { error: "Too many registration attempts. Please try again in an hour." }
 });
 
+// Guards the Admin Override PIN used for child checkout (POST /api/verify-pin).
+// Only wrong guesses spend the budget: that endpoint answers 200 {isValid:false}
+// for a bad PIN, so success cannot be inferred from the status code alone --
+// without the requestWasSuccessful override, skipSuccessfulRequests would skip
+// failed guesses too and neuter this limiter entirely.
 const pinLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5, // Very strict for PIN verification
   keyGenerator,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (_req: any, res: any) => res.statusCode < 400 && res.locals.pinValid === true,
   message: { error: "Too many PIN attempts. Please try again later." }
 });
 
@@ -826,7 +833,11 @@ async function startServer() {
     }
   });
 
-  app.post("/api/verify-pin", pinLimiter, authenticateToken, requireVolunteer, validate(VerifyPinSchema), async (req, res) => {
+  // pinLimiter runs AFTER authenticateToken on purpose: the shared keyGenerator
+  // falls back to the request IP whenever req.user is unset, which put every
+  // volunteer on a church's shared WiFi into a single 5-per-15-min bucket and
+  // blocked legitimate overrides. Authenticating first keys it per volunteer uid.
+  app.post("/api/verify-pin", authenticateToken, pinLimiter, requireVolunteer, validate(VerifyPinSchema), async (req, res) => {
     const { pin } = req.body;
     const churchId = req.user.churchId;
     
@@ -844,6 +855,9 @@ async function startServer() {
 
       const hash = crypto.createHash("sha256").update(pin).digest("hex");
       const isValid = hash === securityDoc.data().adminOverridePinHash;
+
+      // Read by pinLimiter.requestWasSuccessful so a correct PIN costs no budget.
+      res.locals.pinValid = isValid;
 
       res.json({ isValid });
     } catch (error: any) {
