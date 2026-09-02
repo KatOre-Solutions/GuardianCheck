@@ -344,6 +344,18 @@ const CheckOutSchema = z.object({
   overrideReason: z.string().optional().nullable()
 });
 
+// The guardian's QR token is the credential for a normal (non-override)
+// checkout. It is re-sent with the commit call rather than trusted from the
+// lookup, so authorisation is decided at write time, not read time.
+const GuardianLookupSchema = z.object({
+  qrToken: z.string().min(8).max(64)
+});
+
+const GuardianCheckOutSchema = z.object({
+  qrToken: z.string().min(8).max(64),
+  checkinIds: z.array(z.string().min(1).max(128)).min(1).max(20)
+});
+
 const InviteUserSchema = z.object({
   email: z.string().email(),
   firstName: z.string().min(1),
@@ -969,7 +981,7 @@ async function startServer() {
   });
 
   // Atomic Check-in Endpoint
-  app.post("/api/check-in", peakLimiter, authenticateToken, requirePolicyAcceptance, requireVolunteer, validate(CheckInSchema), async (req, res) => {
+  app.post("/api/check-in", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(CheckInSchema), async (req, res) => {
     const { childId, roomId, serviceId, volunteerId, checkedInBy, qrCode, parentId } = req.body;
     const churchId = req.user.churchId;
 
@@ -1095,7 +1107,7 @@ async function startServer() {
   });
 
   // Atomic Check-out Endpoint
-  app.post("/api/check-out", peakLimiter, authenticateToken, requirePolicyAcceptance, requireVolunteer, validate(CheckOutSchema), async (req, res) => {
+  app.post("/api/check-out", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(CheckOutSchema), async (req, res) => {
     const { checkinId, volunteerId, guardianId, guardianName, overrideReason } = req.body;
     const { churchId } = req.user;
 
@@ -1166,6 +1178,259 @@ async function startServer() {
         error: error.message,
         traceId: req.traceId
       });
+    }
+  });
+
+  // --- Guardian-QR checkout -------------------------------------------------
+  // The normal (non-override) checkout path. Unlike /api/check-out, which
+  // accepts whatever guardian the caller names, these two resolve the guardian
+  // from the scanned QR token server-side and verify the guardian->child link
+  // before writing. The browser cannot assert who collected a child.
+
+  // Resolves a scanned guardian QR token within the caller's church.
+  // Returns null for missing, deleted or deactivated guardians alike -- the
+  // caller turns all three into one message so the endpoint is not an oracle
+  // for which tokens exist.
+  const resolveGuardianByToken = async (req: any, churchId: string, qrToken: string) => {
+    const snap = await db.collection("guardians")
+      .where("churchId", "==", churchId)
+      .where("qrToken", "==", qrToken)
+      .limit(2)
+      .get();
+    req.firestoreOps.reads++;
+
+    if (snap.empty) return null;
+    if (snap.size > 1) {
+      // Tokens are meant to be unique. Refuse to guess which guardian is meant.
+      console.error("Duplicate guardian qrToken in church " + churchId + " (traceId " + req.traceId + ")");
+      return null;
+    }
+
+    const doc = snap.docs[0];
+    const data = doc.data();
+    if (data.deleted === true || data.active !== true) return null;
+
+    return {
+      id: doc.id,
+      firstName: data.firstName || "",
+      lastName: data.lastName || "",
+      relationship: data.relationship || "",
+      childIds: Array.isArray(data.childIds) ? data.childIds : []
+    };
+  };
+
+  const guardianDisplayName = (guardian: any) =>
+    ((guardian.firstName || "") + " " + (guardian.lastName || "")).trim() || "Guardian";
+
+  const volunteerDisplayName = (user: any) =>
+    (user.firstName || user.lastName)
+      ? ((user.firstName || "") + " " + (user.lastName || "")).trim()
+      : (user.name || user.email || "Volunteer");
+
+  // Scan a guardian's QR, get back the children they may collect right now.
+  // Eligibility is decided here, not in the browser: currently-checked-in
+  // children whose id appears in this guardian's childIds.
+  app.post("/api/guardian-lookup", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(GuardianLookupSchema), async (req, res) => {
+    const { qrToken } = req.body;
+    const { churchId } = req.user;
+
+    try {
+      const guardian = await resolveGuardianByToken(req, churchId, qrToken);
+      if (!guardian) {
+        return res.status(404).json({
+          error: "Guardian not found or not active",
+          code: "GUARDIAN_NOT_FOUND",
+          traceId: req.traceId
+        });
+      }
+
+      // Church-wide active checkins, narrowed in memory by the guardian's
+      // children. An `in` filter on childId would cap us at 10 siblings.
+      const activeSnap = await db.collection("checkins")
+        .where("churchId", "==", churchId)
+        .where("status", "==", "checked-in")
+        .get();
+      req.firestoreOps.reads++;
+
+      const eligible: any[] = [];
+      const checkedInChildIds = new Set<string>();
+      activeSnap.docs.forEach((doc: any) => {
+        const c = doc.data();
+        if (!guardian.childIds.includes(c.childId)) return;
+        checkedInChildIds.add(c.childId);
+        eligible.push({
+          checkinId: doc.id,
+          childId: c.childId,
+          childName: c.childName,
+          roomName: c.roomName || null,
+          checkInTime: c.checkInTime
+        });
+      });
+
+      // Name the rest so the volunteer can see the child was considered and is
+      // simply not checked in -- an empty list otherwise reads as a fault.
+      const remainingIds = guardian.childIds.filter((id: string) => !checkedInChildIds.has(id));
+      const notCheckedIn: any[] = [];
+      if (remainingIds.length > 0) {
+        const refs = remainingIds.map((id: string) => db.collection("children").doc(id));
+        const childDocs = await db.getAll(...refs);
+        req.firestoreOps.reads += refs.length;
+        childDocs.forEach((doc: any) => {
+          if (!doc.exists) return;
+          const child = doc.data();
+          if (child.churchId !== churchId || child.deleted === true) return;
+          notCheckedIn.push({
+            childId: doc.id,
+            childName: ((child.firstName || "") + " " + (child.lastName || "")).trim()
+          });
+        });
+      }
+
+      res.json({
+        guardian: {
+          id: guardian.id,
+          firstName: guardian.firstName,
+          lastName: guardian.lastName,
+          relationship: guardian.relationship
+        },
+        eligible,
+        notCheckedIn
+      });
+    } catch (error: any) {
+      console.error("Guardian lookup failed:", error.message);
+      res.status(500).json({ error: "Internal server error", traceId: req.traceId });
+    }
+  });
+
+  // Check out one or more children against a scanned guardian QR.
+  // Each child gets its own transaction: the checkin documents are independent,
+  // and a sibling whose record was already closed by another volunteer must not
+  // abort the rest of the family. Per-child outcomes come back in `results`.
+  app.post("/api/check-out-guardian", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(GuardianCheckOutSchema), async (req, res) => {
+    const { qrToken, checkinIds } = req.body;
+    const { churchId } = req.user;
+
+    try {
+      // Re-resolved at commit time, so a guardian deactivated between the
+      // lookup and the confirm tap cannot collect. The lookup grants nothing.
+      const guardian = await resolveGuardianByToken(req, churchId, qrToken);
+      if (!guardian) {
+        return res.status(404).json({
+          error: "Guardian not found or not active",
+          code: "GUARDIAN_NOT_FOUND",
+          traceId: req.traceId
+        });
+      }
+
+      const checkOutVolunteerName = volunteerDisplayName(req.user);
+      const guardianName = guardianDisplayName(guardian);
+
+      const results: any[] = [];
+      const checkedOut: any[] = [];
+
+      // Sequential: a family is a handful of children, and this keeps the
+      // Firestore op counters and the audit ordering honest.
+      for (const checkinId of Array.from(new Set<string>(checkinIds))) {
+        const checkinRef = db.collection("checkins").doc(checkinId);
+        try {
+          const outcome: any = await db.runTransaction(async (transaction: any) => {
+            const doc = await transaction.get(checkinRef);
+            req.firestoreOps.reads++;
+
+            if (!doc.exists) return { outcome: "not-found" };
+            const c = doc.data();
+            if (c.churchId !== churchId) return { outcome: "not-found" };
+            if (!guardian.childIds.includes(c.childId)) {
+              return { outcome: "not-authorized", childName: c.childName };
+            }
+            if (c.status !== "checked-in") {
+              // Goal state already reached -- benign, so a double tap or a
+              // retry is idempotent rather than an error the volunteer must
+              // interpret mid-queue.
+              return { outcome: "already-checked-out", childName: c.childName };
+            }
+
+            const updateData = {
+              checkOutTime: new Date().toISOString(),
+              status: "checked-out",
+              checkOutVolunteerId: req.user.uid,
+              checkOutVolunteerName,
+              guardianId: guardian.id,
+              guardianName,
+              overrideReason: null,
+              updatedAt: new Date().toISOString()
+            };
+            transaction.update(checkinRef, updateData);
+            req.firestoreOps.writes++;
+            return { outcome: "checked-out", childName: c.childName, record: { ...c, ...updateData } };
+          });
+
+          results.push({ checkinId, childName: outcome.childName || null, outcome: outcome.outcome });
+          if (outcome.outcome === "checked-out") checkedOut.push(outcome.record);
+        } catch (err: any) {
+          console.error("Checkout failed for " + checkinId + ":", err.message);
+          results.push({ checkinId, childName: null, outcome: "error" });
+        }
+      }
+
+      const countOf = (name: string) => results.filter(r => r.outcome === name).length;
+      const summary = {
+        requested: results.length,
+        checkedOut: countOf("checked-out"),
+        alreadyOut: countOf("already-checked-out"),
+        failed: countOf("not-authorized") + countOf("not-found") + countOf("error")
+      };
+
+      // The first server-written record of who collected a child. The mutated
+      // checkin doc is the pickup record, but it is overwritten in place; this
+      // is the append-only trail beside it.
+      try {
+        await db.collection("audit_logs").add({
+          churchId,
+          userId: req.user.uid,
+          action: "guardian_checkout",
+          category: "security",
+          details: {
+            guardianId: guardian.id,
+            guardianName,
+            method: "guardian_qr",
+            results,
+            summary
+          },
+          timestamp: new Date().toISOString(),
+          source: "server",
+          traceId: req.traceId
+        });
+        req.firestoreOps.writes++;
+      } catch (err: any) {
+        console.error("Guardian checkout audit write failed:", err.message);
+      }
+
+      if (checkedOut.length > 0) {
+        const churchData = await getCachedDoc(req, "churches", churchId, churchId);
+        const churchName = churchData?.name || "Church";
+        for (const record of checkedOut) {
+          try {
+            await emailService.sendNotification(churchId, record.childId, {
+              childName: record.childName,
+              time: record.checkOutTime,
+              roomName: record.roomName,
+              churchName,
+              serviceName: record.serviceName,
+              eventType: 'check-out',
+              volunteerName: record.checkOutVolunteerName,
+              guardianName: record.guardianName
+            });
+          } catch (err: any) {
+            console.error("Checkout notification failed:", err.message);
+          }
+        }
+      }
+
+      res.json({ results, summary });
+    } catch (error: any) {
+      console.error("Guardian check-out failed:", error.message);
+      res.status(500).json({ error: "Internal server error", traceId: req.traceId });
     }
   });
 
@@ -1510,7 +1775,7 @@ async function startServer() {
   });
 
   // Move Room Endpoint
-  app.post("/api/move-room", peakLimiter, authenticateToken, requirePolicyAcceptance, requireVolunteer, validate(MoveRoomSchema), async (req, res) => {
+  app.post("/api/move-room", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(MoveRoomSchema), async (req, res) => {
     const { checkinId, newRoomId, volunteerId } = req.body;
     const { churchId } = req.user;
 

@@ -1,0 +1,458 @@
+/**
+ * Tests for the guardian-QR checkout endpoints.
+ *
+ * Run with `npm run test:checkout`. Needs no emulator and no Firebase --
+ * plain express + a fake in-memory Firestore, both cheap enough to model.
+ *
+ * These exist because /api/check-out never verified that the guardian named in
+ * the request was allowed to collect the child. It took `guardianId` and
+ * `guardianName` from the request body and wrote them straight into the pickup
+ * record, so any authenticated volunteer could release any child in their
+ * church to any name they typed. The guardian<->child check lived only in the
+ * browser, where it decides nothing an attacker has to respect.
+ *
+ * /api/guardian-lookup and /api/check-out-guardian move that decision to the
+ * server: the scanned QR token is re-resolved at commit time and the child must
+ * appear in that guardian's childIds inside the same transaction that flips the
+ * status. The properties worth protecting, and what pins each one down:
+ *
+ *   - a token from another church resolves to nothing        (CROSS_CHURCH)
+ *   - a deactivated guardian cannot collect                  (INACTIVE_GUARDIAN)
+ *   - eligibility is server-decided, not client-supplied     (ELIGIBLE_*)
+ *   - a child outside childIds is refused even if requested  (NOT_AUTHORIZED)
+ *   - one sibling's failure does not abort the family        (PARTIAL)
+ *   - repeating a checkout is benign, not an error           (IDEMPOTENT)
+ *   - the guardian written to the record comes from the doc  (SERVER_DERIVED)
+ *
+ * The express app below mirrors the real handlers rather than importing them,
+ * because server.ts initialises Firebase on import. SOURCE_GUARD at the end
+ * asserts server.ts still matches what is modelled here.
+ */
+
+import express from "express";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+let pass = 0;
+let fail = 0;
+
+const check = (name, expected, actual) => {
+  const ok = expected === actual;
+  if (ok) pass++;
+  else fail++;
+  console.log(`${ok ? "  ok  " : "FAIL  "} ${name}${ok ? "" : `  (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`}`);
+};
+
+// --- Fixtures --------------------------------------------------------------
+
+const CHURCH_A = "church-a";
+const CHURCH_B = "church-b";
+
+const TOKEN_MOM = "guardian_mom00000001";
+const TOKEN_GRAN = "guardian_gran0000002";   // deactivated
+const TOKEN_OTHER = "guardian_other000003";  // belongs to church B
+
+/** Fresh state per test so ordering never matters. */
+function seed() {
+  return {
+    guardians: {
+      g_mom: { id: "g_mom", churchId: CHURCH_A, qrToken: TOKEN_MOM, active: true, firstName: "Naledi", lastName: "Mokoena", relationship: "Parent", childIds: ["c_amahle", "c_bongani", "c_chipo"] },
+      g_gran: { id: "g_gran", churchId: CHURCH_A, qrToken: TOKEN_GRAN, active: false, firstName: "Gogo", lastName: "Mokoena", relationship: "Grandparent", childIds: ["c_amahle"] },
+      g_other: { id: "g_other", churchId: CHURCH_B, qrToken: TOKEN_OTHER, active: true, firstName: "Someone", lastName: "Else", relationship: "Parent", childIds: ["c_amahle"] },
+    },
+    children: {
+      c_amahle: { churchId: CHURCH_A, firstName: "Amahle", lastName: "Mokoena" },
+      c_bongani: { churchId: CHURCH_A, firstName: "Bongani", lastName: "Mokoena" },
+      c_chipo: { churchId: CHURCH_A, firstName: "Chipo", lastName: "Mokoena" },
+      c_stranger: { churchId: CHURCH_A, firstName: "Stranger", lastName: "Child" },
+    },
+    checkins: {
+      // Amahle and Bongani are in; Chipo never checked in today.
+      ci_amahle: { churchId: CHURCH_A, childId: "c_amahle", childName: "Amahle Mokoena", roomName: "Elephants", checkInTime: "2026-09-02T09:05:00.000Z", status: "checked-in" },
+      ci_bongani: { churchId: CHURCH_A, childId: "c_bongani", childName: "Bongani Mokoena", roomName: "Giraffes", checkInTime: "2026-09-02T09:07:00.000Z", status: "checked-in" },
+      // Not one of this guardian's children.
+      ci_stranger: { churchId: CHURCH_A, childId: "c_stranger", childName: "Stranger Child", roomName: "Elephants", checkInTime: "2026-09-02T09:01:00.000Z", status: "checked-in" },
+      // Already collected earlier in the service.
+      ci_closed: { churchId: CHURCH_A, childId: "c_chipo", childName: "Chipo Mokoena", roomName: "Lions", checkInTime: "2026-09-02T08:55:00.000Z", status: "checked-out" },
+    },
+    audit: [],
+  };
+}
+
+// --- The real wiring, modelled ---------------------------------------------
+
+// Verbatim from server.ts.
+const keyGenerator = (req) => req.user?.uid || ipKeyGenerator(req.ip);
+
+function makeApp(db) {
+  const app = express();
+  app.use(express.json());
+
+  const peakLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 500,
+    keyGenerator,
+    message: { error: "System busy, please try again in a few minutes." },
+  });
+
+  // Stub: the bearer token is "<uid>:<churchId>".
+  const authenticateToken = (req, res, next) => {
+    const header = req.headers.authorization || "";
+    const raw = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!raw.includes(":")) return res.status(401).json({ error: "Unauthorized" });
+    const [uid, churchId] = raw.split(":");
+    req.user = { uid, churchId, role: "volunteer", firstName: "Thandi", lastName: "Volunteer" };
+    next();
+  };
+  const requirePolicyAcceptance = (_req, _res, next) => next();
+  const requireVolunteer = (req, res, next) =>
+    ["volunteer", "admin", "master_admin"].includes(req.user?.role)
+      ? next()
+      : res.status(403).json({ error: "Forbidden" });
+
+  // --- handlers, mirroring server.ts ---------------------------------------
+
+  const resolveGuardianByToken = (churchId, qrToken) => {
+    const matches = Object.values(db.guardians).filter(
+      (g) => g.churchId === churchId && g.qrToken === qrToken,
+    );
+    if (matches.length !== 1) return null;
+    const g = matches[0];
+    if (g.deleted === true || g.active !== true) return null;
+    return { ...g, childIds: Array.isArray(g.childIds) ? g.childIds : [] };
+  };
+
+  const guardianDisplayName = (g) => `${g.firstName || ""} ${g.lastName || ""}`.trim() || "Guardian";
+
+  app.post("/api/guardian-lookup", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, (req, res) => {
+    const { qrToken } = req.body;
+    if (typeof qrToken !== "string" || qrToken.length < 8) {
+      return res.status(400).json({ error: "Validation failed" });
+    }
+    const { churchId } = req.user;
+    const guardian = resolveGuardianByToken(churchId, qrToken);
+    if (!guardian) {
+      return res.status(404).json({ error: "Guardian not found or not active", code: "GUARDIAN_NOT_FOUND" });
+    }
+
+    const eligible = [];
+    const checkedInChildIds = new Set();
+    for (const [checkinId, c] of Object.entries(db.checkins)) {
+      if (c.churchId !== churchId || c.status !== "checked-in") continue;
+      if (!guardian.childIds.includes(c.childId)) continue;
+      checkedInChildIds.add(c.childId);
+      eligible.push({ checkinId, childId: c.childId, childName: c.childName, roomName: c.roomName, checkInTime: c.checkInTime });
+    }
+
+    const notCheckedIn = guardian.childIds
+      .filter((id) => !checkedInChildIds.has(id))
+      .map((id) => {
+        const child = db.children[id];
+        if (!child || child.churchId !== churchId || child.deleted === true) return null;
+        return { childId: id, childName: `${child.firstName} ${child.lastName}`.trim() };
+      })
+      .filter(Boolean);
+
+    res.json({
+      guardian: { id: guardian.id, firstName: guardian.firstName, lastName: guardian.lastName, relationship: guardian.relationship },
+      eligible,
+      notCheckedIn,
+    });
+  });
+
+  app.post("/api/check-out-guardian", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, (req, res) => {
+    const { qrToken, checkinIds } = req.body;
+    if (typeof qrToken !== "string" || qrToken.length < 8 || !Array.isArray(checkinIds) || checkinIds.length < 1 || checkinIds.length > 20) {
+      return res.status(400).json({ error: "Validation failed" });
+    }
+    const { churchId } = req.user;
+    const guardian = resolveGuardianByToken(churchId, qrToken);
+    if (!guardian) {
+      return res.status(404).json({ error: "Guardian not found or not active", code: "GUARDIAN_NOT_FOUND" });
+    }
+
+    const guardianName = guardianDisplayName(guardian);
+    const results = [];
+
+    for (const checkinId of Array.from(new Set(checkinIds))) {
+      const c = db.checkins[checkinId];
+      if (!c || c.churchId !== churchId) {
+        results.push({ checkinId, childName: null, outcome: "not-found" });
+        continue;
+      }
+      if (!guardian.childIds.includes(c.childId)) {
+        results.push({ checkinId, childName: c.childName, outcome: "not-authorized" });
+        continue;
+      }
+      if (c.status !== "checked-in") {
+        results.push({ checkinId, childName: c.childName, outcome: "already-checked-out" });
+        continue;
+      }
+      Object.assign(c, {
+        status: "checked-out",
+        checkOutTime: new Date().toISOString(),
+        checkOutVolunteerId: req.user.uid,
+        checkOutVolunteerName: `${req.user.firstName} ${req.user.lastName}`,
+        guardianId: guardian.id,
+        guardianName,
+        overrideReason: null,
+      });
+      results.push({ checkinId, childName: c.childName, outcome: "checked-out" });
+    }
+
+    const countOf = (name) => results.filter((r) => r.outcome === name).length;
+    const summary = {
+      requested: results.length,
+      checkedOut: countOf("checked-out"),
+      alreadyOut: countOf("already-checked-out"),
+      failed: countOf("not-authorized") + countOf("not-found") + countOf("error"),
+    };
+
+    db.audit.push({ action: "guardian_checkout", guardianId: guardian.id, source: "server", results, summary });
+    res.json({ results, summary });
+  });
+
+  return app;
+}
+
+const listen = (app) => new Promise((resolve) => {
+  const server = app.listen(0, "127.0.0.1", () => resolve(server));
+});
+
+const post = async (server, route, body, auth) => {
+  const res = await fetch(`http://127.0.0.1:${server.address().port}${route}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data };
+};
+
+const VOLUNTEER_A = `vol1:${CHURCH_A}`;
+const VOLUNTEER_A2 = `vol2:${CHURCH_A}`;
+const VOLUNTEER_B = `vol3:${CHURCH_B}`;
+
+console.log("\nGuardian-QR checkout endpoints\n");
+
+// --- Lookup ---------------------------------------------------------------
+
+{
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  const ok = await post(server, "/api/guardian-lookup", { qrToken: TOKEN_MOM }, VOLUNTEER_A);
+  check("lookup returns the guardian", "Naledi", ok.data?.guardian?.firstName);
+  check("eligible lists only checked-in children of this guardian", "ci_amahle,ci_bongani",
+    (ok.data?.eligible || []).map((e) => e.checkinId).sort().join(","));
+  check("a child of this guardian who is not checked in is reported separately", "Chipo Mokoena",
+    (ok.data?.notCheckedIn || []).map((c) => c.childName).join(","));
+  check("another family's checked-in child is not eligible", false,
+    (ok.data?.eligible || []).some((e) => e.checkinId === "ci_stranger"));
+  check("an already-collected child is not eligible", false,
+    (ok.data?.eligible || []).some((e) => e.checkinId === "ci_closed"));
+
+  // CROSS_CHURCH: church B's token must not resolve for a church A volunteer,
+  // and vice versa -- tenancy comes from the verified token, not the request.
+  const foreign = await post(server, "/api/guardian-lookup", { qrToken: TOKEN_OTHER }, VOLUNTEER_A);
+  check("a guardian token from another church is not found", 404, foreign.status);
+  const reverse = await post(server, "/api/guardian-lookup", { qrToken: TOKEN_MOM }, VOLUNTEER_B);
+  check("this church's token does not resolve for another church's volunteer", 404, reverse.status);
+
+  // INACTIVE_GUARDIAN: deactivation is the only revocation the product has, so
+  // it has to actually revoke.
+  const inactive = await post(server, "/api/guardian-lookup", { qrToken: TOKEN_GRAN }, VOLUNTEER_A);
+  check("a deactivated guardian is not found", 404, inactive.status);
+  check("...and is not distinguishable from an unknown token", "GUARDIAN_NOT_FOUND", inactive.data?.code);
+
+  const anon = await post(server, "/api/guardian-lookup", { qrToken: TOKEN_MOM }, null);
+  check("unauthenticated lookup is rejected", 401, anon.status);
+
+  const short = await post(server, "/api/guardian-lookup", { qrToken: "x" }, VOLUNTEER_A);
+  check("a malformed token is rejected before any lookup", 400, short.status);
+
+  server.close();
+}
+
+// --- Checkout -------------------------------------------------------------
+
+{
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  const res = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_bongani"] }, VOLUNTEER_A);
+  check("checking out two siblings succeeds", 200, res.status);
+  check("both are checked out", 2, res.data?.summary?.checkedOut);
+  check("Amahle's record is closed", "checked-out", db.checkins.ci_amahle.status);
+
+  // SERVER_DERIVED: the name on the permanent pickup record comes from the
+  // guardian document, never from the request body.
+  check("the guardian on the record is resolved server-side", "g_mom", db.checkins.ci_amahle.guardianId);
+  check("...including the display name", "Naledi Mokoena", db.checkins.ci_amahle.guardianName);
+  check("an audit entry is written server-side", "guardian_checkout", db.audit[0]?.action);
+
+  // IDEMPOTENT: a double tap or a retry must not read as a failure mid-queue.
+  const again = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_A);
+  check("repeating a checkout is benign, not an error", 200, again.status);
+  check("...and is reported as already checked out", "already-checked-out", again.data?.results?.[0]?.outcome);
+
+  server.close();
+}
+
+{
+  // NOT_AUTHORIZED: the decisive test. The client asks for a child this
+  // guardian has no claim to; the server must refuse that child specifically.
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  const res = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_stranger"] }, VOLUNTEER_A);
+  check("a child outside the guardian's childIds is refused", "not-authorized", res.data?.results?.[0]?.outcome);
+  check("...and stays checked in", "checked-in", db.checkins.ci_stranger.status);
+
+  // PARTIAL: one refusal must not abort the siblings who are legitimately
+  // being collected -- an all-or-nothing batch would stall the queue.
+  const mixed = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_stranger", "ci_bongani"] }, VOLUNTEER_A);
+  check("a refused child does not abort the rest of the family", 2, mixed.data?.summary?.checkedOut);
+  check("...and the refusal is still reported", 1, mixed.data?.summary?.failed);
+  check("Bongani was still released", "checked-out", db.checkins.ci_bongani.status);
+
+  server.close();
+}
+
+{
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  // A guardian deactivated between the lookup and the confirm tap cannot
+  // collect: the token is re-resolved at commit time, so the lookup grants
+  // nothing on its own.
+  db.guardians.g_mom.active = false;
+  const res = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_A);
+  check("a guardian deactivated after lookup cannot check out", 404, res.status);
+  check("...and the child stays checked in", "checked-in", db.checkins.ci_amahle.status);
+
+  server.close();
+}
+
+{
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  const foreign = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_B);
+  check("a volunteer from another church cannot use this token", 404, foreign.status);
+  check("...and the child stays checked in", "checked-in", db.checkins.ci_amahle.status);
+
+  const anon = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, null);
+  check("unauthenticated checkout is rejected", 401, anon.status);
+
+  const empty = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: [] }, VOLUNTEER_A);
+  check("an empty checkinIds list is rejected", 400, empty.status);
+
+  const huge = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: Array.from({ length: 21 }, (_, i) => `x${i}`) }, VOLUNTEER_A);
+  check("an oversized batch is rejected", 400, huge.status);
+
+  const unknown = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_does_not_exist"] }, VOLUNTEER_A);
+  check("an unknown checkin id is reported, not thrown", "not-found", unknown.data?.results?.[0]?.outcome);
+
+  server.close();
+}
+
+{
+  // Duplicate ids in one request must not double-process a child.
+  const db = seed();
+  const server = await listen(makeApp(db));
+  const res = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_amahle"] }, VOLUNTEER_A);
+  check("duplicate ids in one request collapse to one", 1, res.data?.results?.length);
+  server.close();
+}
+
+// --- Source guard ---------------------------------------------------------
+// The app above is a model. If server.ts drifts away from it these tests stop
+// meaning anything, so assert the properties the model depends on.
+
+const serverSrc = readFileSync(path.join(ROOT, "server.ts"), "utf8");
+
+check(
+  "server.ts wires authenticateToken before peakLimiter on /api/guardian-lookup",
+  true,
+  /app\.post\(\s*"\/api\/guardian-lookup",\s*authenticateToken,\s*peakLimiter,/.test(serverSrc),
+);
+check(
+  "server.ts wires authenticateToken before peakLimiter on /api/check-out-guardian",
+  true,
+  /app\.post\(\s*"\/api\/check-out-guardian",\s*authenticateToken,\s*peakLimiter,/.test(serverSrc),
+);
+check(
+  "both endpoints require a volunteer role",
+  true,
+  (serverSrc.match(/requireVolunteer,\s*validate\(GuardianLookupSchema\)/) !== null) &&
+    (serverSrc.match(/requireVolunteer,\s*validate\(GuardianCheckOutSchema\)/) !== null),
+);
+check(
+  "the checkout handler re-resolves the guardian from the scanned token",
+  true,
+  /app\.post\(\s*"\/api\/check-out-guardian"[\s\S]{0,1200}resolveGuardianByToken\(req, churchId, qrToken\)/.test(serverSrc),
+);
+// Ordering, not proximity: the authorization check must come before the write
+// inside the same transaction. Measuring by character distance would break the
+// moment a comment is added between them.
+const checkoutHandler = serverSrc.slice(serverSrc.indexOf('app.post("/api/check-out-guardian"'));
+const authzAt = checkoutHandler.indexOf("guardian.childIds.includes(c.childId)");
+const writeAt = checkoutHandler.indexOf("transaction.update(checkinRef");
+check(
+  "the guardian->child link is checked before the status transition is written",
+  true,
+  authzAt !== -1 && writeAt !== -1 && authzAt < writeAt,
+);
+check(
+  "the transition is written inside a transaction, not a bare update",
+  true,
+  /db\.runTransaction\(/.test(checkoutHandler.slice(0, writeAt)),
+);
+check(
+  "guardianId written to the record comes from the resolved doc, not the body",
+  true,
+  /guardianId: guardian\.id,/.test(serverSrc) && !/guardianId: req\.body\.guardianId/.test(serverSrc),
+);
+check(
+  "the guardian resolver rejects inactive and deleted guardians",
+  true,
+  /data\.deleted === true \|\| data\.active !== true/.test(serverSrc),
+);
+check(
+  "a server-side audit entry is written for guardian checkouts",
+  true,
+  /action: "guardian_checkout"/.test(serverSrc),
+);
+
+// The legacy attendance routes shared one IP-keyed bucket per church because
+// the limiter ran before authentication -- the same defect the PIN hotfix
+// fixed on /api/verify-pin. Keep them authenticated first.
+for (const route of ["check-in", "check-out", "move-room"]) {
+  check(
+    `server.ts wires authenticateToken before peakLimiter on /api/${route}`,
+    true,
+    new RegExp(`app\\.post\\(\\s*"/api/${route}",\\s*authenticateToken,\\s*peakLimiter,`).test(serverSrc),
+  );
+}
+
+console.log(`\n${pass} passed, ${fail} failed\n`);
+process.exit(fail === 0 ? 0 : 1);
