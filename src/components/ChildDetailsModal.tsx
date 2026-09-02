@@ -11,7 +11,8 @@ import {
   MapPin, 
   UserPlus,
   Phone,
-  HeartPulse
+  HeartPulse,
+  ShieldAlert
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { format } from "date-fns";
@@ -23,9 +24,18 @@ interface ChildDetailsModalProps {
   childId: string;
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * Supplied only where an override check-out is actually possible -- the
+   * volunteer Attendance view, for a child who is currently checked in. Admin
+   * screens open this modal without it and see no such button.
+   */
+  overrideCheckout?: {
+    childName: string;
+    onRequest: () => void;
+  };
 }
 
-export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDetailsModalProps) {
+export default function ChildDetailsModal({ childId, isOpen, onClose, overrideCheckout }: ChildDetailsModalProps) {
   const { church } = useTenant();
   const churchId = church?.id;
   const [child, setChild] = useState<any>(null);
@@ -92,7 +102,7 @@ export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDet
       unsubGuardians();
       unsubCheckins();
     };
-  }, [isOpen, childId]);
+  }, [isOpen, childId, churchId]);
 
   if (!isOpen) return null;
 
@@ -290,13 +300,22 @@ export default function ChildDetailsModal({ childId, isOpen, onClose }: ChildDet
           </div>
 
           {/* Footer */}
-          <div className="p-6 bg-gray-50 dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700 flex justify-end">
+          <div className="p-6 bg-gray-50 dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
             <button
               onClick={onClose}
               className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white px-8 py-3 rounded-2xl font-bold border border-gray-200 dark:border-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
             >
               Close Details
             </button>
+            {overrideCheckout && (
+              <button
+                onClick={overrideCheckout.onRequest}
+                className="px-6 py-3 rounded-2xl font-bold border-2 border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center justify-center gap-2"
+              >
+                <ShieldAlert className="h-5 w-5" />
+                <span>Check Out (Admin Override)</span>
+              </button>
+            )}
           </div>
         </motion.div>
       </div>

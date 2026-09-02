@@ -443,6 +443,36 @@ check(
   /action: "guardian_checkout"/.test(serverSrc),
 );
 
+// /api/check-out is now the override path only. Guardian pickups go through
+// /api/check-out-guardian, where the guardian is resolved server-side. If
+// CheckOutSchema ever re-accepts a caller-supplied guardian, the hole this
+// suite exists to close is back open.
+const checkOutSchema = serverSrc.slice(
+  serverSrc.indexOf("const CheckOutSchema"),
+  serverSrc.indexOf("const InviteUserSchema"),
+);
+check(
+  "CheckOutSchema no longer accepts a caller-supplied guardian",
+  true,
+  checkOutSchema.length > 0 && !/guardianId/.test(checkOutSchema) && !/guardianName/.test(checkOutSchema),
+);
+check(
+  "CheckOutSchema requires a non-empty overrideReason",
+  true,
+  /overrideReason:\s*z\.string\(\)\.min\(1\)/.test(checkOutSchema),
+);
+
+const checkOutHandler = serverSrc.slice(
+  serverSrc.indexOf('app.post("/api/check-out",'),
+  serverSrc.indexOf('app.post("/api/emergency-alert"'),
+);
+check(
+  "the check-out handler writes the override sentinel, not a caller value",
+  true,
+  /guardianId:\s*"admin_override"/.test(checkOutHandler) &&
+    /guardianName:\s*"Admin Override"/.test(checkOutHandler),
+);
+
 // The legacy attendance routes shared one IP-keyed bucket per church because
 // the limiter ran before authentication -- the same defect the PIN hotfix
 // fixed on /api/verify-pin. Keep them authenticated first.
