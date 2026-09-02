@@ -7,9 +7,17 @@ interface QRScannerProps {
   onScanFailure?: (error: string) => void;
   fps?: number;
   qrbox?: number;
+  /**
+   * DOM id html5-qrcode mounts into. Defaults to the original single-scanner
+   * id; pass a distinct one if a second scanner could ever be mounted at the
+   * same time, since two instances sharing an id fight over the same element.
+   */
+  elementId?: string;
+  /** Skip the "Start Camera" tap. Use where scanning is the whole point of the screen. */
+  autoStart?: boolean;
 }
 
-export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 }: QRScannerProps) {
+export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250, elementId = "qr-reader", autoStart = false }: QRScannerProps) {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -29,7 +37,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
 
   useEffect(() => {
     isMounted.current = true;
-    const html5QrCode = new Html5Qrcode("qr-reader", { verbose: false });
+    const html5QrCode = new Html5Qrcode(elementId, { verbose: false });
     scannerRef.current = html5QrCode;
 
     return () => {
@@ -38,7 +46,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
         scannerRef.current.stop().catch(err => console.debug("Cleanup stop error", err));
       }
     };
-  }, []);
+  }, [elementId]);
 
   const startCamera = async () => {
     if (!scannerRef.current || isCameraActive || isInitializing) return;
@@ -98,6 +106,14 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
     }
   };
 
+  // Where scanning is the entire purpose of the screen, making the volunteer
+  // tap "Start Camera" first is pure friction. Safe to call unguarded:
+  // startCamera early-returns if it is already active or initialising.
+  useEffect(() => {
+    if (autoStart) startCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
+
   const stopCamera = async () => {
     if (!scannerRef.current) return;
     try {
@@ -131,7 +147,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, qrbox = 250 
   return (
     <div className="w-full max-w-md mx-auto space-y-4">
       <div className="relative aspect-square bg-black rounded-2xl overflow-hidden border-2 border-gray-100 shadow-inner group">
-        <div id="qr-reader" className="w-full aspect-square"></div>
+        <div id={elementId} className="w-full aspect-square"></div>
         
         {!isCameraActive && !isInitializing && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 backdrop-blur-sm text-white p-6 text-center space-y-4">

@@ -3,6 +3,7 @@ import { Search, Download, Printer, AlertTriangle, Users, Phone, Mail } from "lu
 import { format } from "date-fns";
 import { toCsv, downloadCsv, type CsvColumn } from "../lib/csv";
 import { logAudit } from "../lib/firestore";
+import { hasRecordedAllergies } from "../lib/child-utils";
 
 /**
  * The church's roster of registered children, with the guardian and parent
@@ -104,12 +105,6 @@ function fullName(person: { firstName?: string; lastName?: string }): string {
  * absent. Showing a red allergy badge that reads "none" trains volunteers to
  * ignore the badge, which is worse than showing nothing.
  */
-function hasRecordedAllergies(raw?: string): boolean {
-  const value = (raw || "").trim().toLowerCase();
-  if (!value) return false;
-  return !["none", "n/a", "na", "no", "nil", "none known", "no allergies"].includes(value);
-}
-
 export default function ChildrenDirectory({
   children,
   guardians,

@@ -30,6 +30,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { format } from "date-fns";
 import { safeFetch } from "../lib/api";
 import ChildDetailsModal from "../components/ChildDetailsModal";
+import CheckOutTab from "../components/CheckOutTab";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 import { hashPin } from "../lib/security";
 import { useActiveService } from "../hooks/useActiveService";
@@ -42,7 +43,7 @@ export default function VolunteerDashboard() {
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
   const { activeService, upcomingServices, loading: serviceLoading } = useActiveService();
-  const [activeTab, setActiveTab] = useState<"scan" | "list">("scan");
+  const [activeTab, setActiveTab] = useState<"scan" | "checkout" | "list">("scan");
   const [scannedChildren, setScannedChildren] = useState<any[]>([]);
   const [authorizedGuardians, setAuthorizedGuardians] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
@@ -751,7 +752,16 @@ export default function VolunteerDashboard() {
             }`}
           >
             <Scan className="h-4 w-4" />
-            <span>Scan QR</span>
+            <span>Check In</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("checkout")}
+            className={`flex-1 md:flex-none px-8 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center space-x-2 ${
+              activeTab === "checkout" ? "bg-primary text-white" : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            }`}
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Check Out</span>
           </button>
           <button
             onClick={() => setActiveTab("list")}
@@ -765,7 +775,7 @@ export default function VolunteerDashboard() {
         </div>
       </header>
 
-      {activeTab === "scan" ? (
+      {activeTab === "scan" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
           <div className="space-y-6">
             <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-6">
@@ -1076,7 +1086,25 @@ export default function VolunteerDashboard() {
             </div>
           </div>
         </div>
-      ) : (
+      )}
+
+      {activeTab === "checkout" && (
+        <CheckOutTab
+          allChildren={allChildren}
+          allGuardians={allGuardians}
+          checkedInChildren={checkedInChildren}
+          volunteerId={user?.uid || ""}
+          volunteerName={
+            userData?.firstName && userData?.lastName
+              ? `${userData.firstName} ${userData.lastName}`
+              : (userData?.email || "Volunteer")
+          }
+          isOnline={isOnline}
+          onGoToAttendance={() => setActiveTab("list")}
+        />
+      )}
+
+      {activeTab === "list" && (
         <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
           <div className="p-6 border-b border-gray-50 dark:border-gray-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center space-x-3">
