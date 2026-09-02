@@ -2062,6 +2062,33 @@ async function startServer() {
   // already held, making one of them unreachable at its own URL. `slug` is not
   // accepted here at all; renaming needs to propagate to users and pending
   // invitations, which is #66.
+  // The public projection of a church, mirrored into `church_public`.
+  //
+  // `churches` carries adminEmail, plan, subscription state and the PayFast
+  // token, so it must not be readable by an anonymous visitor -- but the
+  // landing page at /:churchSlug needs a name, a slug and branding before
+  // anyone has logged in. These three fields are that page's entire diet.
+  //
+  // Keep this list closed. Adding a field here publishes it to the internet.
+  const CHURCH_PUBLIC_FIELDS = ["name", "slug", "branding"];
+
+  /**
+   * Writes the public projection for a church. Call after any write that
+   * changes one of CHURCH_PUBLIC_FIELDS, or the landing page goes stale.
+   * `scripts/backfill-church-public.ts` repairs drift.
+   */
+  const buildChurchPublic = (churchId: string, source: any) => {
+    const projection: any = { churchId, updatedAt: new Date().toISOString() };
+    for (const field of CHURCH_PUBLIC_FIELDS) {
+      projection[field] = source?.[field] ?? null;
+    }
+    return projection;
+  };
+
+  const syncChurchPublic = async (churchId: string, source: any) => {
+    await db.collection("church_public").doc(churchId).set(buildChurchPublic(churchId, source));
+  };
+
   app.post("/api/church/settings", generalLimiter, authenticateToken, requireAdmin, validate(UpdateChurchSettingsSchema), async (req, res) => {
     const { name, branding } = req.body;
     const churchId = req.user.churchId;
@@ -2090,12 +2117,21 @@ async function startServer() {
 
       const previousName = churchDoc.data()?.name ?? null;
 
-      await churchRef.update({
+      // Batched: `name` and `branding` are both mirrored into church_public,
+      // and a half-applied rename leaves the public page disagreeing with the
+      // app about what the church is called.
+      const batch = db.batch();
+      batch.update(churchRef, {
         name,
         branding,
         updatedAt: new Date().toISOString()
       });
-      req.firestoreOps.writes++;
+      batch.set(
+        db.collection("church_public").doc(churchId),
+        buildChurchPublic(churchId, { name, branding, slug: churchDoc.data()?.slug ?? null })
+      );
+      await batch.commit();
+      req.firestoreOps.writes += 2;
 
       // A rename changes how the church is identified to its own members and
       // in every email sent on its behalf. An unlogged rename is what made the
@@ -2264,6 +2300,11 @@ async function startServer() {
       req.firestoreOps.writes++;
       console.log(`Created church document: ${churchRef.id}`);
 
+      // Without this the church exists but its public page 404s, so a failure
+      // here belongs in the rollback below rather than being swallowed.
+      await syncChurchPublic(churchRef.id, { name: churchName, slug, branding: null });
+      req.firestoreOps.writes++;
+
       // 3. Create User Document
       await db.collection("users").doc(uid).set({
         uid: uid,
@@ -2313,6 +2354,12 @@ async function startServer() {
             console.log(`[ROLLBACK] Deleted orphaned church document: ${churchRef.id}`);
           } catch (cleanupError: any) {
             console.error(`[ROLLBACK_FAILED] Failed to delete church doc: ${cleanupError.message}`);
+          }
+          try {
+            await db.collection("church_public").doc(churchRef.id).delete();
+            console.log(`[ROLLBACK] Deleted orphaned church_public document: ${churchRef.id}`);
+          } catch (cleanupError: any) {
+            console.error(`[ROLLBACK_FAILED] Failed to delete church_public doc: ${cleanupError.message}`);
           }
         }
         

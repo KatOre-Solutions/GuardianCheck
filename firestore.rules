@@ -323,6 +323,29 @@ service cloud.firestore {
       allow delete: if isMasterAdmin();
     }
     
+    // A church's public identity, and nothing else.
+    //
+    // The landing page for /:churchSlug renders before anyone logs in, so the
+    // slug lookup behind it has to be readable by an anonymous visitor. It used
+    // to read `churches` directly, which meant the document carrying
+    // `adminEmail`, `plan`, the whole `subscription` map and the PayFast
+    // subscription token was reachable -- see the rule on `churches` and the
+    // tenant-isolation audit.
+    //
+    // Splitting the three fields the public page actually needs into their own
+    // document is what lets `churches` become private without taking the
+    // landing page with it. Nothing sensitive can leak from here because
+    // nothing sensitive is written here: the projection is built from a fixed
+    // field list in server.ts.
+    //
+    // Server-written only. The Admin SDK bypasses rules, so `write: false` is
+    // the real rule -- a client must never be able to forge or repoint a
+    // church's public identity.
+    match /church_public/{churchId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /church_security/{churchId} {
       // Sensitive security data (PIN hashes, etc.)
       // Restricted: Volunteers no longer have read access. Verification moved to server.
