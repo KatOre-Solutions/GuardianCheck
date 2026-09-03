@@ -5,11 +5,18 @@
  * implements: business transaction commits -> enqueue (Firestore write, no
  * network) -> in-request dispatch, backstopped by a daily cron sweep that
  * retries failures and reconciles anything an in-request dispatch never got
- * to. `channel` only has one live member right now -- `whatsapp` is added in
- * PR 4, once a `WhatsAppProvider` exists to register against it.
+ * to.
+ *
+ * Reconciliation (service.ts's reconcileRecentCheckins) only ever backfills
+ * `email` -- deliberately. Per the plan's product decisions, email is the
+ * one permanent, always-guaranteed channel; WhatsApp is supplementary and
+ * opportunistic (eligibility, allowance and consolidation all live only in
+ * the in-request path). A WhatsApp send that never got enqueued because the
+ * request crashed before notifyCheckins ran is not backfilled by the sweep
+ * -- the family still hears about it by email, which the sweep does cover.
  */
 
-export type NotificationChannel = "email";
+export type NotificationChannel = "email" | "whatsapp";
 
 export type NotificationEventType = "check-in" | "check-out" | "room_move" | "emergency";
 
@@ -38,6 +45,15 @@ export interface NotificationPayload {
   volunteerName?: string;
   guardianName?: string;
   guardianQrToken?: string;
+  /**
+   * Set only on a consolidated WhatsApp record covering more than one child
+   * (e.g. a guardian collecting several siblings in one checkout batch) --
+   * see buildConsolidatedPayload() in service.ts. `childName`/`roomName`
+   * above still describe the first child for anything that doesn't know
+   * about consolidation (the email template never sets this and keeps
+   * rendering the single-child fields it always has).
+   */
+  children?: Array<{ childName: string; roomName: string }>;
 }
 
 export interface ChannelSendResult {

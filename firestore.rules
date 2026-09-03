@@ -660,6 +660,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Per-church-per-month WhatsApp send counter, id
+    // `{churchId}_{yyyyMM}` -- see notifications/allowance.ts. Admin-readable
+    // (a church should be able to see its own usage) but server-written
+    // only: a client incrementing or resetting its own count would defeat
+    // the whole point of an allowance.
+    match /church_usage/{usageId} {
+      allow read: if isMasterAdmin() || (isAdmin() && resource != null && resource.data.churchId == getUserData().churchId);
+      allow create, update, delete: if false;
+    }
+
     match /{path=**} {
       allow read, write: if false;
     }

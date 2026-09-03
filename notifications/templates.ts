@@ -154,3 +154,51 @@ export function maskEmail(email: string): string {
   const visible = local.slice(0, Math.min(2, local.length));
   return `${visible}${"*".repeat(Math.max(local.length - visible.length, 1))}@${domain}`;
 }
+
+/** Same idea as maskEmail() for an E.164 number: country code and last 2 digits visible, everything else starred -- enough to recognise, nothing dialable from the record alone. */
+export function maskPhone(e164: string): string {
+  if (e164.length < 6) return "***";
+  const visibleEnd = e164.slice(-2);
+  const visibleStart = e164.slice(0, 3); // "+27", "+1 ", etc. -- country code, not identifying on its own
+  const starCount = Math.max(e164.length - visibleStart.length - visibleEnd.length, 1);
+  return `${visibleStart}${"*".repeat(starCount)}${visibleEnd}`;
+}
+
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * A single plain-text line for a WhatsApp UTILITY template's body
+ * parameter. Deliberately just one {{1}} variable -- the simplest possible
+ * template shape, and the most robust choice given the real approved
+ * template's exact variable layout isn't known yet (no WABA exists to
+ * create one against; see the equivalent caveat on buildOtpTemplateComponents
+ * in providers/whatsapp.ts). Re-verify against the real template at rollout.
+ *
+ * Handles both a single child (payload.children unset -- the common case:
+ * check-in, room-move, most check-outs) and a consolidated multi-child
+ * record (payload.children set -- a guardian collecting several siblings
+ * in one checkout batch; see buildConsolidatedPayload in service.ts).
+ */
+export function whatsappSummaryText(payload: NotificationPayload, eventType: NotificationEventType): string {
+  const entries = payload.children && payload.children.length > 0
+    ? payload.children
+    : [{ childName: payload.childName, roomName: payload.roomName }];
+  const names = joinNames(entries.map((e) => e.childName));
+  const plural = entries.length > 1;
+  const time = format(new Date(payload.time), "h:mm a");
+
+  switch (eventType) {
+    case "check-in":
+      return `${names} ${plural ? "have" : "has"} been checked in at ${payload.churchName} (${time}).`;
+    case "check-out":
+      return `${names} ${plural ? "have" : "has"} been checked out of ${payload.churchName} (${time}).`;
+    case "room_move":
+      return `${names} ${plural ? "have" : "has"} been moved to ${payload.roomName} at ${payload.churchName}.`;
+    case "emergency":
+      return `Emergency alert at ${payload.churchName} (${time}). Please follow safety protocols.`;
+  }
+}

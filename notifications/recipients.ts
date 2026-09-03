@@ -4,6 +4,9 @@ export interface Recipient {
   /** A Firebase Auth uid for the account-holder parent, or `guardian:{docId}` for the flagged-off guardian path below. */
   userId: string;
   email: string;
+  /** From the same `users` doc read as `email` -- no extra Firestore read to know WhatsApp eligibility. Undefined for the guardian path (guardians don't have their own verification flow). */
+  whatsappNumber?: string;
+  whatsappVerifiedAt?: string;
 }
 
 function countRead(ctx?: NotifyContext) {
@@ -32,8 +35,15 @@ export async function resolveRecipients(db: any, churchId: string, childId: stri
   if (parentId) {
     const parentDoc = await db.collection("users").doc(parentId).get();
     countRead(ctx);
-    const email = parentDoc.exists ? parentDoc.data().email : null;
-    if (email) recipients.push({ userId: parentId, email });
+    const parentData = parentDoc.exists ? parentDoc.data() : null;
+    if (parentData?.email) {
+      recipients.push({
+        userId: parentId,
+        email: parentData.email,
+        whatsappNumber: parentData.whatsappNumber ?? undefined,
+        whatsappVerifiedAt: parentData.whatsappVerifiedAt ?? undefined,
+      });
+    }
   }
 
   if (process.env.NOTIFY_GUARDIANS === "true") {

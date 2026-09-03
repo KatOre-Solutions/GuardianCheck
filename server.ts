@@ -29,6 +29,7 @@ import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
 import { notifyCheckins, buildEventKey, runNotificationSweep } from "./notifications/service.js";
 import { EmailProvider } from "./notifications/providers/email.js";
+import { WhatsAppProvider } from "./notifications/providers/whatsapp.js";
 import type { Occurrence } from "./notifications/service.js";
 import { startWhatsappVerification, confirmWhatsappVerification } from "./notifications/whatsapp-verification.js";
 import { normalizeToE164 } from "./src/lib/phone.js";
@@ -216,8 +217,11 @@ const emailService = new EmailService(db);
 // for invite/verification transactional mail -- see
 // notifications/providers/email.ts for why the two are independent. Keyed by
 // channel so `notifyCheckins`/`runNotificationSweep` can look one up per
-// record; `whatsapp` joins this map in PR 4.
-const notificationProviders = { email: new EmailProvider() };
+// record. `whatsapp` is always registered -- it's a no-op unless
+// WHATSAPP_ENABLED and a church's pilot membership both say otherwise (see
+// notifications/eligibility.ts), so registering it unconditionally costs
+// nothing and avoids the map's shape changing based on env config.
+const notificationProviders = { email: new EmailProvider(), whatsapp: new WhatsAppProvider() };
 
 const app = express();
 
