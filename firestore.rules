@@ -604,6 +604,27 @@ service cloud.firestore {
       allow write: if false; // System only
     }
 
+    // One row per channel/recipient/event notification (check-in, check-out,
+    // room move, emergency alert). Written only by the Admin SDK -- the id is
+    // a deterministic hash of the event, recipient and channel, computed
+    // server-side, and a client has no legitimate reason to create, resolve
+    // or replay one directly.
+    //
+    // Deliberately not readable by volunteers: unlike `checkins`, this
+    // collection exists to tell an admin whether a family was actually
+    // notified, not to help a volunteer run check-in. A parent may read only
+    // their own notifications, matched by `recipientUserId`, the same
+    // recipient-owns-own shape as `checkins`' parent branch.
+    match /notifications/{notificationId} {
+      allow read: if isMasterAdmin() || (
+        isApproved() && resource != null && (
+          (isAdmin() && resource.data.churchId == getUserData().churchId) ||
+          (isParent() && resource.data.recipientUserId == request.auth.uid)
+        )
+      );
+      allow create, update, delete: if false;
+    }
+
     match /{path=**} {
       allow read, write: if false;
     }

@@ -45,30 +45,15 @@ const check = (name, expected, actual) => {
 // --- Fakes ------------------------------------------------------------
 
 /**
- * Generic Firestore stand-in. `children` / `users` / `guardians` are modeled
- * because sendNotification's recipient resolution reads them; every other
- * collection name (email_logs, logs) falls through to a generic add-only
- * collection so the constructor's mock-mode warning write doesn't need its
- * own case.
+ * Generic Firestore stand-in. Every collection name (email_logs, logs) falls
+ * through to a generic add-only collection so the constructor's mock-mode
+ * warning write doesn't need its own case.
  */
-function makeFakeDb({ child, parent, guardians = [] } = {}) {
+function makeFakeDb() {
   const logsByCollection = {};
   return {
     logsByCollection,
     collection(name) {
-      if (name === "children") {
-        return { doc: () => ({ get: async () => ({ exists: !!child, data: () => child }) }) };
-      }
-      if (name === "users") {
-        return { doc: () => ({ get: async () => ({ exists: !!parent, data: () => parent }) }) };
-      }
-      if (name === "guardians") {
-        const query = {
-          where: () => query,
-          get: async () => ({ forEach: (fn) => guardians.forEach((g) => fn({ data: () => g })) }),
-        };
-        return query;
-      }
       return {
         add: async (data) => {
           (logsByCollection[name] ??= []).push(data);
@@ -217,44 +202,6 @@ console.log("\nSDK-level failures are absorbed, not thrown\n");
     threw = true;
   }
   check("sendVerificationEmail does not throw when the SDK call itself throws", false, threw);
-}
-
-// --- sendNotification: mixed results, dedupe, context threading -----------
-
-console.log("\nsendNotification: aggregation, dedupe, traceId/firestoreOps threading\n");
-
-{
-  const db = makeFakeDb({
-    child: { parentId: "parent1" },
-    parent: { email: "parent@example.com" },
-    // Same address twice -- must collapse to one send, not two.
-    guardians: [{ email: "guardian@example.com" }, { email: "guardian@example.com" }],
-  });
-  process.env.RESEND_API_KEY = "re_test_dummy_key";
-  const svc = new EmailService(db);
-  svc.resend = makeFakeResend({
-    "parent@example.com": { data: { id: "msg_ok" } },
-    "guardian@example.com": { error: { name: "rate_limit_exceeded", message: "slow down" } },
-  });
-
-  const ctx = { traceId: "trace-3", firestoreOps: { reads: 0, writes: 0 } };
-  const result = await svc.sendNotification(
-    "church1",
-    "child1",
-    { childName: "Kid", time: new Date().toISOString(), roomName: "Room A", churchName: "Test Church", eventType: "check-in" },
-    ctx,
-  );
-
-  check("mixed results: one sent, one failed (duplicate guardian collapsed)", { sent: 1, failed: 1 }, result);
-  check("firestoreOps reads counted (child + parent + guardians query)", 3, ctx.firestoreOps.reads);
-  check("firestoreOps writes counted (one email_logs write per unique recipient)", 2, ctx.firestoreOps.writes);
-
-  const logs = db.logsByCollection.email_logs || [];
-  const ok = logs.find((l) => l.recipientEmail === "parent@example.com");
-  const failed = logs.find((l) => l.recipientEmail === "guardian@example.com");
-  check("the successful recipient's log carries the provider message id", "msg_ok", ok?.providerMessageId);
-  check("the failed recipient's log is retryable (rate_limit_exceeded)", true, failed?.retryable);
-  check("both log entries carry the request's traceId", ["trace-3", "trace-3"], [ok?.traceId, failed?.traceId]);
 }
 
 // --- Source guards ----------------------------------------------------

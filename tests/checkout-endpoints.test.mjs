@@ -443,6 +443,30 @@ check(
   /action: "guardian_checkout"/.test(serverSrc),
 );
 
+// Notifications: enqueue-after-audit, and batched rather than one awaited
+// send per child. This used to be a `for (const record of checkedOut) { await
+// emailService.sendNotification(...) }` loop -- up to ~20 sequential
+// awaited network calls on a request a volunteer is standing at a kiosk
+// waiting on. It's now one notifyCheckins(...) call across the whole
+// family, enqueued and dispatched in parallel -- see notifications/service.ts.
+const auditAt = checkoutHandler.indexOf('action: "guardian_checkout"');
+const notifyAt = checkoutHandler.indexOf("notifyCheckins(");
+check(
+  "the notification batch is enqueued after the audit log write, not before",
+  true,
+  auditAt !== -1 && notifyAt !== -1 && auditAt < notifyAt,
+);
+check(
+  "checkout notifications are dispatched in one batched call across the family, not a per-child loop",
+  true,
+  notifyAt !== -1 && /checkedOut\.map\(/.test(checkoutHandler.slice(notifyAt - 50, notifyAt + 50)),
+);
+check(
+  "the old serial per-child await loop is gone from the guardian-checkout handler",
+  false,
+  /for \(const record of checkedOut\)/.test(checkoutHandler),
+);
+
 // /api/check-out is now the override path only. Guardian pickups go through
 // /api/check-out-guardian, where the guardian is resolved server-side. If
 // CheckOutSchema ever re-accepts a caller-supplied guardian, the hole this
