@@ -10,6 +10,7 @@ import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, Che
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 import { registerChild } from "../lib/api";
+import { normalizeToE164 } from "../lib/phone";
 
 export default function ParentDashboard() {
   const { user, userData, role, roles } = useAuth();
@@ -314,13 +315,25 @@ export default function ParentDashboard() {
   const handleAddGuardian = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !selectedChild || !userData?.churchId) return;
+
+    // Stored in E.164 from here on, not whatever the person typed -- the old
+    // `pattern="[0-9]*"` on this field actively forbade a leading "+", and
+    // nothing normalised a local "082..." into "+2782...". A guardian
+    // record with an unnormalised or unparseable number can't be reached by
+    // any future programmatic channel.
+    const normalizedPhone = normalizeToE164(newGuardian.phone);
+    if (!normalizedPhone) {
+      showErrorToast("Please enter a valid phone number, e.g. 082 123 4567 or +27 82 123 4567");
+      return;
+    }
+
     setLoading(true);
     try {
       // Check if guardian already exists for this account (same name and phone)
-      const existingGuardian = guardians.find(g => 
-        g.firstName.toLowerCase() === newGuardian.firstName.toLowerCase() && 
-        g.lastName.toLowerCase() === newGuardian.lastName.toLowerCase() && 
-        g.phone === newGuardian.phone &&
+      const existingGuardian = guardians.find(g =>
+        g.firstName.toLowerCase() === newGuardian.firstName.toLowerCase() &&
+        g.lastName.toLowerCase() === newGuardian.lastName.toLowerCase() &&
+        g.phone === normalizedPhone &&
         g.parentId === user.uid &&
         g.churchId === userData.churchId
       );
@@ -340,6 +353,7 @@ export default function ParentDashboard() {
         const qrToken = `guardian_${Math.random().toString(36).substr(2, 12)}`;
         await addDocument("guardians", {
           ...newGuardian,
+          phone: normalizedPhone,
           childIds: [selectedChild.id],
           parentId: user.uid,
           churchId: userData.churchId,
@@ -680,9 +694,8 @@ export default function ParentDashboard() {
                           <input
                             required
                             type="tel"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            placeholder="Phone"
+                            inputMode="tel"
+                            placeholder="e.g. 082 123 4567 or +27 82 123 4567"
                             value={newGuardian.phone}
                             onChange={(e) => setNewGuardian({ ...newGuardian, phone: e.target.value })}
                             className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"

@@ -6,6 +6,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useTenant } from "../contexts/TenantContext";
 import { getPublicChurches, updateDocument, createMembershipRequest } from "../lib/firestore";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
+import { normalizeToE164 } from "../lib/phone";
 import { motion } from "motion/react";
 import { Seo } from "../components/Seo";
 
@@ -100,11 +101,14 @@ export default function ProfileCompletion() {
       return;
     }
     
-    // South African Cell Number Validation (basic regex)
-    const saPhoneRegex = /^(?:(?:\+27)|0)[678]\d{8}$/;
-    const cleanPhone = cellNumber.replace(/[\s\-()]/g, "");
-    if (!saPhoneRegex.test(cleanPhone)) {
-      showErrorToast("Invalid South African cell number format. Please use 0123456789 or +27123456789");
+    // Was a South-Africa-only regex that validated a local "0..." or
+    // "+27..." string but stored whichever form was typed -- normalizeToE164
+    // both validates (any country, not just SA) and stores one consistent
+    // format, which is what makes the number dialable by a programmatic
+    // channel later.
+    const cleanPhone = normalizeToE164(cellNumber);
+    if (!cleanPhone) {
+      showErrorToast("Please enter a valid cell number, e.g. 0821234567 or +27821234567");
       return;
     }
 
