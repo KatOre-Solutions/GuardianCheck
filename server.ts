@@ -593,6 +593,14 @@ const PLAN_PRICES: Record<string, number> = {
 };
 
 // Transactions List Endpoint
+//
+// NOTE: like /api/auth/send-verification used to be, this route is registered
+// at module scope -- before startServer() runs app.use("/api/", generalLimiter)
+// -- so Express dispatches it before the limiter middleware is ever reached.
+// It carries no per-request Resend call, so it wasn't the sender-reputation
+// risk the verification route was, and this fix left it in place rather than
+// widen scope. It has the same latent gap and is worth moving the next time
+// this file's route registration order is touched.
 app.get("/api/transactions", authenticateToken, async (req, res) => {
   const churchId = req.user.churchId;
   if (!churchId) return res.status(403).json({ error: "Unauthorized" });
@@ -619,48 +627,6 @@ app.get("/api/transactions", authenticateToken, async (req, res) => {
   } catch (error: any) {
     console.error("Error fetching transactions:", error.message);
     res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
-  const { uid, email } = req.user;
-  if (!email) return res.status(400).json({ error: "Email not found" });
-
-  try {
-    // 1. Fetch user data to get firstName
-    const userDoc = await db.collection("users").doc(uid).get();
-    req.firestoreOps.reads++;
-    
-    const userData = userDoc.data() || {};
-    const firstName = userData.firstName || "there";
-    
-    // 2. Fetch church name
-    let churchName = "GuardianCheck";
-    if (userData.churchId) {
-      const churchDoc = await db.collection("churches").doc(userData.churchId).get();
-      req.firestoreOps.reads++;
-      if (churchDoc.exists) {
-        churchName = churchDoc.data().name;
-      }
-    }
-
-    // 3. Generate Link
-    const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
-    const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-
-    const actionCodeSettings = {
-      url: `${process.env.APP_URL || baseUrl}/login`
-    };
-    
-    const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
-
-    // 4. Send via Resend
-    await emailService.sendVerificationEmail(email, firstName, churchName, verificationLink);
-
-    res.json({ success: true, message: "Verification email sent via Resend" });
-  } catch (error: any) {
-    console.error(`[VERIFICATION_ERROR] ${error.message}`);
-    res.status(500).json({ error: "Failed to send verification email" });
   }
 });
 
@@ -780,6 +746,62 @@ async function startServer() {
     }
   });
 
+  // Moved here from module scope (was registered before this generalLimiter
+  // mount ever ran, so it had no rate limit at all and no parsed req.body --
+  // Express dispatches routes in registration order). An authenticated user
+  // could trigger unlimited Resend sends, which is a live sender-reputation
+  // risk for a transactional domain.
+  app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
+    const { uid, email } = req.user;
+    if (!email) return res.status(400).json({ error: "Email not found" });
+
+    try {
+      // 1. Fetch user data to get firstName
+      const userDoc = await db.collection("users").doc(uid).get();
+      req.firestoreOps.reads++;
+
+      const userData = userDoc.data() || {};
+      const firstName = userData.firstName || "there";
+
+      // 2. Fetch church name
+      let churchName = "GuardianCheck";
+      if (userData.churchId) {
+        const churchDoc = await db.collection("churches").doc(userData.churchId).get();
+        req.firestoreOps.reads++;
+        if (churchDoc.exists) {
+          churchName = churchDoc.data().name;
+        }
+      }
+
+      // 3. Generate Link
+      const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
+      const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+
+      const actionCodeSettings = {
+        url: `${process.env.APP_URL || baseUrl}/login`
+      };
+
+      const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
+
+      // 4. Send via Resend. A failed send is reported honestly rather than
+      // thrown -- the button that calls this route already has a "resend"
+      // affordance, so the user can just try again.
+      const result = await emailService.sendVerificationEmail(email, firstName, churchName, verificationLink, {
+        traceId: req.traceId,
+        firestoreOps: req.firestoreOps,
+      });
+
+      if (!result.ok) {
+        return res.status(502).json({ error: "Failed to send verification email. Please try again.", traceId: req.traceId });
+      }
+
+      res.json({ success: true, message: "Verification email sent via Resend" });
+    } catch (error: any) {
+      console.error(`[VERIFICATION_ERROR] ${error.message}`);
+      res.status(500).json({ error: "Failed to send verification email" });
+    }
+  });
+
   // API routes
   app.get("/api/legal-version", (req, res) => {
     res.json({ version: CURRENT_POLICY_VERSION });
@@ -859,6 +881,9 @@ async function startServer() {
         const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
         if (webhookUrl) {
           const color = level === 'critical' ? 0xff0000 : 0xffa500;
+          // Unlike the PayFast call below, this had no timeout: a hung
+          // connection to Discord held the function open indefinitely on an
+          // unauthenticated route. Matches the 15s PayFast uses.
           await axios.post(webhookUrl, {
             embeds: [{
               title: `GuardianCheck Alert: ${level.toUpperCase()}`,
@@ -872,7 +897,7 @@ async function startServer() {
               ],
               timestamp: logData.processedAt
             }]
-          } as any).catch((err: any) => console.error("Discord webhook failed:", err.message));
+          } as any, { timeout: 15000 }).catch((err: any) => console.error("Discord webhook failed:", err.message));
         }
       }
 
@@ -1660,24 +1685,29 @@ async function startServer() {
 
       // 6. Send Invitation Email
       const inviteLink = `${process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
-      
-      try {
-        await emailService.sendInvitation(email, {
-          firstName,
-          lastName,
-          role,
-          churchName,
-          inviteLink
-        });
-      } catch (emailError: any) {
-        console.error("Delayed failure sending invitation email:", emailError.message);
+
+      // sendInvitation no longer throws -- it returns a result. This is the
+      // pattern the rest of the file's send call sites should have followed
+      // from the start: the invitation already exists in Firestore, so a
+      // failed send degrades to "copy the link manually" instead of
+      // relying on a try/catch around a call that may not actually throw.
+      const emailResult = await emailService.sendInvitation(email, {
+        firstName,
+        lastName,
+        role,
+        churchName,
+        inviteLink
+      }, { traceId: req.traceId, firestoreOps: req.firestoreOps });
+
+      if (!emailResult.ok) {
+        console.error("Delayed failure sending invitation email:", emailResult.errorMessage);
         // We still return success: true because the invitation IS in the database
         // and the user can see the link in the response/UI if needed.
-        return res.json({ 
-          success: true, 
-          message: "Invitation created but email delivery failed. You can copy the link manually.", 
+        return res.json({
+          success: true,
+          message: "Invitation created but email delivery failed. You can copy the link manually.",
           inviteLink,
-          emailError: emailError.message 
+          emailError: emailResult.errorMessage
         });
       }
 
@@ -1763,7 +1793,18 @@ async function startServer() {
       });
       req.firestoreOps.writes++;
 
-      // 6. Send Verification Email (Await system confirmation before returning response)
+      // 6. Send Verification Email
+      //
+      // A failure here -- generating the link or the send itself -- must not
+      // strand this account. By this point the invitation is single-use and
+      // already flipped to "accepted" (step 4), and the Auth user + users doc
+      // already exist. This used to `throw` into the outer catch, which
+      // turned an email-provider hiccup into a 500 for an account that had
+      // already been created, with a burnt invitation the person could not
+      // retry. There is no correct rollback for "the account exists but we
+      // didn't tell them" -- only a worse one. Log it, degrade the response
+      // message, and let them request another verification email later.
+      let verificationSent = false;
       try {
         // Get church name if missing
         let churchName = inviteData.churchName;
@@ -1776,40 +1817,50 @@ async function startServer() {
 
         const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
         const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-        
+
         const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
           url: `${process.env.APP_URL || baseUrl}/login`
         });
 
-        await emailService.sendVerificationEmail(
-          inviteData.email, 
-          inviteData.firstName, 
+        const emailResult = await emailService.sendVerificationEmail(
+          inviteData.email,
+          inviteData.firstName,
           churchName || "Your Church",
-          verificationLink
+          verificationLink,
+          { traceId: req.traceId, firestoreOps: req.firestoreOps }
         );
-        
-        logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
+
+        verificationSent = emailResult.ok;
+        if (emailResult.ok) {
+          logger.info(`Verification email sent for volunteer: ${inviteData.email}`);
+        } else {
+          console.error("Verification email failed for volunteer signup:", emailResult.errorMessage);
+        }
       } catch (error: any) {
+        // generateEmailVerificationLink itself threw -- a Firebase Admin
+        // problem, not a Resend one. The same rule applies either way.
         console.error("Verification email failed for volunteer signup:", error.message);
+      }
+
+      if (!verificationSent) {
         // Log to general logs for visibility
         await db.collection("logs").add({
           level: "error",
-          message: `Verification email failed during invite acceptance: ${error.message}`,
-          context: { 
-              email: inviteData.email, 
+          message: `Verification email failed during invite acceptance for ${inviteData.email}`,
+          context: {
+              email: inviteData.email,
               churchId: inviteData.churchId,
               traceId: req.traceId
           },
           timestamp: new Date().toISOString()
         }).catch(console.error);
-        
-        // Propagate the email system's failure to the client
-        throw new Error(`Failed to send verification email: ${error.message}`);
       }
 
-      res.json({ 
-        success: true, 
-        message: "Account created successfully. A verification email has been sent.",
+      res.json({
+        success: true,
+        message: verificationSent
+          ? "Account created successfully. A verification email has been sent."
+          : "Account created successfully. We couldn't send the verification email right now -- you can request another from the login page.",
         userId: userRecord.uid
       });
     } catch (error: any) {
@@ -2418,21 +2469,46 @@ async function startServer() {
       req.firestoreOps.writes++;
       console.log(`Created admin user document: ${uid}`);
 
-      // 4. Send Verification Email (Await system confirmation before returning response)
+      // 4. Send Verification Email
+      //
+      // This used to `throw` on any failure here, which fell into the catch
+      // below and ran the ROLLBACK: deleting the church document, the
+      // church_public projection, and the customer's brand-new Firebase Auth
+      // account -- because a transactional email didn't send. The church, the
+      // user document and the Auth account are all real by this point; a
+      // Resend hiccup (or Firebase Admin failing to mint the link) is not a
+      // registration failure and must not be treated as one. Degrade the
+      // response instead -- the admin can request another verification email
+      // from the login page.
       const actionCodeSettings = {
         url: `${process.env.APP_URL || req.get("origin")}/login`
       };
-      
+
+      let verificationSent = false;
       try {
         const link = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
-        await emailService.sendVerificationEmail(email, adminFirstName, churchName, link);
-        console.log(`Verification email sent successfully for admin: ${email}`);
+        const emailResult = await emailService.sendVerificationEmail(email, adminFirstName, churchName, link, {
+          traceId: req.traceId,
+          firestoreOps: req.firestoreOps,
+        });
+        verificationSent = emailResult.ok;
+        if (emailResult.ok) {
+          console.log(`Verification email sent successfully for admin: ${email}`);
+        } else {
+          console.error(`[VERIFICATION_ERROR] Registration verification email failed: ${emailResult.errorMessage}`);
+        }
       } catch (err: any) {
+        // generateEmailVerificationLink itself threw -- a Firebase Admin
+        // problem, not a Resend one. The same rule applies either way.
         console.error(`[VERIFICATION_ERROR] Registration verification email failed: ${err.message}`);
-        throw new Error(`Failed to send verification email: ${err.message}`);
       }
 
-      res.json({ success: true, churchId: churchRef.id, slug: slug });
+      res.json({
+        success: true,
+        churchId: churchRef.id,
+        slug: slug,
+        ...(verificationSent ? {} : { warning: "Church registered, but we couldn't send the verification email right now. You can request another from the login page." })
+      });
 
     } catch (error: any) {
       console.error(`[REGISTRATION_ERROR] ${error.message} [Trace: ${req.traceId}]`);
