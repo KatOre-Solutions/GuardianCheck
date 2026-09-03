@@ -161,6 +161,35 @@ await check("public signup creates own parent doc", "allow", () =>
 await check("admin approves member: sets churchId + role + approved", "allow", () =>
   updateDoc(doc(as("admin1"), "users", "victim"), { churchId: CHURCH, role: "volunteer", status: "approved" }));
 
+// --- WhatsApp verification (PR 4) -------------------------------------
+// whatsappVerifiedAt is proof a server-side OTP challenge was completed
+// (notifications/whatsapp-verification.ts) -- self-elevation risk exactly
+// like `role`, so it gets the same preservesRoleFields()-shaped guard
+// (preservesWhatsappVerification()). whatsappNumber is unguarded and stays
+// client-writable: it's inert without whatsappVerifiedAt, same as an
+// unverified email address doesn't grant anything.
+
+console.log("\nWhatsApp verification: whatsappVerifiedAt cannot be self-granted");
+
+await check("approved user cannot self-set whatsappVerifiedAt", "deny", () =>
+  updateDoc(doc(as("approved"), "users", "approved"), { whatsappVerifiedAt: new Date().toISOString() }));
+
+await check("incomplete_profile user cannot self-set whatsappVerifiedAt during onboarding", "deny", () =>
+  updateDoc(doc(as("newbie"), "users", "newbie"), {
+    firstName: "Thabo", lastName: "M", cellNumber: "0821234567", dob: "1990-01-01",
+    churchId: CHURCH, churchSlug: "test-church", status: "approved",
+    whatsappVerifiedAt: new Date().toISOString(),
+  }));
+
+await check("an admin cannot grant whatsappVerifiedAt to another user in their church", "deny", () =>
+  updateDoc(doc(as("admin1"), "users", "victim"), { whatsappVerifiedAt: new Date().toISOString() }));
+
+await check("a malformed whatsappNumber (not E.164) is rejected", "deny", () =>
+  updateDoc(doc(as("approved"), "users", "approved"), { whatsappNumber: "0821234567" }));
+
+await check("approved user self-sets a valid E.164 whatsappNumber (unverified)", "allow", () =>
+  updateDoc(doc(as("approved"), "users", "approved"), { whatsappNumber: "+27821234567" }));
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 
 await env.cleanup();
