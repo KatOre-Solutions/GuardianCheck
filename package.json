@@ -19,7 +19,8 @@
     "test:pin-limiter": "node tests/pin-limiter.test.mjs",
     "test:checkout": "node tests/checkout-endpoints.test.mjs",
     "test:notifications": "tsx tests/notifications-service.test.mjs",
-    "test:email-provider": "tsx tests/email-provider-result.test.mjs"
+    "test:email-provider": "tsx tests/email-provider-result.test.mjs",
+    "test:phone": "tsx tests/phone.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -36,6 +37,7 @@
     "he": "^1.2.0",
     "helmet": "^8.1.0",
     "html5-qrcode": "^2.3.8",
+    "libphonenumber-js": "^1.13.12",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "node-cache": "^5.1.2",

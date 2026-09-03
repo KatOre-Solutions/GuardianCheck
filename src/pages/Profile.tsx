@@ -9,6 +9,7 @@ import { User, Mail, Phone, MapPin, Camera, Trash2, Moon, Sun, Save, LogOut, Ale
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { useTenant } from "../contexts/TenantContext";
+import { normalizeToE164 } from "../lib/phone";
 import { ChurchLogo } from "../components/ChurchLogo";
 
 export default function Profile() {
@@ -64,10 +65,26 @@ export default function Profile() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // This field previously had no validation at all -- any free text
+    // saved straight to cellNumber. Optional here (unlike the required
+    // field on signup/ProfileCompletion), so an empty value is left as-is;
+    // a non-empty one must normalize.
+    let cellNumber = profile?.cellNumber || "";
+    if (cellNumber.trim() !== "") {
+      const normalized = normalizeToE164(cellNumber);
+      if (!normalized) {
+        showErrorToast("Please enter a valid cell number, e.g. 0821234567 or +27821234567");
+        return;
+      }
+      cellNumber = normalized;
+    }
+
     setSaving(true);
     try {
       await updateDocument("users", user!.uid, {
         ...profile,
+        cellNumber,
         updatedAt: new Date().toISOString()
       });
       showSuccessToast("Profile updated successfully!");
