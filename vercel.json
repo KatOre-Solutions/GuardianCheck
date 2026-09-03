@@ -13,6 +13,12 @@
       "use": "@vercel/node"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/cron/notifications-sweep",
+      "schedule": "17 3 * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/api/(.*)",

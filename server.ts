@@ -27,6 +27,9 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
+import { notifyCheckins, buildEventKey, runNotificationSweep } from "./notifications/service.js";
+import { EmailProvider } from "./notifications/providers/email.js";
+import type { Occurrence } from "./notifications/service.js";
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -205,6 +208,14 @@ const initializeFirebase = () => {
 initializeFirebase();
 
 const emailService = new EmailService(db);
+
+// Channel providers for the notification pipeline (check-in/check-out/room
+// move/emergency). Separate from `emailService` above, which remains only
+// for invite/verification transactional mail -- see
+// notifications/providers/email.ts for why the two are independent. Keyed by
+// channel so `notifyCheckins`/`runNotificationSweep` can look one up per
+// record; `whatsapp` joins this map in PR 4.
+const notificationProviders = { email: new EmailProvider() };
 
 const app = express();
 
@@ -746,6 +757,29 @@ async function startServer() {
   app.set("trust proxy", 1);
   app.use("/api/", generalLimiter);
 
+  // Notification retry + reconciliation sweep. Vercel Cron triggers this on
+  // the schedule in vercel.json's `crons` block with a GET request; it is
+  // not meant to be called by the app itself. Not an end-user route, so it
+  // doesn't authenticate via authenticateToken -- instead it checks the
+  // shared secret Vercel automatically sends as a bearer token for every
+  // Cron-triggered request once CRON_SECRET is set as a project env var,
+  // which is why this must be registered here (after generalLimiter mounts)
+  // rather than at module scope -- see the send-verification comment above
+  // for what happens to a route that isn't.
+  app.get("/api/cron/notifications-sweep", async (req, res) => {
+    if (!process.env.CRON_SECRET || req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const summary = await runNotificationSweep(db, notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
+      console.log(`[NOTIFICATIONS_SWEEP] ${JSON.stringify(summary)}`);
+      res.json({ success: true, ...summary });
+    } catch (error: any) {
+      console.error("Notification sweep failed:", error.message);
+      res.status(500).json({ error: "Internal server error", traceId: req.traceId });
+    }
+  });
+
   // API routes
   app.get("/api/legal-version", (req, res) => {
     res.json({ version: CURRENT_POLICY_VERSION });
@@ -1035,6 +1069,7 @@ async function startServer() {
       }
 
       // 4. Atomic Transaction
+      const checkInTime = new Date().toISOString();
       await db.runTransaction(async (transaction: any) => {
         const checkinRef = db.collection("checkins").doc(checkinId);
         const checkinDoc = await transaction.get(checkinRef);
@@ -1053,7 +1088,7 @@ async function startServer() {
           roomName: room.name,
           serviceId,
           serviceName: service.name,
-          checkInTime: new Date().toISOString(),
+          checkInTime,
           volunteerId,
           volunteerName: (req.user.firstName || req.user.lastName) 
             ? `${req.user.firstName || ""} ${req.user.lastName || ""}`.trim() 
@@ -1090,15 +1125,20 @@ async function startServer() {
       }
 
       try {
-        await emailService.sendNotification(churchId, childId, {
-          childName: `${child.firstName} ${child.lastName}`,
-          time: new Date().toISOString(),
-          roomName: room.name,
-          churchName,
-          serviceName: service.name,
-          eventType: 'check-in',
-          guardianQrToken
-        });
+        await notifyCheckins(db, churchId, [{
+          checkinId,
+          eventType: "check-in",
+          childId,
+          eventKey: buildEventKey("check-in", checkinId, checkInTime),
+          payload: {
+            childName: `${child.firstName} ${child.lastName}`,
+            time: checkInTime,
+            roomName: room.name,
+            churchName,
+            serviceName: service.name,
+            guardianQrToken,
+          },
+        }], notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
       } catch (err: any) {
         console.error("Check-in notification failed:", err.message);
       }
@@ -1160,16 +1200,21 @@ async function startServer() {
         const churchName = churchData?.name || "Church";
 
         try {
-          await emailService.sendNotification(churchId, checkinData.childId, {
-            childName: checkinData.childName,
-            time: checkinData.checkOutTime,
-            roomName: checkinData.roomName,
-            churchName,
-            serviceName: checkinData.serviceName,
-            eventType: 'check-out',
-            volunteerName: checkinData.checkOutVolunteerName,
-            guardianName: checkinData.guardianName
-          });
+          await notifyCheckins(db, churchId, [{
+            checkinId,
+            eventType: "check-out",
+            childId: checkinData.childId,
+            eventKey: buildEventKey("check-out", checkinId, checkinData.checkOutTime),
+            payload: {
+              childName: checkinData.childName,
+              time: checkinData.checkOutTime,
+              roomName: checkinData.roomName,
+              churchName,
+              serviceName: checkinData.serviceName,
+              volunteerName: checkinData.checkOutVolunteerName,
+              guardianName: checkinData.guardianName,
+            },
+          }], notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
         } catch (err: any) {
           console.error("Checkout notification failed:", err.message);
         }
@@ -1370,7 +1415,7 @@ async function startServer() {
           });
 
           results.push({ checkinId, childName: outcome.childName || null, outcome: outcome.outcome });
-          if (outcome.outcome === "checked-out") checkedOut.push(outcome.record);
+          if (outcome.outcome === "checked-out") checkedOut.push({ ...outcome.record, checkinId });
         } catch (err: any) {
           console.error("Checkout failed for " + checkinId + ":", err.message);
           results.push({ checkinId, childName: null, outcome: "error" });
@@ -1413,21 +1458,28 @@ async function startServer() {
       if (checkedOut.length > 0) {
         const churchData = await getCachedDoc(req, "churches", churchId, churchId);
         const churchName = churchData?.name || "Church";
-        for (const record of checkedOut) {
-          try {
-            await emailService.sendNotification(churchId, record.childId, {
+        // Batched: enqueue-then-dispatch in parallel across the whole family,
+        // not one awaited network call per child in sequence. A guardian
+        // collecting several siblings used to serialise up to ~20 Resend
+        // calls onto this response.
+        try {
+          await notifyCheckins(db, churchId, checkedOut.map((record): Occurrence => ({
+            checkinId: record.checkinId,
+            eventType: "check-out",
+            childId: record.childId,
+            eventKey: buildEventKey("check-out", record.checkinId, record.checkOutTime),
+            payload: {
               childName: record.childName,
               time: record.checkOutTime,
               roomName: record.roomName,
               churchName,
               serviceName: record.serviceName,
-              eventType: 'check-out',
               volunteerName: record.checkOutVolunteerName,
-              guardianName: record.guardianName
-            });
-          } catch (err: any) {
-            console.error("Checkout notification failed:", err.message);
-          }
+              guardianName: record.guardianName,
+            },
+          })), notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
+        } catch (err: any) {
+          console.error("Checkout notification failed:", err.message);
         }
       }
 
@@ -1457,9 +1509,43 @@ async function startServer() {
       const churchDoc = await db.collection("churches").doc(churchId).get();
       const churchName = churchDoc.exists ? churchDoc.data().name : "Church";
 
-      // Trigger emergency alerts (Await execution)
+      // Trigger emergency alerts: every currently checked-in child, one
+      // shared trigger time so every family's alert shows the same moment.
+      // Moved out of emailService (which used to loop `sendNotification`
+      // once per child, awaited in sequence) -- notifyCheckins enqueues and
+      // dispatches the whole church in parallel.
       try {
-        await emailService.sendEmergencyAlert(churchId, churchName);
+        const activeCheckins = await db.collection("checkins")
+          .where("churchId", "==", churchId)
+          .where("status", "==", "checked-in")
+          .get();
+        req.firestoreOps.reads += activeCheckins.size;
+
+        const triggerAt = new Date().toISOString();
+        const seenChildren = new Set<string>();
+        const occurrences: Occurrence[] = [];
+        for (const doc of activeCheckins.docs) {
+          const checkin = doc.data();
+          if (seenChildren.has(checkin.childId)) continue;
+          seenChildren.add(checkin.childId);
+          occurrences.push({
+            checkinId: doc.id,
+            eventType: "emergency",
+            childId: checkin.childId,
+            eventKey: buildEventKey("emergency", doc.id, triggerAt),
+            payload: {
+              childName: checkin.childName,
+              time: triggerAt,
+              roomName: checkin.roomName,
+              churchName,
+              serviceName: checkin.serviceName,
+            },
+          });
+        }
+
+        if (occurrences.length > 0) {
+          await notifyCheckins(db, churchId, occurrences, notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
+        }
       } catch (err: any) {
         console.error("Emergency alert failed:", err.message);
       }
@@ -1825,14 +1911,19 @@ async function startServer() {
         const churchName = churchData?.name || "Church";
 
         try {
-          await emailService.sendNotification(churchId, cData.childId, {
-            childName: cData.childName,
-            time: new Date().toISOString(),
-            roomName: room.name,
-            churchName,
-            serviceName: cData.serviceName,
-            eventType: 'room_move'
-          });
+          await notifyCheckins(db, churchId, [{
+            checkinId,
+            eventType: "room_move",
+            childId: cData.childId,
+            eventKey: buildEventKey("room_move", checkinId, cData.updatedAt),
+            payload: {
+              childName: cData.childName,
+              time: cData.updatedAt,
+              roomName: room.name,
+              churchName,
+              serviceName: cData.serviceName,
+            },
+          }], notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
         } catch (err: any) {
           console.error("Room-move notification failed:", err.message);
         }
