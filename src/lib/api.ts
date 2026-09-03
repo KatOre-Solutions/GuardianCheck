@@ -61,6 +61,40 @@ export async function sendCustomVerificationEmail(token: string) {
   return response.json();
 }
 
+export async function startWhatsAppVerification(token: string, whatsappNumber: string) {
+  const result = await safeFetch("/api/whatsapp/verify/start", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ whatsappNumber })
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error || "Failed to send verification code");
+  }
+
+  return result.data;
+}
+
+export async function confirmWhatsAppVerification(token: string, code: string) {
+  const result = await safeFetch("/api/whatsapp/verify/confirm", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ code })
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error || "Verification failed");
+  }
+
+  return result.data;
+}
+
 export async function registerChild(token: string, childData: any) {
   const result = await safeFetch("/api/children", {
     method: "POST",

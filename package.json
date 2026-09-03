@@ -15,12 +15,13 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test:rules": "firebase emulators:exec --only firestore --project gc-rules-test \"node tests/firestore-rules.test.mjs && node tests/firestore-churches.test.mjs && node tests/firestore-children-directory.test.mjs && node tests/firestore-checkins.test.mjs && node tests/firestore-church-public.test.mjs && node tests/firestore-invitations.test.mjs && node tests/firestore-notifications.test.mjs\"",
+    "test:rules": "firebase emulators:exec --only firestore --project gc-rules-test \"node tests/firestore-rules.test.mjs && node tests/firestore-churches.test.mjs && node tests/firestore-children-directory.test.mjs && node tests/firestore-checkins.test.mjs && node tests/firestore-church-public.test.mjs && node tests/firestore-invitations.test.mjs && node tests/firestore-notifications.test.mjs && node tests/firestore-otp-challenges.test.mjs\"",
     "test:pin-limiter": "node tests/pin-limiter.test.mjs",
     "test:checkout": "node tests/checkout-endpoints.test.mjs",
     "test:notifications": "tsx tests/notifications-service.test.mjs",
     "test:email-provider": "tsx tests/email-provider-result.test.mjs",
-    "test:phone": "tsx tests/phone.test.mjs"
+    "test:phone": "tsx tests/phone.test.mjs",
+    "test:whatsapp": "tsx tests/whatsapp-verification.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

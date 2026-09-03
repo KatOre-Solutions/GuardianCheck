@@ -10,6 +10,7 @@ import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { useTenant } from "../contexts/TenantContext";
 import { normalizeToE164 } from "../lib/phone";
+import { startWhatsAppVerification, confirmWhatsAppVerification } from "../lib/api";
 import { ChurchLogo } from "../components/ChurchLogo";
 
 export default function Profile() {
@@ -23,6 +24,11 @@ export default function Profile() {
   const [uploading, setUploading] = useState(false);
   const [showDeactivateModal, setShowDeactivateModal] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [whatsappNumberInput, setWhatsappNumberInput] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [whatsappSending, setWhatsappSending] = useState(false);
+  const [whatsappVerifying, setWhatsappVerifying] = useState(false);
 
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -92,6 +98,41 @@ export default function Profile() {
       showErrorToast("Failed to update profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSendWhatsAppCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setWhatsappSending(true);
+    try {
+      const token = await user.getIdToken();
+      await startWhatsAppVerification(token, whatsappNumberInput);
+      setOtpSent(true);
+      showSuccessToast("Verification code sent via WhatsApp");
+    } catch (err: any) {
+      showErrorToast(err.message || "Failed to send verification code");
+    } finally {
+      setWhatsappSending(false);
+    }
+  };
+
+  const handleConfirmWhatsAppCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setWhatsappVerifying(true);
+    try {
+      const token = await user.getIdToken();
+      await confirmWhatsAppVerification(token, otpCode);
+      showSuccessToast("WhatsApp number verified!");
+      setOtpSent(false);
+      setOtpCode("");
+      setWhatsappNumberInput("");
+      await loadProfile();
+    } catch (err: any) {
+      showErrorToast(err.message || "Verification failed");
+    } finally {
+      setWhatsappVerifying(false);
     }
   };
 
@@ -243,6 +284,76 @@ export default function Profile() {
                 {profile?.role}
               </div>
             </div>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-4">
+            <h4 className="text-gray-900 dark:text-white font-bold flex items-center space-x-2">
+              <Phone className="h-5 w-5 text-primary" />
+              <span>WhatsApp Notifications</span>
+            </h4>
+
+            {profile?.whatsappVerifiedAt ? (
+              <div className="flex items-center space-x-2 text-sm">
+                <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
+                <span className="text-gray-600 dark:text-gray-300">Verified: {profile.whatsappNumber}</span>
+              </div>
+            ) : (
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
+                Verify a WhatsApp number to receive check-in and check-out notifications there too, once available.
+              </p>
+            )}
+
+            {!otpSent ? (
+              <form onSubmit={handleSendWhatsAppCode} className="space-y-3">
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  required
+                  placeholder="e.g. 082 123 4567 or +27 82 123 4567"
+                  value={whatsappNumberInput}
+                  onChange={e => setWhatsappNumberInput(e.target.value)}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={whatsappSending}
+                  className="w-full bg-primary/10 text-primary font-bold py-2 rounded-xl hover:bg-primary/20 transition-all disabled:opacity-50 text-sm"
+                >
+                  {whatsappSending ? "Sending..." : profile?.whatsappVerifiedAt ? "Verify a different number" : "Send verification code"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleConfirmWhatsAppCode} className="space-y-3">
+                <p className="text-xs text-gray-500 dark:text-gray-400">Enter the 6-digit code sent to {whatsappNumberInput}</p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{6}"
+                  maxLength={6}
+                  required
+                  placeholder="123456"
+                  value={otpCode}
+                  onChange={e => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white text-sm text-center tracking-[0.5em] font-bold"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setOtpSent(false); setOtpCode(""); }}
+                    className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold py-2 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-all text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={whatsappVerifying || otpCode.length !== 6}
+                    className="flex-1 bg-primary text-white font-bold py-2 rounded-xl hover:bg-primary/90 transition-all disabled:opacity-50 text-sm"
+                  >
+                    {whatsappVerifying ? "Verifying..." : "Verify"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
 
           <div className="bg-red-50 dark:bg-red-900/10 p-6 rounded-3xl border border-red-100 dark:border-red-900/30">

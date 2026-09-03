@@ -30,6 +30,8 @@ import { isKnownAppPath } from "./src/constants/appRoutes.js";
 import { notifyCheckins, buildEventKey, runNotificationSweep } from "./notifications/service.js";
 import { EmailProvider } from "./notifications/providers/email.js";
 import type { Occurrence } from "./notifications/service.js";
+import { startWhatsappVerification, confirmWhatsappVerification } from "./notifications/whatsapp-verification.js";
+import { normalizeToE164 } from "./src/lib/phone.js";
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -311,6 +313,43 @@ const pinLimiter = rateLimit({
   message: { error: "Too many PIN attempts. Please try again later." }
 });
 
+// WhatsApp OTP verification (POST /api/whatsapp/verify/start, /confirm).
+// "Dual rate limits" per the plan: this one keyed per account, so a family
+// can't be locked out of requesting codes for themselves by anyone else's
+// activity.
+const whatsappOtpStartLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  keyGenerator,
+  message: { error: "Too many verification code requests. Please try again later." }
+});
+
+// The second half of "dual": keyed by the *target* phone number, not the
+// caller. Without this, one account could be used to WhatsApp-bomb any
+// number repeatedly -- the per-uid limiter above does nothing to stop that,
+// since it's a single account making the requests. Malformed input (not yet
+// a parseable number) falls back to per-IP rather than sharing one bucket
+// keyed on "".
+const whatsappOtpStartPhoneLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req: any) => normalizeToE164(req.body?.whatsappNumber || "") || ipKeyGenerator(req.ip),
+  message: { error: "Too many verification attempts for this number. Please try again later." }
+});
+
+// Mirrors pinLimiter's shape: only wrong guesses spend the budget, since a
+// 6-digit code is guessable in principle and this is the layer that makes
+// guessing expensive. res.locals.otpVerified is set by the route handler,
+// the same pattern pinLimiter uses via res.locals.pinValid.
+const whatsappOtpConfirmLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (_req: any, res: any) => res.statusCode < 400 && res.locals.otpVerified === true,
+  message: { error: "Too many attempts. Please request a new code." }
+});
+
 // Validation Middleware
 const validate = (schema: z.ZodObject<any>) => (req: any, res: any, next: any) => {
   try {
@@ -369,6 +408,14 @@ const GuardianLookupSchema = z.object({
 const GuardianCheckOutSchema = z.object({
   qrToken: z.string().min(8).max(64),
   checkinIds: z.array(z.string().min(1).max(128)).min(1).max(20)
+});
+
+const StartWhatsAppVerificationSchema = z.object({
+  whatsappNumber: z.string().min(1)
+});
+
+const ConfirmWhatsAppVerificationSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code")
 });
 
 const InviteUserSchema = z.object({
@@ -745,6 +792,62 @@ async function startServer() {
       res.status(500).json({ error: "Internal server error", traceId: req.traceId });
     }
   });
+
+  // WhatsApp phone-ownership verification (blocker B2 in the plan: whether
+  // Meta approves an AUTHENTICATION template for this use case at all is
+  // still open -- this endpoint works in mock mode regardless, same as
+  // EmailProvider does with no RESEND_API_KEY). See
+  // notifications/whatsapp-verification.ts for the actual OTP logic; this
+  // route is deliberately thin, just auth + rate limiting + response
+  // shaping.
+  app.post(
+    "/api/whatsapp/verify/start",
+    authenticateToken,
+    whatsappOtpStartLimiter,
+    whatsappOtpStartPhoneLimiter,
+    validate(StartWhatsAppVerificationSchema),
+    async (req, res) => {
+      try {
+        const result = await startWhatsappVerification(db, req.user.uid, req.body.whatsappNumber);
+        if (!result.ok) {
+          return res.status(400).json({ error: result.errorMessage, traceId: req.traceId });
+        }
+        res.json({ success: true, message: "Verification code sent." });
+      } catch (error: any) {
+        console.error("WhatsApp verification start failed:", error.message);
+        res.status(500).json({ error: "Internal server error", traceId: req.traceId });
+      }
+    }
+  );
+
+  app.post(
+    "/api/whatsapp/verify/confirm",
+    authenticateToken,
+    whatsappOtpConfirmLimiter,
+    validate(ConfirmWhatsAppVerificationSchema),
+    async (req, res) => {
+      try {
+        const result = await confirmWhatsappVerification(db, req.user.uid, req.body.code);
+        res.locals.otpVerified = result.outcome === "verified";
+
+        if (result.outcome === "verified") {
+          return res.json({ success: true, verified: true });
+        }
+
+        // Every failure outcome -- wrong code, expired, no challenge at
+        // all, too many attempts -- gets the same generic message. Any
+        // difference here would make this endpoint an oracle for whether a
+        // given account ever requested a code, or how close a guess came.
+        res.status(400).json({
+          error: "That code is incorrect or has expired. Please request a new one.",
+          traceId: req.traceId
+        });
+      } catch (error: any) {
+        console.error("WhatsApp verification confirm failed:", error.message);
+        res.status(500).json({ error: "Internal server error", traceId: req.traceId });
+      }
+    }
+  );
 
   // Moved here from module scope (was registered before this generalLimiter
   // mount ever ran, so it had no rate limit at all and no parsed req.body --

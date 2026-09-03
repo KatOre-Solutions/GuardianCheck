@@ -151,6 +151,18 @@ service cloud.firestore {
              request.resource.data.get('roles', []) == resource.data.get('roles', []);
     }
 
+    // Mirrors preservesRoleFields() for a different kind of self-elevation:
+    // `whatsappVerifiedAt` is proof a server-side OTP challenge (see
+    // otp_challenges below) was completed, never something a client may
+    // assert about itself. Only POST /api/whatsapp/verify/confirm
+    // (notifications/whatsapp-verification.ts), which writes through the
+    // Admin SDK and so bypasses these rules entirely, may legitimately set
+    // it -- this function is what stops a client from just writing a
+    // timestamp into its own document and claiming to be verified.
+    function preservesWhatsappVerification() {
+      return request.resource.data.get('whatsappVerifiedAt', null) == resource.data.get('whatsappVerifiedAt', null);
+    }
+
     function isValidUser(data) {
       // Core requirements for any active user document
       return data.email is string &&
@@ -167,7 +179,16 @@ service cloud.firestore {
              (!('cellNumber' in data) || (data.cellNumber is string && data.cellNumber.size() < 50)) &&
              (!('dob' in data) || (data.dob is string && data.dob.size() < 50)) &&
              (!('churchId' in data) || (data.churchId == null || (data.churchId is string && data.churchId.size() < 128))) &&
-             (!('churchSlug' in data) || (data.churchSlug == null || (data.churchSlug is string && data.churchSlug.size() < 128)));
+             (!('churchSlug' in data) || (data.churchSlug == null || (data.churchSlug is string && data.churchSlug.size() < 128))) &&
+             // whatsappNumber is client-writable (it's what the OTP flow
+             // verifies against, not a claim of verification itself -- an
+             // unverified number is inert, since PR 5's eligibility check
+             // requires whatsappVerifiedAt too). whatsappVerifiedAt's shape
+             // is checked here for defense in depth, but
+             // preservesWhatsappVerification() above is the actual write guard.
+             (!('whatsappNumber' in data) || (data.whatsappNumber == null ||
+               (data.whatsappNumber is string && data.whatsappNumber.matches('^\\+[1-9]\\d{7,14}$')))) &&
+             (!('whatsappVerifiedAt' in data) || (data.whatsappVerifiedAt == null || data.whatsappVerifiedAt is string));
     }
 
     function isValidCheckin(data) {
@@ -239,7 +260,7 @@ service cloud.firestore {
                        isValidUser(request.resource.data) &&
                        (isMasterAdmin() || !grantsElevatedRole(request.resource.data));
       allow update: if isAuthenticated() && (
-        (request.auth.uid == userId && preservesRoleFields() && (
+        (request.auth.uid == userId && preservesRoleFields() && preservesWhatsappVerification() && (
           // Branch A: Initial setup - allowing the transition from incomplete
           // We allow the update if the document is currently in 'incomplete_profile'
           //
@@ -256,6 +277,7 @@ service cloud.firestore {
         isMasterAdmin() ||
         (isAdmin() && resource != null &&
          isValidUser(request.resource.data) &&
+         preservesWhatsappVerification() &&
          // Admins can't touch each other's roles or master admin
          (!('role' in resource.data) || resource.data.role != 'master_admin') &&
          (!('role' in request.resource.data) || request.resource.data.role != 'master_admin') &&
@@ -623,6 +645,19 @@ service cloud.firestore {
         )
       );
       allow create, update, delete: if false;
+    }
+
+    // A pending WhatsApp phone-ownership verification code, keyed by uid --
+    // see notifications/whatsapp-verification.ts. Holds only a peppered
+    // HMAC of the code, never the code itself, but even so this is
+    // entirely server (Admin SDK) -only, no exceptions for any client
+    // identity including master admin. If a client could read its own
+    // challenge it could read the hash and brute-force it offline, at its
+    // own pace, without the rate limiter on
+    // POST /api/whatsapp/verify/confirm ever seeing a request -- the whole
+    // point of hashing the code is defeated if the hash is client-readable.
+    match /otp_challenges/{uid} {
+      allow read, write: if false;
     }
 
     match /{path=**} {
