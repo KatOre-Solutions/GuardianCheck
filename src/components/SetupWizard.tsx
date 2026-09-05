@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { auth } from "../lib/firebase";
 import { addDocument, setDocument, updateDocument } from "../lib/firestore";
-import { safeFetch, registerChild } from "../lib/api";
+import { safeFetch, registerChild, issueGuardianQrToken } from "../lib/api";
 import { generatePin, hashPin, obfuscatePin } from "../lib/security";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 
@@ -169,9 +169,11 @@ export default function SetupWizard({ churchId, onComplete }: SetupWizardProps) 
           deleted: false
         });
 
-        // Create a test guardian
+        // Create a test guardian. The QR token is minted by the server
+        // afterwards -- firestore.rules refuses a client-supplied `qrToken`,
+        // and this used to set one from Math.random(). See guardian-tokens.ts.
         if (childId) {
-          await addDocument("guardians", {
+          const guardianId = await addDocument("guardians", {
             firstName: "Demo",
             lastName: "Parent",
             phone: "0000000000",
@@ -179,10 +181,20 @@ export default function SetupWizard({ churchId, onComplete }: SetupWizardProps) 
             childIds: [childId],
             parentId: "demo-parent",
             churchId,
-            qrToken: `demo_guardian_${Math.random().toString(36).slice(2)}`,
             active: true,
             deleted: false
           });
+
+          if (guardianId) {
+            try {
+              const token = await auth.currentUser?.getIdToken();
+              if (token) await issueGuardianQrToken(token, guardianId);
+            } catch (err) {
+              // Demo data only -- a guardian without a QR is a cosmetic gap
+              // in a sample record, not a reason to fail church setup.
+              console.error("Failed to issue demo guardian QR token:", err);
+            }
+          }
         }
       }
 

@@ -273,5 +273,168 @@ check(
   /const \{ data, error \} = await this\.resend\.emails\.send\(payload\)/.test(emailServiceSrc),
 );
 
+// --- Pickup QR in the check-in email ----------------------------------
+//
+// The QR used to be an <img> pointing at api.qrserver.com with the raw pickup
+// token in the query string: the value that identifies who may collect a
+// child, handed to a third party on every check-in and fetched again by every
+// recipient's mail client. It is now rendered in-process and attached inline.
+
+console.log("\nCheck-in email: pickup QR attachment\n");
+
+const { EmailProvider } = await import("../notifications/providers/email.ts");
+
+const GUARDIAN_TOKEN = "gq_" + "A".repeat(32);
+
+/** Firestore stand-in for the provider's two reads: the recipient, and the guardian. */
+function makeProviderDb({ guardian } = {}) {
+  return {
+    collection(name) {
+      return {
+        doc: (id) => ({
+          get: async () => {
+            if (name === "users") {
+              return { exists: true, id, data: () => ({ email: "parent@example.com" }) };
+            }
+            if (name === "guardians") {
+              return guardian
+                ? { exists: true, id, data: () => guardian }
+                : { exists: false, id, data: () => undefined };
+            }
+            return { exists: false, id, data: () => undefined };
+          },
+        }),
+      };
+    },
+  };
+}
+
+const checkinRecord = (payloadExtra) => ({
+  id: "notif_1",
+  churchId: "church-a",
+  recipientUserId: "parent_1",
+  eventType: "check-in",
+  payload: {
+    childName: "Amahle Mokoena",
+    time: "2026-09-02T09:05:00.000Z",
+    roomName: "Elephants",
+    churchName: "Test Church",
+    ...payloadExtra,
+  },
+});
+
+const activeGuardian = { churchId: "church-a", active: true, deleted: false, qrToken: GUARDIAN_TOKEN };
+
+/** Runs a send with console.warn captured, so the fallback warning is observable. */
+async function sendCapturingWarnings(provider, record, db) {
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    const sent = [];
+    provider.resend = { emails: { send: async (payload) => { sent.push(payload); return { data: { id: "msg_1" }, error: null }; } } };
+    const result = await provider.send(record, { db });
+    return { result, warnings, payload: sent[0] };
+  } finally {
+    console.warn = realWarn;
+  }
+}
+
+{
+  process.env.RESEND_API_KEY = "re_test_dummy_key";
+  const provider = new EmailProvider();
+  const db = makeProviderDb({ guardian: activeGuardian });
+
+  const { result, warnings, payload } = await sendCapturingWarnings(
+    provider, checkinRecord({ guardianId: "g_mom" }), db,
+  );
+
+  check("a check-in send with a resolvable guardian succeeds", true, result.ok);
+  check("the QR travels as an inline attachment", 1, payload.attachments?.length);
+  check("...under the cid the template references", "pickup-qr", payload.attachments?.[0]?.contentId);
+  check("...as a PNG", "pickup-qr.png", payload.attachments?.[0]?.filename);
+  check("...with real image bytes (base64 PNG magic number)", true,
+    typeof payload.attachments?.[0]?.content === "string" && payload.attachments[0].content.startsWith("iVBORw0KGgo"));
+  check("the html references the attachment, not a URL", true, payload.html.includes('src="cid:pickup-qr"'));
+  check("the third-party QR service appears nowhere in the html", false, payload.html.includes("qrserver.com"));
+  // The token authorises collecting a child. It must not travel in the markup
+  // even now that the image is inline.
+  check("the raw pickup token is not in the html", false, payload.html.includes(GUARDIAN_TOKEN));
+  check("no fallback warning on the normal path", 0, warnings.filter((w) => w.includes("[QR_FALLBACK]")).length);
+}
+
+{
+  // The legacy shape: a record enqueued before payload.guardianId existed,
+  // retried by the cron sweep after deploy. Rendering without a QR is the
+  // right fallback, but it means a parent got a check-in email with no way to
+  // collect their child -- so it must be visible in the logs.
+  process.env.RESEND_API_KEY = "re_test_dummy_key";
+  const provider = new EmailProvider();
+  const db = makeProviderDb({ guardian: activeGuardian });
+
+  const { result, warnings, payload } = await sendCapturingWarnings(
+    provider, checkinRecord({ guardianQrToken: "guardian_legacy00001" }), db,
+  );
+
+  check("a legacy-shaped record still sends", true, result.ok);
+  check("...without an attachment", undefined, payload.attachments);
+  check("...and without a QR block in the html", false, payload.html.includes("cid:pickup-qr"));
+
+  const fallback = warnings.filter((w) => w.includes("[QR_FALLBACK]"));
+  check("the silent-fallback case warns", 1, fallback.length);
+  check("...naming the notification", true, fallback[0].includes("notif_1"));
+  check("...and the church", true, fallback[0].includes("church-a"));
+  check("...but never the token itself", false, fallback[0].includes("guardian_legacy00001"));
+}
+
+{
+  // A guardian who was deactivated after enqueue. Their token no longer
+  // resolves at checkout (resolveGuardianByToken), so emailing it would hand
+  // out a code that cannot work.
+  process.env.RESEND_API_KEY = "re_test_dummy_key";
+  const provider = new EmailProvider();
+
+  const cases = [
+    ["deactivated", { ...activeGuardian, active: false }],
+    ["deleted", { ...activeGuardian, deleted: true }],
+    ["belonging to another church", { ...activeGuardian, churchId: "church-b" }],
+    ["with no token minted yet", { ...activeGuardian, qrToken: null }],
+  ];
+
+  for (const [label, guardian] of cases) {
+    const { result, payload, warnings } = await sendCapturingWarnings(
+      provider, checkinRecord({ guardianId: "g_mom" }), makeProviderDb({ guardian }),
+    );
+    check(`a guardian ${label} yields no QR, and the email still sends`, true, result.ok && !payload.attachments);
+    // No guardianQrToken on the payload, so this is not the legacy case and
+    // must not warn -- the warning has to stay a signal, not noise.
+    check(`...and does not warn (not the legacy case)`, 0, warnings.filter((w) => w.includes("[QR_FALLBACK]")).length);
+  }
+
+  const missing = await sendCapturingWarnings(
+    provider, checkinRecord({ guardianId: "g_gone" }), makeProviderDb({ guardian: null }),
+  );
+  check("a guardian document that no longer exists yields no QR", true, missing.result.ok && !missing.payload.attachments);
+}
+
+{
+  // Only check-in carries a pickup QR. A checkout email must not.
+  process.env.RESEND_API_KEY = "re_test_dummy_key";
+  const provider = new EmailProvider();
+  const record = { ...checkinRecord({ guardianId: "g_mom" }), eventType: "check-out" };
+  const { payload } = await sendCapturingWarnings(provider, record, makeProviderDb({ guardian: activeGuardian }));
+  check("a check-out email carries no QR attachment", undefined, payload.attachments);
+}
+
+// The whole point of the change: no code path anywhere hands the pickup token
+// to a third-party image service.
+for (const rel of ["notifications/templates.ts", "notifications/providers/email.ts", "server.ts"]) {
+  check(
+    `${rel} no longer references api.qrserver.com`,
+    false,
+    readFileSync(path.join(ROOT, rel), "utf8").includes("qrserver.com"),
+  );
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

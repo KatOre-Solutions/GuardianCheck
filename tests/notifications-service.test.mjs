@@ -415,15 +415,21 @@ console.log("\nReconciliation sweep\n");
 {
   // A checkin that happened but whose notify step never ran -- the crash
   // window the durable-intent invariant exists to close.
+  //
+  // Timestamps are relative to now, not fixed dates. reconcileRecentCheckins
+  // only looks back RECONCILE_LOOKBACK_HOURS (26h), so a hardcoded date makes
+  // this test pass on the day it is written and fail silently ever after --
+  // which is exactly what it did.
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const db = makeFakeDb({
     children: { child1: { parentId: "parent1" } },
     users: { parent1: { email: "parent@example.com" } },
     church_public: { churchA: { name: "Church A" } },
     checkins: {
-      checkin_c1_s1_20260903: {
+      checkin_c1_s1_recent: {
         churchId: "churchA", childId: "child1", childName: "Kid", roomName: "Room 1",
-        status: "checked-in", checkInTime: "2026-09-03T09:00:00.000Z",
-        updatedAt: "2026-09-03T09:00:00.000Z", serviceName: "Sunday Service",
+        status: "checked-in", checkInTime: twoHoursAgo,
+        updatedAt: twoHoursAgo, serviceName: "Sunday Service",
       },
     },
   });
@@ -432,7 +438,7 @@ console.log("\nReconciliation sweep\n");
   const summary = await runNotificationSweep(db, { email: provider });
   check("the sweep finds and sends the missing notification", { retried: 0, reconciled: 1, dispatched: 1, sent: 1, failed: 0 }, summary);
 
-  const eventKey = buildEventKey("check-in", "checkin_c1_s1_20260903", "2026-09-03T09:00:00.000Z");
+  const eventKey = buildEventKey("check-in", "checkin_c1_s1_recent", twoHoursAgo);
   const id = computeNotificationId(eventKey, "parent1", "email");
   const doc = await db.collection(NOTIFICATIONS_COLLECTION).doc(id).get();
   check("the reconciled record is marked sent", "sent", doc.exists && doc.data().status);

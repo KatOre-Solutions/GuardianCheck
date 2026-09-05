@@ -55,12 +55,21 @@ const CHURCH_B = "church-b";
 const TOKEN_MOM = "guardian_mom00000001";
 const TOKEN_GRAN = "guardian_gran0000002";   // deactivated
 const TOKEN_OTHER = "guardian_other000003";  // belongs to church B
+const TOKEN_NOPHOTO = "guardian_nophoto0004"; // active, but no photo on file
+
+/** What the server expects a volunteer to assert for a guardian with a photo. */
+const PHOTO_OK = "photo-confirmed";
+/** ...and for one without. */
+const NO_PHOTO_OK = "no-photo-acknowledged";
 
 /** Fresh state per test so ordering never matters. */
 function seed() {
   return {
     guardians: {
-      g_mom: { id: "g_mom", churchId: CHURCH_A, qrToken: TOKEN_MOM, active: true, firstName: "Naledi", lastName: "Mokoena", relationship: "Parent", childIds: ["c_amahle", "c_bongani", "c_chipo"] },
+      // g_mom has a photo on file; g_nophoto deliberately does not -- the
+      // identityCheck the server requires differs between the two.
+      g_mom: { id: "g_mom", churchId: CHURCH_A, qrToken: TOKEN_MOM, active: true, firstName: "Naledi", lastName: "Mokoena", relationship: "Parent", photoUrl: "https://storage.example/naledi.jpg", childIds: ["c_amahle", "c_bongani", "c_chipo"] },
+      g_nophoto: { id: "g_nophoto", churchId: CHURCH_A, qrToken: TOKEN_NOPHOTO, active: true, firstName: "Sipho", lastName: "Ndlovu", relationship: "Uncle", childIds: ["c_amahle"] },
       g_gran: { id: "g_gran", churchId: CHURCH_A, qrToken: TOKEN_GRAN, active: false, firstName: "Gogo", lastName: "Mokoena", relationship: "Grandparent", childIds: ["c_amahle"] },
       g_other: { id: "g_other", churchId: CHURCH_B, qrToken: TOKEN_OTHER, active: true, firstName: "Someone", lastName: "Else", relationship: "Parent", childIds: ["c_amahle"] },
     },
@@ -123,7 +132,11 @@ function makeApp(db) {
     if (matches.length !== 1) return null;
     const g = matches[0];
     if (g.deleted === true || g.active !== true) return null;
-    return { ...g, childIds: Array.isArray(g.childIds) ? g.childIds : [] };
+    return {
+      ...g,
+      photoUrl: g.photoUrl || g.photoURL || null,
+      childIds: Array.isArray(g.childIds) ? g.childIds : [],
+    };
   };
 
   const guardianDisplayName = (g) => `${g.firstName || ""} ${g.lastName || ""}`.trim() || "Guardian";
@@ -158,21 +171,40 @@ function makeApp(db) {
       .filter(Boolean);
 
     res.json({
-      guardian: { id: guardian.id, firstName: guardian.firstName, lastName: guardian.lastName, relationship: guardian.relationship },
+      guardian: {
+        id: guardian.id,
+        firstName: guardian.firstName,
+        lastName: guardian.lastName,
+        relationship: guardian.relationship,
+        photoUrl: guardian.photoUrl,
+      },
       eligible,
       notCheckedIn,
     });
   });
 
   app.post("/api/check-out-guardian", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, (req, res) => {
-    const { qrToken, checkinIds } = req.body;
+    const { qrToken, checkinIds, identityCheck } = req.body;
     if (typeof qrToken !== "string" || qrToken.length < 8 || !Array.isArray(checkinIds) || checkinIds.length < 1 || checkinIds.length > 20) {
+      return res.status(400).json({ error: "Validation failed" });
+    }
+    // Zod's enum, modelled: an absent or unrecognised value never reaches the
+    // handler in the real server.
+    if (identityCheck !== "photo-confirmed" && identityCheck !== "no-photo-acknowledged") {
       return res.status(400).json({ error: "Validation failed" });
     }
     const { churchId } = req.user;
     const guardian = resolveGuardianByToken(churchId, qrToken);
     if (!guardian) {
       return res.status(404).json({ error: "Guardian not found or not active", code: "GUARDIAN_NOT_FOUND" });
+    }
+
+    // The assertion must match the record. Checked before anything is
+    // released -- see the same block in server.ts.
+    const hasPhoto = !!guardian.photoUrl;
+    const expected = hasPhoto ? "photo-confirmed" : "no-photo-acknowledged";
+    if (identityCheck !== expected) {
+      return res.status(400).json({ error: "Identity check mismatch", code: "IDENTITY_CHECK_MISMATCH", expected });
     }
 
     const guardianName = guardianDisplayName(guardian);
@@ -199,6 +231,7 @@ function makeApp(db) {
         checkOutVolunteerName: `${req.user.firstName} ${req.user.lastName}`,
         guardianId: guardian.id,
         guardianName,
+        identityCheck,
         overrideReason: null,
       });
       results.push({ checkinId, childName: c.childName, outcome: "checked-out" });
@@ -212,7 +245,7 @@ function makeApp(db) {
       failed: countOf("not-authorized") + countOf("not-found") + countOf("error"),
     };
 
-    db.audit.push({ action: "guardian_checkout", guardianId: guardian.id, source: "server", results, summary });
+    db.audit.push({ action: "guardian_checkout", guardianId: guardian.id, source: "server", identityCheck, guardianHadPhoto: hasPhoto, results, summary });
     res.json({ results, summary });
   });
 
@@ -278,6 +311,100 @@ console.log("\nGuardian-QR checkout endpoints\n");
   const short = await post(server, "/api/guardian-lookup", { qrToken: "x" }, VOLUNTEER_A);
   check("a malformed token is rejected before any lookup", 400, short.status);
 
+  // The volunteer app needs the guardian's photo to run the identity check at
+  // all. It goes only to the authenticated volunteer client -- never into an
+  // email, a WhatsApp payload, or any unauthenticated response.
+  check("lookup returns the guardian's photo for the identity check",
+    "https://storage.example/naledi.jpg", ok.data?.guardian?.photoUrl);
+  const noPhoto = await post(server, "/api/guardian-lookup", { qrToken: TOKEN_NOPHOTO }, VOLUNTEER_A);
+  check("a guardian with no photo reports null rather than omitting the field", null,
+    noPhoto.data?.guardian?.photoUrl);
+
+  server.close();
+}
+
+// --- Identity check -------------------------------------------------------
+//
+// IDENTITY_CHECK: before this existed, a scanned token plus any volunteer
+// session released a child -- the QR was in practice a bearer credential and
+// the "visual confirmation" the product advertised was implemented nowhere.
+// The server cannot verify a face; what it enforces is that the volunteer's
+// assertion was made and is consistent with the guardian record, and that the
+// answer is recorded either way.
+
+{
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  const missing = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_A);
+  check("a checkout with no identityCheck is rejected", 400, missing.status);
+  check("...and the child stays checked in", "checked-in", db.checkins.ci_amahle.status);
+
+  const bogus = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"], identityCheck: "sure-whatever" }, VOLUNTEER_A);
+  check("an unrecognised identityCheck value is rejected", 400, bogus.status);
+
+  // The mismatch cases are the point: a client cannot just always send the
+  // stronger-looking value, because for a guardian with no photo it is not a
+  // possible honest answer -- and vice versa.
+  const wrongForPhoto = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"], identityCheck: NO_PHOTO_OK }, VOLUNTEER_A);
+  check("claiming 'no photo' for a guardian who has one is refused", 400, wrongForPhoto.status);
+  check("...with a distinguishable code", "IDENTITY_CHECK_MISMATCH", wrongForPhoto.data?.code);
+  check("...naming what was expected", PHOTO_OK, wrongForPhoto.data?.expected);
+  check("...and nothing is released", "checked-in", db.checkins.ci_amahle.status);
+
+  const wrongForNoPhoto = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_NOPHOTO, checkinIds: ["ci_amahle"], identityCheck: PHOTO_OK }, VOLUNTEER_A);
+  check("claiming a photo match for a guardian with no photo is refused", 400, wrongForNoPhoto.status);
+  check("...naming what was expected", NO_PHOTO_OK, wrongForNoPhoto.data?.expected);
+  check("...and nothing is released", "checked-in", db.checkins.ci_amahle.status);
+
+  // Nothing was refused for lack of authorisation here, so no audit row should
+  // exist: a rejected assertion is not a pickup attempt worth recording as one.
+  check("a rejected identity check writes no checkout audit row", 0, db.audit.length);
+
+  server.close();
+}
+
+{
+  // The two honest paths, and what each leaves behind.
+  const db = seed();
+  const server = await listen(makeApp(db));
+
+  const withPhoto = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"], identityCheck: PHOTO_OK }, VOLUNTEER_A);
+  check("photo-confirmed against a guardian with a photo succeeds", 200, withPhoto.status);
+  check("the assertion is recorded on the pickup record", PHOTO_OK, db.checkins.ci_amahle.identityCheck);
+  check("...and in the audit trail", PHOTO_OK, db.audit[0]?.identityCheck);
+  check("...alongside whether a photo existed at all", true, db.audit[0]?.guardianHadPhoto);
+
+  // Passing the identity check does not widen who may collect whom: the
+  // childIds authorisation is a separate gate and still applies. g_nophoto is
+  // linked to c_amahle only, so Bongani must still be refused.
+  const outsideChildIds = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_NOPHOTO, checkinIds: ["ci_bongani"], identityCheck: NO_PHOTO_OK }, VOLUNTEER_A);
+  check("a satisfied identity check does not bypass the childIds check", "not-authorized",
+    outsideChildIds.data?.results?.[0]?.outcome);
+  check("...and that child stays checked in", "checked-in", db.checkins.ci_bongani.status);
+
+  server.close();
+}
+
+{
+  // The weaker path is countable: a church seeing many of these has guardians
+  // without photos, which is a gap in their own data they can close.
+  const db = seed();
+  db.guardians.g_nophoto.childIds = ["c_amahle"];
+  const server = await listen(makeApp(db));
+
+  const res = await post(server, "/api/check-out-guardian",
+    { qrToken: TOKEN_NOPHOTO, checkinIds: ["ci_amahle"], identityCheck: NO_PHOTO_OK }, VOLUNTEER_A);
+  check("no-photo-acknowledged against a photoless guardian succeeds", 200, res.status);
+  check("the weaker assertion is recorded as such", NO_PHOTO_OK, db.checkins.ci_amahle.identityCheck);
+  check("...and the audit says no photo existed", false, db.audit[0]?.guardianHadPhoto);
+
   server.close();
 }
 
@@ -288,7 +415,7 @@ console.log("\nGuardian-QR checkout endpoints\n");
   const server = await listen(makeApp(db));
 
   const res = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_bongani"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_bongani"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("checking out two siblings succeeds", 200, res.status);
   check("both are checked out", 2, res.data?.summary?.checkedOut);
   check("Amahle's record is closed", "checked-out", db.checkins.ci_amahle.status);
@@ -301,7 +428,7 @@ console.log("\nGuardian-QR checkout endpoints\n");
 
   // IDEMPOTENT: a double tap or a retry must not read as a failure mid-queue.
   const again = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("repeating a checkout is benign, not an error", 200, again.status);
   check("...and is reported as already checked out", "already-checked-out", again.data?.results?.[0]?.outcome);
 
@@ -315,14 +442,14 @@ console.log("\nGuardian-QR checkout endpoints\n");
   const server = await listen(makeApp(db));
 
   const res = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_stranger"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_stranger"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("a child outside the guardian's childIds is refused", "not-authorized", res.data?.results?.[0]?.outcome);
   check("...and stays checked in", "checked-in", db.checkins.ci_stranger.status);
 
   // PARTIAL: one refusal must not abort the siblings who are legitimately
   // being collected -- an all-or-nothing batch would stall the queue.
   const mixed = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_stranger", "ci_bongani"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_stranger", "ci_bongani"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("a refused child does not abort the rest of the family", 2, mixed.data?.summary?.checkedOut);
   check("...and the refusal is still reported", 1, mixed.data?.summary?.failed);
   check("Bongani was still released", "checked-out", db.checkins.ci_bongani.status);
@@ -339,7 +466,7 @@ console.log("\nGuardian-QR checkout endpoints\n");
   // nothing on its own.
   db.guardians.g_mom.active = false;
   const res = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("a guardian deactivated after lookup cannot check out", 404, res.status);
   check("...and the child stays checked in", "checked-in", db.checkins.ci_amahle.status);
 
@@ -351,24 +478,24 @@ console.log("\nGuardian-QR checkout endpoints\n");
   const server = await listen(makeApp(db));
 
   const foreign = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, VOLUNTEER_B);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] , identityCheck: PHOTO_OK }, VOLUNTEER_B);
   check("a volunteer from another church cannot use this token", 404, foreign.status);
   check("...and the child stays checked in", "checked-in", db.checkins.ci_amahle.status);
 
   const anon = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] }, null);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle"] , identityCheck: PHOTO_OK }, null);
   check("unauthenticated checkout is rejected", 401, anon.status);
 
   const empty = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: [] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: [] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("an empty checkinIds list is rejected", 400, empty.status);
 
   const huge = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: Array.from({ length: 21 }, (_, i) => `x${i}`) }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: Array.from({ length: 21 , identityCheck: PHOTO_OK }, (_, i) => `x${i}`) }, VOLUNTEER_A);
   check("an oversized batch is rejected", 400, huge.status);
 
   const unknown = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_does_not_exist"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_does_not_exist"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("an unknown checkin id is reported, not thrown", "not-found", unknown.data?.results?.[0]?.outcome);
 
   server.close();
@@ -379,7 +506,7 @@ console.log("\nGuardian-QR checkout endpoints\n");
   const db = seed();
   const server = await listen(makeApp(db));
   const res = await post(server, "/api/check-out-guardian",
-    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_amahle"] }, VOLUNTEER_A);
+    { qrToken: TOKEN_MOM, checkinIds: ["ci_amahle", "ci_amahle"] , identityCheck: PHOTO_OK }, VOLUNTEER_A);
   check("duplicate ids in one request collapse to one", 1, res.data?.results?.length);
   server.close();
 }
@@ -436,6 +563,48 @@ check(
   "the guardian resolver rejects inactive and deleted guardians",
   true,
   /data\.deleted === true \|\| data\.active !== true/.test(serverSrc),
+);
+
+// IDENTITY_CHECK guards. The model above enforces the assertion; these pin
+// that server.ts still does the same thing, in the same order.
+check(
+  "GuardianCheckOutSchema requires an identityCheck enum",
+  true,
+  /GuardianCheckOutSchema = z\.object\(\{[\s\S]{0,400}identityCheck: z\.enum\(\["photo-confirmed", "no-photo-acknowledged"\]\)/.test(serverSrc),
+);
+check(
+  "the guardian resolver returns a photoUrl for the volunteer to check against",
+  true,
+  /photoUrl: data\.photoUrl \|\| data\.photoURL \|\| null/.test(serverSrc),
+);
+check(
+  "the lookup response includes the guardian's photo",
+  true,
+  /app\.post\(\s*"\/api\/guardian-lookup"[\s\S]{0,3000}photoUrl: guardian\.photoUrl/.test(serverSrc),
+);
+// Ordering again, not proximity: an assertion that cannot be true must be
+// refused before anything is released.
+const mismatchAt = checkoutHandler.indexOf('IDENTITY_CHECK_MISMATCH');
+check(
+  "the identity check is refused before the status transition is written",
+  true,
+  mismatchAt !== -1 && writeAt !== -1 && mismatchAt < writeAt,
+);
+check(
+  "the expected assertion is derived from the guardian record, not the request",
+  true,
+  /const expected = hasPhoto \? "photo-confirmed" : "no-photo-acknowledged";/.test(checkoutHandler) &&
+    /identityCheck !== expected/.test(checkoutHandler),
+);
+check(
+  "the assertion is written to the pickup record",
+  true,
+  /identityCheck,/.test(checkoutHandler.slice(0, writeAt)),
+);
+check(
+  "the assertion and whether a photo existed are both in the audit entry",
+  true,
+  /identityCheck,\s*\n\s*guardianHadPhoto: hasPhoto,/.test(checkoutHandler),
 );
 check(
   "a server-side audit entry is written for guardian checkouts",
