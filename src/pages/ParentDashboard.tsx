@@ -6,10 +6,10 @@ import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
-import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
+import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
-import { registerChild } from "../lib/api";
+import { registerChild, issueGuardianQrToken } from "../lib/api";
 import { normalizeToE164 } from "../lib/phone";
 
 export default function ParentDashboard() {
@@ -29,6 +29,7 @@ export default function ParentDashboard() {
   const [editingChild, setEditingChild] = useState<any>(null);
   const [childToDelete, setChildToDelete] = useState<any>(null);
   const [guardianToDelete, setGuardianToDelete] = useState<any>(null);
+  const [regeneratingQrFor, setRegeneratingQrFor] = useState<string | null>(null);
   const [newChild, setNewChild] = useState({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
   const [newGuardian, setNewGuardian] = useState({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
@@ -160,9 +161,10 @@ export default function ParentDashboard() {
           photoURL: parentPhotoUrl
         });
       } else {
-        // Create new parent guardian
-        const qrToken = `guardian_${Math.random().toString(36).substr(2, 12)}`;
-        await addDocument("guardians", {
+        // Create new parent guardian. The QR token is minted server-side
+        // immediately afterwards -- see mintGuardianQrToken in
+        // guardian-tokens.ts for why the browser no longer chooses it.
+        const guardianId = await addDocument("guardians", {
           firstName: parentFirstName,
           lastName: parentLastName,
           phone: "Account Holder",
@@ -170,11 +172,11 @@ export default function ParentDashboard() {
           childIds: [childId],
           parentId: user.uid,
           churchId: userData.churchId,
-          qrToken,
           photoUrl: parentPhotoUrl,
           photoURL: parentPhotoUrl,
           active: true
         });
+        if (guardianId) await issueGuardianQrToken(await user.getIdToken(), guardianId);
       }
 
       showSuccessToast("Child Registered", "Your child has been registered successfully.");
@@ -302,6 +304,29 @@ export default function ParentDashboard() {
     }
   };
 
+  /**
+   * Issues a fresh pickup QR for a guardian, replacing any existing one.
+   * Also the recovery path for a record whose token was never minted.
+   * The live `guardians` subscription re-renders the new code, so nothing
+   * needs to be set locally.
+   */
+  const handleRegenerateQr = async (guardian: any) => {
+    if (!user) return;
+    if (guardian.qrToken && !window.confirm(
+      `Replace ${guardian.firstName}'s pickup QR?\n\nTheir current QR code stops working immediately, including any printed or saved copy.`
+    )) return;
+
+    setRegeneratingQrFor(guardian.id);
+    try {
+      await issueGuardianQrToken(await user.getIdToken(), guardian.id);
+      showSuccessToast(guardian.qrToken ? "New QR code issued" : "QR code generated");
+    } catch (err) {
+      showErrorToast(err);
+    } finally {
+      setRegeneratingQrFor(null);
+    }
+  };
+
   const toggleGroupSelection = (id: string) => {
     setSelectedForGroup(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
@@ -350,16 +375,16 @@ export default function ParentDashboard() {
           showSuccessToast("Existing guardian linked to this child!");
         }
       } else {
-        const qrToken = `guardian_${Math.random().toString(36).substr(2, 12)}`;
-        await addDocument("guardians", {
+        // Server-minted token, as above.
+        const guardianId = await addDocument("guardians", {
           ...newGuardian,
           phone: normalizedPhone,
           childIds: [selectedChild.id],
           parentId: user.uid,
           churchId: userData.churchId,
-          qrToken,
           active: true
         });
+        if (guardianId) await issueGuardianQrToken(await user.getIdToken(), guardianId);
         showSuccessToast("New guardian added successfully!");
       }
       setNewGuardian({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
@@ -778,21 +803,40 @@ export default function ParentDashboard() {
                               <Lock className="h-6 w-6 text-gray-400 dark:text-gray-500" />
                             </div>
                           )}
-                          <div className="bg-white p-2 rounded-lg">
-                            <QRCode 
-                              id={`qr-${guardian.id}`}
-                              value={guardian.qrToken} 
-                              size={100} 
-                            />
+                          {guardian.qrToken ? (
+                            <div className="bg-white p-2 rounded-lg">
+                              <QRCode
+                                id={`qr-${guardian.id}`}
+                                value={guardian.qrToken}
+                                size={100}
+                              />
+                            </div>
+                          ) : (
+                            // No token yet: the record was created but the
+                            // mint call did not complete. "Generate QR" below
+                            // is the recovery, and it is the same endpoint.
+                            <div className="h-[116px] w-[116px] rounded-lg bg-white/60 dark:bg-gray-900/40 border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center text-center px-2">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">No QR yet</span>
+                            </div>
+                          )}
+                          <div className="flex items-center space-x-3">
+                            <button
+                              disabled={!guardian.active || !guardian.qrToken}
+                              onClick={() => downloadQR(`qr-${guardian.id}`, `${guardian.firstName} ${guardian.lastName}`)}
+                              className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active && guardian.qrToken ? "text-primary dark:text-primary/80" : "text-gray-400 dark:text-gray-600"}`}
+                            >
+                              <Download className="h-3 w-3" />
+                              <span>Download QR</span>
+                            </button>
+                            <button
+                              disabled={!guardian.active || regeneratingQrFor === guardian.id}
+                              onClick={() => handleRegenerateQr(guardian)}
+                              className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active ? "text-gray-500 hover:text-primary dark:text-gray-400" : "text-gray-400 dark:text-gray-600"} disabled:opacity-50`}
+                            >
+                              <RefreshCw className={`h-3 w-3 ${regeneratingQrFor === guardian.id ? "animate-spin" : ""}`} />
+                              <span>{guardian.qrToken ? "Regenerate" : "Generate QR"}</span>
+                            </button>
                           </div>
-                          <button 
-                            disabled={!guardian.active}
-                            onClick={() => downloadQR(`qr-${guardian.id}`, `${guardian.firstName} ${guardian.lastName}`)}
-                            className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active ? "text-primary dark:text-primary/80" : "text-gray-400 dark:text-gray-600"}`}
-                          >
-                            <Download className="h-3 w-3" />
-                            <span>Download QR</span>
-                          </button>
                         </div>
                       </div>
                     ))}

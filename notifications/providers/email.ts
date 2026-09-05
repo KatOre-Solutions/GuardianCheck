@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { renderEmailHtml, emailSubject, sanitizeSenderName } from "../templates.js";
+import { renderGuardianQrPng } from "../qr-image.js";
 import type { ChannelProvider, ChannelSendResult, NotificationRecord } from "../types.js";
 
 /**
@@ -17,6 +18,9 @@ const RETRYABLE_RESEND_ERROR_CODES = new Set<string>([
   "internal_server_error",
   "concurrent_idempotent_requests",
 ]);
+
+/** The `cid` the check-in template's <img> refers to. Arbitrary, but it must match on both sides. */
+const QR_CONTENT_ID = "pickup-qr";
 
 /**
  * The email `ChannelProvider`. Deliberately re-reads the recipient's live
@@ -49,18 +53,69 @@ export class EmailProvider implements ChannelProvider {
     return doc.exists ? (doc.data().email ?? null) : null;
   }
 
+  /**
+   * The pickup QR for a check-in email, as an inline attachment.
+   *
+   * Resolved here rather than carried on the record: the payload holds a
+   * guardian id, and the live token is read at send time, so a token rotated
+   * between enqueue and a cron retry still produces a QR that works. Returns
+   * null whenever there is nothing safe to render -- the template treats the
+   * QR block as optional and simply omits it.
+   */
+  private async resolveQrAttachment(
+    record: NotificationRecord,
+    deps: { db: any; firestoreOps?: { reads: number; writes: number } },
+  ): Promise<{ filename: string; content: string; contentId: string } | null> {
+    if (record.eventType !== "check-in") return null;
+
+    const guardianId = record.payload.guardianId;
+    if (!guardianId) {
+      // A record enqueued before this field existed carries the old
+      // `guardianQrToken` instead. Rendering without a QR is the right
+      // fallback -- but it is a parent receiving a check-in email with no way
+      // to collect their child, so it must not pass silently. Expected only
+      // during the deploy window, from the cron sweep retrying records
+      // enqueued by the previous version. The token is deliberately not
+      // logged.
+      if ((record.payload as any).guardianQrToken) {
+        console.warn(
+          `[QR_FALLBACK] check-in email sent without QR -- legacy payload shape ${JSON.stringify({
+            notificationId: record.id,
+            churchId: record.churchId,
+          })}`,
+        );
+      }
+      return null;
+    }
+
+    const doc = await deps.db.collection("guardians").doc(guardianId).get();
+    if (deps.firestoreOps) deps.firestoreOps.reads++;
+    const g = doc.exists ? doc.data() : null;
+
+    // Same church, still active, not deleted. A deactivated guardian's QR
+    // does not resolve at checkout (resolveGuardianByToken), so emailing one
+    // would be handing out a code that cannot work.
+    if (!g || g.churchId !== record.churchId || g.deleted === true || g.active !== true || !g.qrToken) {
+      return null;
+    }
+
+    const png = await renderGuardianQrPng(g.qrToken);
+    return { filename: "pickup-qr.png", content: png.toString("base64"), contentId: QR_CONTENT_ID };
+  }
+
   async send(record: NotificationRecord, deps: { db: any; firestoreOps?: { reads: number; writes: number } }): Promise<ChannelSendResult> {
     const email = await this.resolveEmail(deps.db, record.recipientUserId, deps.firestoreOps);
     if (!email) {
       return { ok: false, retryable: false, errorMessage: "recipient has no email on file" };
     }
 
-    const html = renderEmailHtml(record.payload, record.eventType);
+    const qrAttachment = await this.resolveQrAttachment(record, deps);
+    const html = renderEmailHtml(record.payload, record.eventType, qrAttachment ? { qrCid: QR_CONTENT_ID } : undefined);
     const subject = emailSubject(record.payload, record.eventType);
     const senderName = sanitizeSenderName(`${record.payload.churchName} via GuardianCheck`);
 
     if (!this.resend) {
-      console.log(`[MOCK NOTIFICATION EMAIL] To: ${email} | Subject: ${subject}`);
+      console.log(`[MOCK NOTIFICATION EMAIL] To: ${email} | Subject: ${subject} | QR attached: ${qrAttachment ? "yes" : "no"}`);
       return { ok: true, retryable: false };
     }
 
@@ -69,6 +124,7 @@ export class EmailProvider implements ChannelProvider {
       to: email,
       subject,
       html,
+      ...(qrAttachment ? { attachments: [qrAttachment] } : {}),
     });
 
     if (error) {

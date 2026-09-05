@@ -95,6 +95,29 @@ export async function confirmWhatsAppVerification(token: string, code: string) {
   return result.data;
 }
 
+/**
+ * Mints a guardian's pickup QR token. The browser used to generate this value
+ * itself with Math.random(); it is now chosen server-side with a CSPRNG and
+ * firestore.rules refuses a client-supplied `qrToken` outright. Also the
+ * "Regenerate QR" action -- re-minting is the same operation.
+ */
+export async function issueGuardianQrToken(token: string, guardianId: string): Promise<{ qrToken: string }> {
+  const result = await safeFetch(`/api/guardians/${encodeURIComponent(guardianId)}/qr-token`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({})
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error || "Could not issue a QR code for this guardian");
+  }
+
+  return result.data as { qrToken: string };
+}
+
 export async function registerChild(token: string, childData: any) {
   const result = await safeFetch("/api/children", {
     method: "POST",

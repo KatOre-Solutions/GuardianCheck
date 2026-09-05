@@ -163,6 +163,28 @@ service cloud.firestore {
       return request.resource.data.get('whatsappVerifiedAt', null) == resource.data.get('whatsappVerifiedAt', null);
     }
 
+    // The guardian pickup QR token is server-minted, never client-chosen.
+    //
+    // Same family of guard as preservesRoleFields() and
+    // preservesWhatsappVerification() above, for the same reason: a client
+    // must not be able to assert a value the server is supposed to decide.
+    // Here the value resolves, at checkout, to "these are the children this
+    // person may collect" (resolveGuardianByToken in server.ts), so a
+    // client-chosen token is a client-chosen pickup credential. It used to be
+    // generated in the browser with Math.random() and written straight into
+    // the document; POST /api/guardians/:id/qr-token now mints it with a
+    // CSPRNG through the Admin SDK, which bypasses these rules.
+    //
+    // Absent-on-create and unchanged-on-update, rather than a shape check: a
+    // well-formed token a client picked is exactly what must be refused.
+    function omitsGuardianToken() {
+      return !('qrToken' in request.resource.data);
+    }
+
+    function preservesGuardianToken() {
+      return request.resource.data.get('qrToken', null) == resource.data.get('qrToken', null);
+    }
+
     function isValidUser(data) {
       // Core requirements for any active user document
       return data.email is string &&
@@ -500,12 +522,14 @@ service cloud.firestore {
         )
       );
       allow create: if isMasterAdmin() || (
-        isApproved() && 
-        request.resource.data.churchId == getUserData().churchId && 
+        isApproved() &&
+        request.resource.data.churchId == getUserData().churchId &&
+        omitsGuardianToken() &&
         (isAdmin() || isVolunteer() || (isParent() && request.resource.data.parentId == request.auth.uid))
       );
       allow update: if isMasterAdmin() || (
-        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId &&
+        preservesGuardianToken() &&
         (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid))
       );
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);

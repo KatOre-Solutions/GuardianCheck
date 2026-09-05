@@ -10,6 +10,7 @@ import {
   LogOut,
   RefreshCw,
   ShieldAlert,
+  User,
   UserX,
   Users,
   WifiOff,
@@ -48,7 +49,17 @@ interface GuardianSummary {
   firstName: string;
   lastName: string;
   relationship: string;
+  photoUrl: string | null;
 }
+
+/**
+ * The volunteer's assertion about who is standing in front of them, sent with
+ * the release and recorded on the pickup record. The server requires it and
+ * requires it to match the guardian record: "photo-confirmed" is only
+ * accepted when a photo exists, so the stronger-looking value cannot be sent
+ * unconditionally and mean nothing.
+ */
+type IdentityCheck = "photo-confirmed" | "no-photo-acknowledged";
 
 interface CheckOutResult {
   checkinId: string;
@@ -89,6 +100,8 @@ export default function CheckOutTab({
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [results, setResults] = useState<CheckOutResult[]>([]);
   const [wasOffline, setWasOffline] = useState(false);
+  /** Null until the volunteer explicitly asserts it. Confirm stays disabled while null. */
+  const [identityChecked, setIdentityChecked] = useState(false);
 
   const childById = (childId: string) => allChildren.find((c) => c.id === childId);
 
@@ -102,6 +115,7 @@ export default function CheckOutTab({
     setLookupError(null);
     setResults([]);
     setWasOffline(false);
+    setIdentityChecked(false);
   };
 
   // --- Scan -----------------------------------------------------------------
@@ -112,6 +126,7 @@ export default function CheckOutTab({
 
     setLoading(true);
     setLookupError(null);
+    setIdentityChecked(false);
 
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -200,6 +215,7 @@ export default function CheckOutTab({
         firstName: match.firstName || "",
         lastName: match.lastName || "",
         relationship: match.relationship || "",
+        photoUrl: match.photoUrl || match.photoURL || null,
       },
       eligible: eligibleRecords,
       notCheckedIn: missing,
@@ -217,9 +233,17 @@ export default function CheckOutTab({
     });
   };
 
+  /**
+   * Derived from the guardian record, not from which control the volunteer
+   * tapped: the two assertions are mutually exclusive given the record, and
+   * the server re-derives the same expectation and rejects a mismatch.
+   */
+  const identityCheckValue = (): IdentityCheck =>
+    guardian?.photoUrl ? "photo-confirmed" : "no-photo-acknowledged";
+
   const handleCheckOut = async (idsOverride?: string[]) => {
     const checkinIds = idsOverride ?? Array.from(selected);
-    if (checkinIds.length === 0 || !scannedToken || loading) return;
+    if (checkinIds.length === 0 || !scannedToken || loading || !identityChecked) return;
 
     setLoading(true);
     try {
@@ -227,7 +251,7 @@ export default function CheckOutTab({
       const result = await safeFetch("/api/check-out-guardian", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ qrToken: scannedToken, checkinIds }),
+        body: JSON.stringify({ qrToken: scannedToken, checkinIds, identityCheck: identityCheckValue() }),
       });
 
       if (!result.ok) {
@@ -277,6 +301,9 @@ export default function CheckOutTab({
           checkOutVolunteerName: volunteerName,
           guardianId: offline.guardian.id,
           guardianName: `${offline.guardian.firstName} ${offline.guardian.lastName}`.trim(),
+          // Recorded offline too, so a pickup that synced later is not
+          // indistinguishable from one made before this step existed.
+          identityCheck: offline.guardian.photoUrl ? "photo-confirmed" : "no-photo-acknowledged",
           overrideReason: null,
         });
         offlineResults.push({ checkinId, childName: record?.childName || null, outcome: "checked-out" });
@@ -297,6 +324,7 @@ export default function CheckOutTab({
 
   const confirmLabel = () => {
     if (selectedNames.length === 0) return "Select a child to check out";
+    if (!identityChecked) return "Confirm the guardian's identity first";
     if (selectedNames.length === 1) return `Check Out ${selectedNames[0]}`;
     if (selectedNames.length === 2) return `Check Out ${selectedNames[0]} + ${selectedNames[1]} (2)`;
     return `Check Out ${selectedNames.length} children`;
@@ -375,21 +403,74 @@ export default function CheckOutTab({
             className="space-y-6"
           >
             <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-700 space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Collecting</p>
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{guardianName}</h2>
-                  {guardian?.relationship && (
-                    <p className="text-sm text-gray-500 dark:text-gray-400">{guardian.relationship}</p>
-                  )}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center space-x-4 min-w-0">
+                  {/* Large enough to actually compare against a face. The
+                      whole control depends on it being properly legible. */}
+                  <div className="h-20 w-20 rounded-2xl bg-gray-50 dark:bg-gray-900/50 flex items-center justify-center overflow-hidden flex-shrink-0 border-2 border-gray-100 dark:border-gray-700">
+                    {guardian?.photoUrl ? (
+                      <img
+                        src={guardian.photoUrl}
+                        alt={guardianName}
+                        className="h-full w-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <User className="h-9 w-9 text-gray-300 dark:text-gray-600" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Collecting</p>
+                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white truncate">{guardianName}</h2>
+                    {guardian?.relationship && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">{guardian.relationship}</p>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={resetToScan}
-                  className="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  className="px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0"
                 >
                   Cancel
                 </button>
               </div>
+
+              {/* The authorisation step. A QR scan alone proves someone holds
+                  the code, not that the person holding it is who it belongs
+                  to -- this is where a human makes that call, deliberately,
+                  and it is recorded either way. */}
+              {eligible.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIdentityChecked((v) => !v)}
+                  aria-pressed={identityChecked}
+                  className={`w-full p-4 rounded-2xl border-2 flex items-start space-x-3 text-left transition-all ${
+                    identityChecked
+                      ? "border-primary bg-primary/10 dark:bg-primary/20"
+                      : guardian?.photoUrl
+                        ? "border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600"
+                        : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20"
+                  }`}
+                >
+                  <div
+                    className={`h-6 w-6 rounded-md flex items-center justify-center flex-shrink-0 border-2 mt-0.5 ${
+                      identityChecked ? "bg-primary border-primary" : "border-gray-300 dark:border-gray-600"
+                    }`}
+                  >
+                    {identityChecked && <Check className="w-4 h-4 text-white" />}
+                  </div>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {guardian?.photoUrl ? (
+                      <>I have checked the photo above against the person collecting.</>
+                    ) : (
+                      <>
+                        <span className="font-bold">No photo on file.</span> I have verified this
+                        person's identity another way.
+                      </>
+                    )}
+                  </span>
+                </button>
+              )}
 
               {eligible.length === 0 ? (
                 <div className="text-center py-10 space-y-3">
@@ -512,7 +593,7 @@ export default function CheckOutTab({
                 )}
                 <button
                   onClick={() => handleCheckOut()}
-                  disabled={selected.size === 0 || loading}
+                  disabled={selected.size === 0 || loading || !identityChecked}
                   className="w-full py-4 rounded-2xl bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg transition-all transform active:scale-[0.99] flex items-center justify-center space-x-2"
                 >
                   {loading ? (

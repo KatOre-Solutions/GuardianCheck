@@ -44,7 +44,20 @@ export interface NotificationPayload {
   serviceName?: string;
   volunteerName?: string;
   guardianName?: string;
-  guardianQrToken?: string;
+  /**
+   * Which guardian's pickup QR belongs in a check-in email -- an id, resolved
+   * to a token at send time, not the token itself.
+   *
+   * This used to be `guardianQrToken`, the raw credential, persisted on every
+   * check-in notification record. That put the value that authorises
+   * collecting a child into a collection an admin can read and a parent can
+   * read their own rows of, for the entire life of the record. It also went
+   * stale: a rotated token left the record holding a QR that no longer
+   * resolves. Storing the id and re-reading the live token at send time fixes
+   * both, and matches how every provider already treats email and phone
+   * (see NotificationRecord below).
+   */
+  guardianId?: string;
   /**
    * Set only on a consolidated WhatsApp record covering more than one child
    * (e.g. a guardian collecting several siblings in one checkout batch) --

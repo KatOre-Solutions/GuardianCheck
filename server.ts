@@ -33,6 +33,7 @@ import { WhatsAppProvider } from "./notifications/providers/whatsapp.js";
 import type { Occurrence } from "./notifications/service.js";
 import { startWhatsappVerification, confirmWhatsappVerification } from "./notifications/whatsapp-verification.js";
 import { normalizeToE164 } from "./src/lib/phone.js";
+import { mintGuardianQrToken } from "./guardian-tokens.js";
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -409,9 +410,18 @@ const GuardianLookupSchema = z.object({
   qrToken: z.string().min(8).max(64)
 });
 
+// `identityCheck` is the volunteer's assertion about the human in front of
+// them, and it is required. Before it existed, a scanned token plus any
+// volunteer session released a child: the QR was in practice a bearer
+// credential, and the "visual confirmation" the product claimed was not
+// implemented anywhere. The server cannot verify a face, so what it enforces
+// instead is that the assertion was made and matches the record -- a volunteer
+// cannot claim to have matched a photo for a guardian who has none, and the
+// choice is written to the pickup record and the audit trail either way.
 const GuardianCheckOutSchema = z.object({
   qrToken: z.string().min(8).max(64),
-  checkinIds: z.array(z.string().min(1).max(128)).min(1).max(20)
+  checkinIds: z.array(z.string().min(1).max(128)).min(1).max(20),
+  identityCheck: z.enum(["photo-confirmed", "no-photo-acknowledged"])
 });
 
 const StartWhatsAppVerificationSchema = z.object({
@@ -853,6 +863,77 @@ async function startServer() {
     }
   );
 
+  // Mints (or re-mints) a guardian's pickup QR token server-side. The browser
+  // used to choose this value itself with Math.random() -- see
+  // guardian-tokens.ts for why that was two problems, not one. Also the
+  // "Regenerate QR" action: same endpoint, because re-minting is the identical
+  // operation with the identical authorisation question.
+  //
+  // sensitiveLimiter (20/15min) rather than peakLimiter: this is not on the
+  // Sunday check-in path, and regenerating a QR in a loop is not a thing a
+  // legitimate client does.
+  app.post("/api/guardians/:guardianId/qr-token", authenticateToken, sensitiveLimiter, requirePolicyAcceptance, async (req, res) => {
+    const { guardianId } = req.params;
+    const { churchId, uid, role } = req.user;
+
+    if (!churchId) return res.status(403).json({ error: "Unauthorized", traceId: req.traceId });
+    if (typeof guardianId !== "string" || guardianId.length < 1 || guardianId.length > 128) {
+      return res.status(400).json({ error: "Invalid guardian id", traceId: req.traceId });
+    }
+
+    try {
+      const ref = db.collection("guardians").doc(guardianId);
+      const doc = await ref.get();
+      req.firestoreOps.reads++;
+
+      // One shape for "does not exist", "belongs to another church" and
+      // "deleted", so this is not an oracle for which guardian ids exist.
+      const g = doc.exists ? doc.data() : null;
+      if (!g || g.churchId !== churchId || g.deleted === true) {
+        return res.status(404).json({ error: "Guardian not found", code: "GUARDIAN_NOT_FOUND", traceId: req.traceId });
+      }
+
+      // The parent who owns the record, or an admin acting for their church.
+      // A volunteer is deliberately excluded: volunteers scan tokens, they
+      // have no reason to mint one, and they can already read every guardian
+      // in the church (firestore.rules:132).
+      const isOwner = g.parentId === uid;
+      const isChurchAdmin = role === "admin" || role === "master_admin";
+      if (!isOwner && !isChurchAdmin) {
+        return res.status(403).json({ error: "Forbidden", traceId: req.traceId });
+      }
+
+      const qrToken = mintGuardianQrToken();
+      const now = new Date().toISOString();
+      await ref.update({ qrToken, qrTokenIssuedAt: now, qrTokenSource: "server", updatedAt: now });
+      req.firestoreOps.writes++;
+
+      // Records that a token was issued and by whom. Never the token itself --
+      // audit_logs is admin-readable, and a QR token in a readable collection
+      // is the exact exposure this endpoint exists to close.
+      try {
+        await db.collection("audit_logs").add({
+          churchId,
+          userId: uid,
+          action: "guardian_qr_token_issued",
+          category: "security",
+          details: { guardianId, reissued: !!g.qrToken, previousSource: g.qrTokenSource || "client" },
+          timestamp: now,
+          source: "server",
+          traceId: req.traceId
+        });
+        req.firestoreOps.writes++;
+      } catch (err: any) {
+        console.error("Guardian QR token audit write failed:", err.message);
+      }
+
+      res.json({ qrToken });
+    } catch (error: any) {
+      console.error("Guardian QR token issue failed:", error.message);
+      res.status(500).json({ error: "Internal server error", traceId: req.traceId });
+    }
+  });
+
   // Moved here from module scope (was registered before this generalLimiter
   // mount ever ran, so it had no rate limit at all and no parsed req.body --
   // Express dispatches routes in registration order). An authenticated user
@@ -1238,22 +1319,29 @@ async function startServer() {
       const churchData = await getCachedDoc(req, "churches", churchId, churchId);
       const churchName = churchData?.name || "Church";
       
-      let guardianQrToken = null;
+      // Which guardian's pickup QR to put in the confirmation email. Only the
+      // id travels: the notification record must not carry the token itself
+      // (see NotificationPayload.guardianId), and EmailProvider re-reads the
+      // live token at send time.
+      //
+      // Prefer the account holder's own guardian record -- the email goes to
+      // the account-holding parent (recipients.ts, decision P5), so it should
+      // carry their QR, not whichever sibling's grandparent sorted first.
+      let guardianId: string | undefined;
       try {
         const guardians = await db.collection("guardians")
           .where("churchId", "==", churchId)
           .where("childIds", "array-contains", childId)
           .get();
         req.firestoreOps.reads++;
-        
-        if (!guardians.empty) {
-          const activeGuardian = guardians.docs.find((d: any) => d.data().active);
-          if (activeGuardian) {
-            guardianQrToken = activeGuardian.data().qrToken;
-          }
-        }
+
+        const active = guardians.docs.filter((d: any) => d.data().active === true && d.data().deleted !== true);
+        const accountHolder = active.find((d: any) => d.data().parentId === finalParentId && d.data().phone === "Account Holder")
+          || active.find((d: any) => d.data().parentId === finalParentId);
+        const chosen = accountHolder || active[0];
+        if (chosen) guardianId = chosen.id;
       } catch (err) {
-        console.error("Failed to fetch guardian QR token:", err);
+        console.error("Failed to resolve guardian for check-in QR:", err);
       }
 
       try {
@@ -1268,7 +1356,7 @@ async function startServer() {
             roomName: room.name,
             churchName,
             serviceName: service.name,
-            guardianQrToken,
+            guardianId,
           },
         }], notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
       } catch (err: any) {
@@ -1396,6 +1484,9 @@ async function startServer() {
       firstName: data.firstName || "",
       lastName: data.lastName || "",
       relationship: data.relationship || "",
+      // Both spellings exist in the wild -- ParentDashboard writes photoUrl and
+      // photoURL together, older records may carry only one.
+      photoUrl: data.photoUrl || data.photoURL || null,
       childIds: Array.isArray(data.childIds) ? data.childIds : []
     };
   };
@@ -1472,7 +1563,14 @@ async function startServer() {
           id: guardian.id,
           firstName: guardian.firstName,
           lastName: guardian.lastName,
-          relationship: guardian.relationship
+          relationship: guardian.relationship,
+          // The volunteer app shows this so the person collecting can be
+          // matched against the record. Not a new exposure: `guardians` is
+          // already readable church-wide by volunteers (firestore.rules:487),
+          // and this is the same Storage download URL that collection holds.
+          // It goes to the authenticated volunteer client only -- never into
+          // an email, a WhatsApp payload, or any unauthenticated response.
+          photoUrl: guardian.photoUrl
         },
         eligible,
         notCheckedIn
@@ -1488,7 +1586,7 @@ async function startServer() {
   // and a sibling whose record was already closed by another volunteer must not
   // abort the rest of the family. Per-child outcomes come back in `results`.
   app.post("/api/check-out-guardian", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(GuardianCheckOutSchema), async (req, res) => {
-    const { qrToken, checkinIds } = req.body;
+    const { qrToken, checkinIds, identityCheck } = req.body;
     const { churchId } = req.user;
 
     try {
@@ -1499,6 +1597,25 @@ async function startServer() {
         return res.status(404).json({
           error: "Guardian not found or not active",
           code: "GUARDIAN_NOT_FOUND",
+          traceId: req.traceId
+        });
+      }
+
+      // The assertion must match the record it is about. Claiming a photo
+      // match for a guardian with no photo on file is not a possible honest
+      // answer, and accepting it would let the stricter-looking value be sent
+      // unconditionally by any client and mean nothing in the audit trail.
+      // Checked before the transaction: nothing is released on a request that
+      // cannot be true.
+      const hasPhoto = !!guardian.photoUrl;
+      const expected = hasPhoto ? "photo-confirmed" : "no-photo-acknowledged";
+      if (identityCheck !== expected) {
+        return res.status(400).json({
+          error: hasPhoto
+            ? "This guardian has a photo on file. Confirm the photo matches the person collecting."
+            : "This guardian has no photo on file. Acknowledge that you verified their identity another way.",
+          code: "IDENTITY_CHECK_MISMATCH",
+          expected,
           traceId: req.traceId
         });
       }
@@ -1538,6 +1655,11 @@ async function startServer() {
               checkOutVolunteerName,
               guardianId: guardian.id,
               guardianName,
+              // How the collector was identified, on the pickup record itself.
+              // "no-photo-acknowledged" is the weaker path and is meant to be
+              // countable: a church seeing it often has guardians without
+              // photos, which is a fixable gap in their own data.
+              identityCheck,
               overrideReason: null,
               updatedAt: new Date().toISOString()
             };
@@ -1575,6 +1697,8 @@ async function startServer() {
             guardianId: guardian.id,
             guardianName,
             method: "guardian_qr",
+            identityCheck,
+            guardianHadPhoto: hasPhoto,
             results,
             summary
           },

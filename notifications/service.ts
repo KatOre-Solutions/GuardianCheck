@@ -397,9 +397,11 @@ function payloadFromCheckin(c: any, eventType: NotificationEventType, occurredAt
     serviceName: c.serviceName,
     volunteerName: eventType === "check-out" ? c.checkOutVolunteerName : c.volunteerName,
     guardianName: c.guardianName,
-    // guardianQrToken is intentionally not reconstructed here -- it's a
-    // convenience the in-request path had at hand and this crash-recovery
-    // path doesn't; the template already treats it as optional.
+    // guardianId is intentionally not reconstructed here. The in-request path
+    // has the guardian at hand; this crash-recovery path would need an extra
+    // query per checkin to find one, and the pickup QR is a convenience in a
+    // confirmation email, not the notification's reason for existing. The
+    // template treats it as optional and simply omits the QR block.
   };
 }
 

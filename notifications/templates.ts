@@ -9,8 +9,12 @@ import type { NotificationEventType, NotificationPayload } from "./types.js";
  * (types.ts) stores them as separate top-level fields -- `eventType` selects
  * behavior (subject, color, which detail rows appear), `payload` is data.
  */
-export function renderEmailHtml(payload: NotificationPayload, eventType: NotificationEventType): string {
-  const { childName, time, roomName, churchName, serviceName, volunteerName, guardianName, guardianQrToken } = payload;
+export function renderEmailHtml(
+  payload: NotificationPayload,
+  eventType: NotificationEventType,
+  opts?: { qrCid?: string },
+): string {
+  const { childName, time, roomName, churchName, serviceName, volunteerName, guardianName } = payload;
 
   const escapedChildName = he.escape(childName);
   const escapedRoomName = he.escape(roomName);
@@ -44,9 +48,12 @@ export function renderEmailHtml(payload: NotificationPayload, eventType: Notific
       break;
   }
 
-  const qrCodeUrl = guardianQrToken
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(guardianQrToken)}`
-    : null;
+  // A `cid:` reference to an attachment on this same message (see
+  // EmailProvider.send, which renders the PNG and attaches it under this id).
+  // This replaced an <img> pointing at a third-party QR image service with the
+  // raw pickup token in the query string -- see notifications/qr-image.ts for
+  // why that was not an acceptable way to put a QR in an email.
+  const qrCodeSrc = opts?.qrCid ? `cid:${opts.qrCid}` : null;
 
   return `
     <!DOCTYPE html>
@@ -108,10 +115,10 @@ export function renderEmailHtml(payload: NotificationPayload, eventType: Notific
             </div>
           </div>
 
-          ${qrCodeUrl ? `
+          ${qrCodeSrc ? `
           <div class="qr-section">
             <div class="detail-label" style="margin-bottom: 10px;">Pickup QR Code</div>
-            <img src="${qrCodeUrl}" alt="Pickup QR Code" width="150" height="150" style="display: block; margin: 0 auto;" />
+            <img src="${qrCodeSrc}" alt="Pickup QR Code" width="150" height="150" style="display: block; margin: 0 auto;" />
             <p class="qr-hint">Show this QR code to the volunteer when picking up your child.</p>
           </div>
           ` : ''}
