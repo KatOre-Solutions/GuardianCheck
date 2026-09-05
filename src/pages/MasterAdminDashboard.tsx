@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter, Terminal } from "lucide-react";
+import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, Users, Baby, ShieldCheck, X, AlertTriangle, TrendingUp, CreditCard, Calendar, Search, Filter, Terminal, Camera } from "lucide-react";
 import { getChurches, addDocument, removeDocument, getCollection, updateDocument, subscribeToCollection } from "../lib/firestore";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion, AnimatePresence } from "motion/react";
@@ -9,6 +9,38 @@ import { where } from "firebase/firestore";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { useAuth } from "../hooks/useAuth";
+
+/**
+ * Churches whose data is real.
+ *
+ * An explicit allowlist, not a heuristic. Church documents carry no isTest,
+ * isDemo or equivalent flag -- confirmed by inspecting every field on every
+ * document in production -- and the shape of the data offers nothing reliable
+ * to infer from: the `churches` collection holds 4 documents while guardian
+ * records reference 18 distinct churchIds, so 14 churchIds have no church
+ * document at all and would be invisible to any join-based filter anyway.
+ *
+ * Averaging development leftovers into this number would make it meaningless,
+ * and a wrong denominator is worse than no metric. Add an id here only when
+ * that church is genuinely live.
+ */
+const PRODUCTION_CHURCH_IDS = [
+  "rF02tzczaoezCSyrYb9h", // Bryanston Methodist Church
+];
+
+/** A guardian record auto-created for the parent's own account, rather than one they added by hand. The two populations move independently, and the account-holder half is fixable from the parent's profile photo alone. */
+const isAccountHolderGuardian = (g: any) => g.phone === "Account Holder";
+const guardianHasPhoto = (g: any) => !!(g.photoUrl || g.photoURL);
+
+interface PhotoCoverageRow {
+  churchId: string;
+  total: number;
+  withPhoto: number;
+  accountHolderTotal: number;
+  accountHolderWithPhoto: number;
+  addedTotal: number;
+  addedWithPhoto: number;
+}
 
 export default function MasterAdminDashboard() {
   const [churches, setChurches] = useState<any[]>([]);
@@ -20,6 +52,7 @@ export default function MasterAdminDashboard() {
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [photoCoverage, setPhotoCoverage] = useState<PhotoCoverageRow[]>([]);
   const { userData, user } = useAuth();
 
   useEffect(() => {
@@ -80,6 +113,29 @@ export default function MasterAdminDashboard() {
         return updatedStats;
       });
 
+      // Guardian photo coverage, computed from the `allGuardians` read above
+      // rather than a query of its own -- this component already pulls the
+      // whole collection for the per-church counts, so the breakdown is free.
+      setPhotoCoverage(
+        PRODUCTION_CHURCH_IDS.map((churchId) => {
+          const live = (allGuardians as any[]).filter(
+            (g) => g.churchId === churchId && g.deleted !== true,
+          );
+          const accountHolders = live.filter(isAccountHolderGuardian);
+          const added = live.filter((g) => !isAccountHolderGuardian(g));
+
+          return {
+            churchId,
+            total: live.length,
+            withPhoto: live.filter(guardianHasPhoto).length,
+            accountHolderTotal: accountHolders.length,
+            accountHolderWithPhoto: accountHolders.filter(guardianHasPhoto).length,
+            addedTotal: added.length,
+            addedWithPhoto: added.filter(guardianHasPhoto).length,
+          };
+        }),
+      );
+
     } catch (error) {
       console.error(error);
       showErrorToast("Failed to load dashboard data");
@@ -108,6 +164,25 @@ export default function MasterAdminDashboard() {
     
     return matchesSearch && matchesStatus;
   });
+
+  const coverageTotals = photoCoverage.reduce(
+    (acc, r) => ({
+      total: acc.total + r.total,
+      withPhoto: acc.withPhoto + r.withPhoto,
+      accountHolderTotal: acc.accountHolderTotal + r.accountHolderTotal,
+      accountHolderWithPhoto: acc.accountHolderWithPhoto + r.accountHolderWithPhoto,
+      addedTotal: acc.addedTotal + r.addedTotal,
+      addedWithPhoto: acc.addedWithPhoto + r.addedWithPhoto,
+    }),
+    { total: 0, withPhoto: 0, accountHolderTotal: 0, accountHolderWithPhoto: 0, addedTotal: 0, addedWithPhoto: 0 },
+  );
+
+  /** Guarded against a zero denominator -- a church with no guardians yet must read as "--", not NaN%. */
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : null);
+  const fmtPct = (n: number, d: number) => {
+    const v = pct(n, d);
+    return v === null ? "--" : `${v}%`;
+  };
 
   const platformStats = {
     totalChurches: churches.length,
@@ -240,6 +315,119 @@ export default function MasterAdminDashboard() {
           </motion.div>
         ))}
       </div>
+
+      {/* Guardian photo coverage.
+          Production churches only (PRODUCTION_CHURCH_IDS) -- see the note on
+          that constant for why this is an explicit allowlist. Computed from
+          the guardians read loadData() already performs, so opening this page
+          is the refresh; there is no cache or scheduled job behind it. */}
+      <section className="space-y-4">
+        <div className="flex items-baseline justify-between gap-4 flex-wrap">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center space-x-2">
+            <Camera className="h-6 w-6 text-primary" />
+            <span>Guardian Photo Coverage</span>
+          </h2>
+          <p className="text-xs text-gray-400">
+            Production churches only · live at page load
+          </p>
+        </div>
+
+        <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 p-6 space-y-6">
+          {coverageTotals.total === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              No guardian records found for the configured production churches.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <div>
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Overall</p>
+                  <p className="text-4xl font-bold text-gray-900 dark:text-white">
+                    {fmtPct(coverageTotals.withPhoto, coverageTotals.total)}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {coverageTotals.withPhoto} of {coverageTotals.total} guardians
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Account holder</p>
+                  <p className="text-4xl font-bold text-gray-900 dark:text-white">
+                    {fmtPct(coverageTotals.accountHolderWithPhoto, coverageTotals.accountHolderTotal)}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {coverageTotals.accountHolderWithPhoto} of {coverageTotals.accountHolderTotal} · from profile photo
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">Added by parent</p>
+                  <p className="text-4xl font-bold text-gray-900 dark:text-white">
+                    {fmtPct(coverageTotals.addedWithPhoto, coverageTotals.addedTotal)}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {coverageTotals.addedWithPhoto} of {coverageTotals.addedTotal} · uploaded directly
+                  </p>
+                </div>
+              </div>
+
+              {/* 70% is the target this is being watched against. */}
+              <div>
+                <div className="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden relative">
+                  <div
+                    className="h-full bg-primary transition-all duration-500"
+                    style={{ width: `${pct(coverageTotals.withPhoto, coverageTotals.total) ?? 0}%` }}
+                  />
+                  <div
+                    className="absolute inset-y-0 border-r-2 border-dashed border-gray-400 dark:border-gray-500"
+                    style={{ left: "70%" }}
+                    title="70% target"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-bold">
+                  Dashed marker = 70% target
+                </p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[10px] uppercase tracking-wider text-gray-400 border-b border-gray-100 dark:border-gray-800">
+                      <th className="pb-2 font-bold">Church</th>
+                      <th className="pb-2 font-bold text-right">Guardians</th>
+                      <th className="pb-2 font-bold text-right">With photo</th>
+                      <th className="pb-2 font-bold text-right">Account holder</th>
+                      <th className="pb-2 font-bold text-right">Added</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...photoCoverage]
+                      .sort((a, b) => b.total - a.total)
+                      .map((row) => (
+                        <tr key={row.churchId} className="border-b border-gray-50 dark:border-gray-800/50 last:border-0">
+                          <td className="py-3 font-bold text-gray-900 dark:text-white">
+                            {churches.find((c) => c.id === row.churchId)?.name || row.churchId}
+                          </td>
+                          <td className="py-3 text-right text-gray-600 dark:text-gray-300">{row.total}</td>
+                          <td className="py-3 text-right font-bold text-gray-900 dark:text-white">
+                            {fmtPct(row.withPhoto, row.total)}
+                            <span className="text-gray-400 font-normal"> ({row.withPhoto})</span>
+                          </td>
+                          <td className="py-3 text-right text-gray-600 dark:text-gray-300">
+                            {fmtPct(row.accountHolderWithPhoto, row.accountHolderTotal)}
+                            <span className="text-gray-400"> ({row.accountHolderWithPhoto}/{row.accountHolderTotal})</span>
+                          </td>
+                          <td className="py-3 text-right text-gray-600 dark:text-gray-300">
+                            {fmtPct(row.addedWithPhoto, row.addedTotal)}
+                            <span className="text-gray-400"> ({row.addedWithPhoto}/{row.addedTotal})</span>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
 
       {/* Pending Approvals Section */}
       {pendingRequests.length > 0 && (
