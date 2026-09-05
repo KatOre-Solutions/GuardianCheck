@@ -8,6 +8,7 @@ import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
 import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { Link } from "react-router-dom";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
 import { registerChild } from "../lib/api";
 
@@ -28,6 +29,31 @@ export default function ParentDashboard() {
   const [editingChild, setEditingChild] = useState<any>(null);
   const [childToDelete, setChildToDelete] = useState<any>(null);
   const [guardianToDelete, setGuardianToDelete] = useState<any>(null);
+  const [uploadingPhotoFor, setUploadingPhotoFor] = useState<string | null>(null);
+  const [photoNudgeDismissed, setPhotoNudgeDismissed] = useState(() => {
+    // Per-session, not permanent: the reminder should come back next visit if
+    // the photos still aren't there, but must not reappear on every render
+    // after being dismissed. sessionStorage gives exactly that -- cleared when
+    // the tab closes. There is no existing reminder-dismissal pattern in this
+    // codebase to match, so this establishes one.
+    try {
+      return sessionStorage.getItem("gc.photoNudgeDismissed") === "1";
+    } catch {
+      // Private mode or blocked storage -- showing the nudge is the safe
+      // failure, since the worst case is one extra dismissable banner.
+      return false;
+    }
+  });
+
+  const dismissPhotoNudge = () => {
+    setPhotoNudgeDismissed(true);
+    try {
+      sessionStorage.setItem("gc.photoNudgeDismissed", "1");
+    } catch {
+      // Dismissal still holds for this render pass; it just won't survive a
+      // reload. Not worth surfacing to the parent.
+    }
+  };
   const [newChild, setNewChild] = useState({ firstName: "", lastName: "", age: "", gender: "Male", allergies: "", notes: "", photoUrl: "" });
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
   const [newGuardian, setNewGuardian] = useState({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
@@ -290,7 +316,7 @@ export default function ParentDashboard() {
       const storageRef = ref(storage, `guardians/${user.uid}/${Date.now()}_${file.name}`);
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);
-      
+
       setNewGuardian({ ...newGuardian, photoUrl: url, photoURL: url });
       showSuccessToast("Image uploaded successfully");
     } catch (err) {
@@ -300,6 +326,73 @@ export default function ParentDashboard() {
       setUploading(false);
     }
   };
+
+  /**
+   * Adds a photo to a guardian that already exists.
+   *
+   * The upload handler above only ever populated the *add guardian* form, so
+   * a guardian saved without a photo had no way to gain one afterwards short
+   * of deleting and re-adding them. That made the photo nudge below a dead
+   * end for exactly the records it is trying to fix.
+   *
+   * Account-holder records are not handled here -- their photo is synced from
+   * the parent's own profile by the effect above, so the nudge sends those to
+   * /profile instead of offering an upload that the next sync would overwrite.
+   */
+  const handleExistingGuardianPhotoUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    guardianId: string,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      showErrorToast("Image size must be less than 5MB");
+      return;
+    }
+
+    setUploadingPhotoFor(guardianId);
+    try {
+      const storageRef = ref(storage, `guardians/${user.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+
+      // Both spellings, matching what every other write in this file does.
+      await updateDocument("guardians", guardianId, { photoUrl: url, photoURL: url });
+      showSuccessToast("Photo added");
+    } catch (err) {
+      console.error(err);
+      showErrorToast("Failed to upload photo");
+    } finally {
+      setUploadingPhotoFor(null);
+      // Let the same file be re-picked if the write failed.
+      e.target.value = "";
+    }
+  };
+
+  // --- Guardian photo nudge -------------------------------------------------
+  //
+  // A guardian photo is what lets a volunteer recognise the person collecting
+  // a child. Most records don't have one, and nothing has ever asked for it,
+  // so this surfaces the gap where the parent can act on it.
+  //
+  // Split by record type because the fix differs: the account-holder record's
+  // photo is synced from the parent's own profile (see the effect above), so
+  // uploading against that record directly would be undone on the next sync.
+
+  const hasPhoto = (g: any) => !!(g.photoUrl || g.photoURL);
+  const isAccountHolder = (g: any) => g.phone === "Account Holder";
+
+  const guardiansMissingPhoto = guardians.filter(
+    (g) => g.parentId === user?.uid && g.active !== false && !g.deleted && !hasPhoto(g),
+  );
+  const accountHolderMissingPhoto = guardiansMissingPhoto.filter(isAccountHolder);
+  const addedGuardiansMissingPhoto = guardiansMissingPhoto.filter((g) => !isAccountHolder(g));
+  const showPhotoNudge = !photoNudgeDismissed && guardiansMissingPhoto.length > 0;
+
+  const photoNudgeNames = addedGuardiansMissingPhoto
+    .map((g) => `${g.firstName || ""} ${g.lastName || ""}`.trim())
+    .filter(Boolean);
 
   const toggleGroupSelection = (id: string) => {
     setSelectedForGroup(prev => 
@@ -466,6 +559,63 @@ export default function ParentDashboard() {
           </button>
         </div>
       </header>
+
+      {/* Photo nudge. Framed as helping pickup go smoothly -- which is true --
+          rather than as a warning, because the parent is not the party who can
+          fix anything beyond their own records and alarming them would be
+          both unkind and unhelpful. */}
+      {showPhotoNudge && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/30 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4"
+        >
+          <div className="h-11 w-11 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center flex-shrink-0">
+            <User className="h-6 w-6 text-primary dark:text-primary/80" />
+          </div>
+
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="font-bold text-gray-900 dark:text-white">
+              Add a photo so volunteers can quickly verify who's picking up your child
+            </p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              {accountHolderMissingPhoto.length > 0 && photoNudgeNames.length === 0 && (
+                <>Your own profile has no photo yet. Adding one keeps pickup quick at the check-out desk.</>
+              )}
+              {accountHolderMissingPhoto.length === 0 && photoNudgeNames.length > 0 && (
+                <>
+                  No photo yet for {photoNudgeNames.length === 1 ? photoNudgeNames[0] : `${photoNudgeNames.length} of your guardians`}
+                  . You can add one from the guardian list on any child below.
+                </>
+              )}
+              {accountHolderMissingPhoto.length > 0 && photoNudgeNames.length > 0 && (
+                <>
+                  Your own profile has no photo, and neither {photoNudgeNames.length === 1 ? `does ${photoNudgeNames[0]}` : `do ${photoNudgeNames.length} of your guardians`}.
+                </>
+              )}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {accountHolderMissingPhoto.length > 0 && (
+              // The account-holder guardian record mirrors the parent's own
+              // profile photo, so /profile is the real place to fix it.
+              <Link
+                to="/profile"
+                className="px-5 py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-primary/90 transition-colors whitespace-nowrap"
+              >
+                Add my photo
+              </Link>
+            )}
+            <button
+              onClick={dismissPhotoNudge}
+              className="px-4 py-2.5 rounded-xl text-sm font-bold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            >
+              Not now
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {children.filter(c => !c.deleted).map((child) => (
@@ -723,11 +873,11 @@ export default function ParentDashboard() {
                           <div className="flex items-center space-x-3">
                             <div className="h-12 w-12 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
                               {guardian.photoUrl || guardian.photoURL ? (
-                                <img 
-                                  src={guardian.photoUrl || guardian.photoURL} 
-                                  alt={`${guardian.firstName} ${guardian.lastName}`} 
-                                  className="h-full w-full object-cover" 
-                                  referrerPolicy="no-referrer" 
+                                <img
+                                  src={guardian.photoUrl || guardian.photoURL}
+                                  alt={`${guardian.firstName} ${guardian.lastName}`}
+                                  className="h-full w-full object-cover"
+                                  referrerPolicy="no-referrer"
                                 />
                               ) : (
                                 <User className="h-6 w-6 text-gray-300 dark:text-gray-600" />
@@ -741,6 +891,33 @@ export default function ParentDashboard() {
                                 )}
                               </div>
                               <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">{guardian.relationship} • {guardian.phone}</p>
+
+                              {/* The nudge's actual destination for a
+                                  hand-added guardian. Account-holder records
+                                  are sent to /profile instead, since their
+                                  photo is synced from there and an upload
+                                  here would be overwritten. */}
+                              {!(guardian.photoUrl || guardian.photoURL) && (
+                                isAccountHolder(guardian) ? (
+                                  <Link
+                                    to="/profile"
+                                    className="mt-1 inline-block text-[10px] font-bold uppercase tracking-wider text-primary dark:text-primary/80"
+                                  >
+                                    Add photo in profile
+                                  </Link>
+                                ) : (
+                                  <label className="mt-1 inline-block text-[10px] font-bold uppercase tracking-wider text-primary dark:text-primary/80 cursor-pointer">
+                                    {uploadingPhotoFor === guardian.id ? "Uploading..." : "Add photo"}
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      disabled={uploadingPhotoFor === guardian.id}
+                                      onChange={(e) => handleExistingGuardianPhotoUpload(e, guardian.id)}
+                                    />
+                                  </label>
+                                )
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center space-x-1">
