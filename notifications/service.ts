@@ -1,9 +1,13 @@
 import crypto from "crypto";
 import { resolveRecipients, type Recipient } from "./recipients.js";
-import { maskEmail } from "./templates.js";
+import { maskEmail, maskPhone } from "./templates.js";
+import { isWhatsAppEnabledForChurch, isWhatsAppEligibleRecipient } from "./eligibility.js";
+import { reserveWhatsAppAllowance, sendAllowanceExhaustedNotice } from "./allowance.js";
+import type { EmailProvider } from "./providers/email.js";
 import type {
   ChannelProvider,
   ChannelSendResult,
+  NotificationChannel,
   NotificationEventType,
   NotificationPayload,
   NotificationRecord,
@@ -45,15 +49,30 @@ export function buildEventKey(eventType: NotificationEventType, checkinId: strin
   return `${eventType}:${checkinId}:${occurredAt}`;
 }
 
+/**
+ * A deterministic key for a *consolidated* WhatsApp record covering more
+ * than one occurrence (e.g. every sibling in one guardian-checkout batch) --
+ * sorted so the same set of occurrences always produces the same key
+ * regardless of array order, which is what makes a retried request land on
+ * the same notification id instead of a duplicate. See notifyCheckins'
+ * WhatsApp grouping below.
+ */
+export function buildConsolidatedEventKey(eventKeys: string[]): string {
+  return `whatsapp-batch:${[...eventKeys].sort().join("|")}`;
+}
+
 interface EnqueueArgs {
   churchId: string;
   checkinId: string;
   eventKey: string;
   eventType: NotificationEventType;
-  childId: string;
+  channel: NotificationChannel;
+  childIds: string[];
   recipient: Recipient;
   payload: NotificationPayload;
   traceId?: string | null;
+  /** Defaults to "queued". "skipped_allowance" is a terminal status set at enqueue time when the church's monthly WhatsApp allowance was already spent -- see notifyCheckins below. Never dispatched. */
+  initialStatus?: "queued" | "skipped_allowance";
 }
 
 /**
@@ -64,23 +83,25 @@ interface EnqueueArgs {
  * id exists for.
  */
 async function enqueueOne(db: any, args: EnqueueArgs, ctx?: NotifyContext): Promise<string> {
-  const channel = "email";
-  const id = computeNotificationId(args.eventKey, args.recipient.userId, channel);
+  const id = computeNotificationId(args.eventKey, args.recipient.userId, args.channel);
   const now = new Date().toISOString();
+  const recipientMasked = args.channel === "whatsapp" && args.recipient.whatsappNumber
+    ? maskPhone(args.recipient.whatsappNumber)
+    : maskEmail(args.recipient.email);
 
   try {
     await db.collection(NOTIFICATIONS_COLLECTION).doc(id).create({
       churchId: args.churchId,
       recipientUserId: args.recipient.userId,
       checkinId: args.checkinId,
-      childIds: [args.childId],
+      childIds: args.childIds,
       eventKey: args.eventKey,
       eventType: args.eventType,
-      channel,
+      channel: args.channel,
       template: args.eventType,
-      status: "queued",
+      status: args.initialStatus ?? "queued",
       attempt: 0,
-      recipientMasked: maskEmail(args.recipient.email),
+      recipientMasked,
       payload: args.payload,
       providerMessageId: null,
       errorCode: null,
@@ -202,6 +223,15 @@ export interface NotifySummary {
   failed: number;
 }
 
+/** Builds the multi-child payload a consolidated WhatsApp record renders from -- see NotificationPayload.children in types.ts. Takes the first occurrence's shared fields (churchName, time, volunteerName, guardianName are the same across one batch) and lists every child+room under `children`. */
+function buildConsolidatedPayload(occs: Occurrence[]): NotificationPayload {
+  const first = occs[0].payload;
+  return {
+    ...first,
+    children: occs.map((o) => ({ childName: o.payload.childName, roomName: o.payload.roomName })),
+  };
+}
+
 /**
  * The single orchestration entry point every call site in server.ts uses:
  * resolve recipients and enqueue for every occurrence in parallel (fast --
@@ -211,6 +241,19 @@ export interface NotifySummary {
  * guardian-checkout and emergency-alert handlers -- up to 20 awaited network
  * calls in a row, one per child, on a request a volunteer is standing at a
  * kiosk waiting on.
+ *
+ * Email and WhatsApp are enqueued differently on purpose:
+ *
+ *   - Email: unchanged from before this PR -- one record per occurrence per
+ *     recipient. Every eligible recipient gets an email regardless of
+ *     WhatsApp eligibility ("ineligible WhatsApp never blocks email").
+ *   - WhatsApp: grouped by recipient+eventType across *every* occurrence in
+ *     this single call (e.g. every sibling in one guardian-checkout batch)
+ *     into one consolidated record per group, gated by
+ *     isWhatsAppEnabledForChurch, per-recipient eligibility, and the
+ *     church's monthly allowance admitting the send. A skipped allowance
+ *     never removes the email record already enqueued for the same
+ *     occurrence.
  */
 export async function notifyCheckins(
   db: any,
@@ -219,27 +262,78 @@ export async function notifyCheckins(
   providers: Partial<Record<string, ChannelProvider>>,
   ctx?: NotifyContext,
 ): Promise<NotifySummary> {
-  const idBatches = await Promise.all(
-    occurrences.map(async (occ) => {
-      const recipients = await resolveRecipients(db, churchId, occ.childId, ctx);
-      return Promise.all(
+  const perOccurrence = await Promise.all(
+    occurrences.map(async (occ) => ({ occ, recipients: await resolveRecipients(db, churchId, occ.childId, ctx) })),
+  );
+
+  const emailIdBatches = await Promise.all(
+    perOccurrence.map(({ occ, recipients }) =>
+      Promise.all(
         recipients.map((recipient) =>
           enqueueOne(db, {
             churchId,
             checkinId: occ.checkinId,
             eventKey: occ.eventKey,
             eventType: occ.eventType,
-            childId: occ.childId,
+            channel: "email",
+            childIds: [occ.childId],
             recipient,
             payload: occ.payload,
             traceId: ctx?.traceId,
           }, ctx),
         ),
-      );
-    }),
+      ),
+    ),
   );
 
-  const allIds = idBatches.flat();
+  const whatsappGroups = new Map<string, { recipient: Recipient; eventType: NotificationEventType; occs: Occurrence[] }>();
+  if (isWhatsAppEnabledForChurch(churchId)) {
+    for (const { occ, recipients } of perOccurrence) {
+      for (const recipient of recipients) {
+        if (!isWhatsAppEligibleRecipient(recipient)) continue;
+        const key = `${recipient.userId}:${occ.eventType}`;
+        const group = whatsappGroups.get(key) ?? { recipient, eventType: occ.eventType, occs: [] };
+        group.occs.push(occ);
+        whatsappGroups.set(key, group);
+      }
+    }
+  }
+
+  const emailProvider = providers.email as EmailProvider | undefined;
+  const whatsappIds: string[] = [];
+  for (const group of whatsappGroups.values()) {
+    const consolidated = group.occs.length > 1;
+    const eventKey = consolidated ? buildConsolidatedEventKey(group.occs.map((o) => o.eventKey)) : group.occs[0].eventKey;
+    const payload = consolidated ? buildConsolidatedPayload(group.occs) : group.occs[0].payload;
+
+    const { allowed, justExhausted } = await reserveWhatsAppAllowance(db, churchId, ctx);
+
+    // Exhaustion is recorded, never silent -- the plan is explicit that an
+    // exhausted allowance produces an auditable skipped_allowance record,
+    // not nothing. It's still never dispatched (not added to whatsappIds),
+    // and the email records enqueued above are completely unaffected
+    // either way.
+    const id = await enqueueOne(db, {
+      churchId,
+      checkinId: group.occs[0].checkinId,
+      eventKey,
+      eventType: group.eventType,
+      channel: "whatsapp",
+      childIds: group.occs.map((o) => o.childId),
+      recipient: group.recipient,
+      payload,
+      traceId: ctx?.traceId,
+      initialStatus: allowed ? "queued" : "skipped_allowance",
+    }, ctx);
+
+    if (allowed) {
+      whatsappIds.push(id);
+    } else if (justExhausted && emailProvider) {
+      await sendAllowanceExhaustedNotice(db, churchId, emailProvider, ctx);
+    }
+  }
+
+  const allIds = [...emailIdBatches.flat(), ...whatsappIds];
   const results = await dispatchMany(db, allIds, providers, ctx);
 
   return {
@@ -352,7 +446,8 @@ async function reconcileRecentCheckins(db: any, ctx?: NotifyContext): Promise<st
           checkinId: doc.id,
           eventKey,
           eventType,
-          childId: c.childId,
+          channel: "email",
+          childIds: [c.childId],
           recipient,
           payload,
         }, ctx);

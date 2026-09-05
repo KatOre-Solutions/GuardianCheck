@@ -18,6 +18,7 @@
 import {
   computeNotificationId,
   buildEventKey,
+  buildConsolidatedEventKey,
   claimForDispatch,
   dispatchOne,
   dispatchMany,
@@ -27,6 +28,8 @@ import {
 } from "../notifications/service.ts";
 import { resolveRecipients } from "../notifications/recipients.ts";
 import { maskEmail } from "../notifications/templates.ts";
+import { reserveWhatsAppAllowance, CHURCH_USAGE_COLLECTION } from "../notifications/allowance.ts";
+import { isWhatsAppEnabledForChurch, isWhatsAppEligibleRecipient } from "../notifications/eligibility.ts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -67,6 +70,13 @@ class FakeDocRef {
   async update(patch) {
     if (!this.store.has(this.key())) throw new Error("NOT_FOUND");
     this.store.set(this.key(), { ...this.store.get(this.key()), ...patch });
+  }
+  async set(data, options) {
+    if (options?.merge && this.store.has(this.key())) {
+      this.store.set(this.key(), { ...this.store.get(this.key()), ...data });
+    } else {
+      this.store.set(this.key(), { ...data });
+    }
   }
 }
 
@@ -127,7 +137,7 @@ function makeFakeDb(seed = {}) {
       txLock = new Promise((resolve) => { release = resolve; });
       await previous;
       try {
-        const tx = { get: async (ref) => ref.get(), update: (ref, patch) => ref.update(patch) };
+        const tx = { get: async (ref) => ref.get(), update: (ref, patch) => ref.update(patch), set: (ref, data, options) => ref.set(data, options) };
         return await fn(tx);
       } finally {
         release();
@@ -136,14 +146,26 @@ function makeFakeDb(seed = {}) {
   };
 }
 
-function fakeProvider(resultsByRecipient, calls = []) {
+function fakeProvider(resultsByRecipient, calls = [], channel = "email") {
   return {
-    channel: "email",
+    channel,
     async send(record) {
       calls.push(record.recipientUserId);
       const r = resultsByRecipient[record.recipientUserId];
       if (!r) throw new Error(`no fixture for ${record.recipientUserId}`);
       return r;
+    },
+  };
+}
+
+/** Stands in for EmailProvider (which sendAllowanceExhaustedNotice needs a `.sendRaw` off of) without pulling in the real Resend-backed class. */
+function fakeEmailProviderWithSendRaw(sentTo = []) {
+  return {
+    channel: "email",
+    async send() { throw new Error("not used in these tests"); },
+    async sendRaw(to, subject, html) {
+      sentTo.push({ to, subject, html });
+      return { ok: true, retryable: false };
     },
   };
 }
@@ -420,6 +442,256 @@ console.log("\nReconciliation sweep\n");
   check("running the sweep again does not re-enqueue the same event", 0, second.reconciled);
 }
 
+// --- WhatsApp: eligibility, kill switch, consolidation, allowance --------
+
+console.log("\nWhatsApp eligibility and kill switch\n");
+
+{
+  delete process.env.WHATSAPP_ENABLED;
+  check("disabled (unset) by default", false, isWhatsAppEnabledForChurch("churchA"));
+
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "";
+  check("enabled globally but empty pilot list still excludes every church", false, isWhatsAppEnabledForChurch("churchA"));
+
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchB, churchA ,churchC";
+  check("enabled + on the (whitespace-tolerant) pilot list -> allowed", true, isWhatsAppEnabledForChurch("churchA"));
+  check("enabled + not on the pilot list -> still excluded", false, isWhatsAppEnabledForChurch("churchZ"));
+
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+}
+
+{
+  check("no whatsappVerifiedAt -> ineligible", false, isWhatsAppEligibleRecipient({ userId: "u1", email: "a@x.com", whatsappNumber: "+27821234567" }));
+  check("verifiedAt set but no number on file -> ineligible", false, isWhatsAppEligibleRecipient({ userId: "u1", email: "a@x.com", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" }));
+  check("both set -> eligible", true, isWhatsAppEligibleRecipient({ userId: "u1", email: "a@x.com", whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" }));
+}
+
+console.log("\nnotifyCheckins: WhatsApp kill switch is off by default\n");
+
+{
+  // The single most important property in this whole feature: with no env
+  // vars set, behavior is byte-for-byte what it was before this PR existed.
+  const db = makeFakeDb({
+    children: { child1: { parentId: "parent1" } },
+    users: { parent1: { email: "parent@example.com", whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" } },
+  });
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+
+  const occ = {
+    checkinId: "checkin_c1_s1_20260903", eventType: "check-in", childId: "child1",
+    eventKey: "check-in:checkin_c1_s1_20260903:2026-09-03T09:00:00.000Z",
+    payload: { childName: "Kid", time: "2026-09-03T09:00:00.000Z", roomName: "Room 1", churchName: "Church A" },
+  };
+  const whatsappCalls = [];
+  const result = await notifyCheckins(db, "churchA", [occ], {
+    email: fakeProvider({ parent1: { ok: true, retryable: false } }),
+    whatsapp: fakeProvider({}, whatsappCalls, "whatsapp"),
+  });
+
+  check("even a fully-verified recipient gets only the email record with the flag off", { enqueued: 1, sent: 1, failed: 0 }, result);
+  check("the whatsapp provider was never invoked", 0, whatsappCalls.length);
+  const whatsappDocs = [...db.store.keys()].filter((k) => k.includes("/") && db.store.get(k).channel === "whatsapp");
+  check("no whatsapp notification record exists at all", 0, whatsappDocs.length);
+}
+
+console.log("\nnotifyCheckins: WhatsApp enabled, single child\n");
+
+{
+  const db = makeFakeDb({
+    children: { child1: { parentId: "parent1" } },
+    users: { parent1: { email: "parent@example.com", whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" } },
+  });
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const occ = {
+    checkinId: "checkin_c1_s1_20260903", eventType: "check-in", childId: "child1",
+    eventKey: "check-in:checkin_c1_s1_20260903:2026-09-03T09:00:00.000Z",
+    payload: { childName: "Kid", time: "2026-09-03T09:00:00.000Z", roomName: "Room 1", churchName: "Church A" },
+  };
+  const result = await notifyCheckins(db, "churchA", [occ], {
+    email: fakeProvider({ parent1: { ok: true, retryable: false } }),
+    whatsapp: fakeProvider({ parent1: { ok: true, providerMessageId: "wamid.1", retryable: false } }, [], "whatsapp"),
+  });
+
+  check("both channels sent for one eligible recipient", { enqueued: 2, sent: 2, failed: 0 }, result);
+
+  const whatsappId = computeNotificationId(occ.eventKey, "parent1", "whatsapp");
+  const whatsappDoc = (await db.collection(NOTIFICATIONS_COLLECTION).doc(whatsappId).get()).data();
+  check("the whatsapp record covers exactly the one child (no consolidation needed)", ["child1"], whatsappDoc.childIds);
+  check("the whatsapp record is masked by phone, not email", true, whatsappDoc.recipientMasked.startsWith("+27") && whatsappDoc.recipientMasked.includes("*"));
+  check("no raw phone number anywhere in the stored record", false, JSON.stringify(whatsappDoc).includes("+27821234567"));
+
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+console.log("\nnotifyCheckins: consolidation across a multi-child batch\n");
+
+{
+  // Models the guardian-checkout case: three siblings collected in one
+  // request, same recipient (their parent), same eventType.
+  const db = makeFakeDb({
+    children: {
+      child1: { parentId: "parent1" }, child2: { parentId: "parent1" }, child3: { parentId: "parent1" },
+    },
+    users: { parent1: { email: "parent@example.com", whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" } },
+  });
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const makeOcc = (n) => ({
+    checkinId: `checkin_c${n}_s1_20260903`, eventType: "check-out", childId: `child${n}`,
+    eventKey: `check-out:checkin_c${n}_s1_20260903:2026-09-03T14:0${n}:00.000Z`,
+    payload: { childName: `Kid${n}`, time: `2026-09-03T14:0${n}:00.000Z`, roomName: `Room ${n}`, churchName: "Church A" },
+  });
+  const occs = [makeOcc(1), makeOcc(2), makeOcc(3)];
+
+  const whatsappCalls = [];
+  const result = await notifyCheckins(db, "churchA", occs, {
+    email: fakeProvider({ parent1: { ok: true, retryable: false } }),
+    whatsapp: fakeProvider({ parent1: { ok: true, providerMessageId: "wamid.batch", retryable: false } }, whatsappCalls, "whatsapp"),
+  });
+
+  check("three email records (one per child) but only one whatsapp record", { enqueued: 4, sent: 4, failed: 0 }, result);
+  check("the whatsapp provider was called exactly once for all three children, not three times", 1, whatsappCalls.length);
+
+  const consolidatedKey = buildConsolidatedEventKey(occs.map((o) => o.eventKey));
+  const whatsappId = computeNotificationId(consolidatedKey, "parent1", "whatsapp");
+  const whatsappDoc = (await db.collection(NOTIFICATIONS_COLLECTION).doc(whatsappId).get()).data();
+  check("the consolidated record lists all three children", ["child1", "child2", "child3"], whatsappDoc.childIds);
+  check("the consolidated payload lists all three names", ["Kid1", "Kid2", "Kid3"], whatsappDoc.payload.children.map((c) => c.childName));
+  check("the consolidated record is a single check-out event, not three", "check-out", whatsappDoc.eventType);
+
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+console.log("\nnotifyCheckins: ineligible recipient never blocks email\n");
+
+{
+  const db = makeFakeDb({
+    children: { child1: { parentId: "parent1" } },
+    users: { parent1: { email: "parent@example.com" } }, // never verified
+  });
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const occ = {
+    checkinId: "checkin_c1_s1_20260903", eventType: "check-in", childId: "child1",
+    eventKey: "check-in:checkin_c1_s1_20260903:2026-09-03T09:00:00.000Z",
+    payload: { childName: "Kid", time: "2026-09-03T09:00:00.000Z", roomName: "Room 1", churchName: "Church A" },
+  };
+  const result = await notifyCheckins(db, "churchA", [occ], {
+    email: fakeProvider({ parent1: { ok: true, retryable: false } }),
+    whatsapp: fakeProvider({}, [], "whatsapp"),
+  });
+
+  check("an unverified recipient still gets the email (WhatsApp is additive, never a gate)", { enqueued: 1, sent: 1, failed: 0 }, result);
+
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+console.log("\nnotifyCheckins: allowance exhaustion -- auditable, not silent, never blocks email\n");
+
+{
+  const db = makeFakeDb({
+    children: { child1: { parentId: "parent1" } },
+    users: { parent1: { email: "parent@example.com", whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" } },
+    church_public: { churchA: { name: "Church A" } },
+    // No admins in this fixture -- the exhaustion-notice recipient list
+    // being empty is asserted separately below via a dedicated admin fixture.
+  });
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "0"; // exhausted before anything is sent
+
+  const occ = {
+    checkinId: "checkin_c1_s1_20260903", eventType: "check-in", childId: "child1",
+    eventKey: "check-in:checkin_c1_s1_20260903:2026-09-03T09:00:00.000Z",
+    payload: { childName: "Kid", time: "2026-09-03T09:00:00.000Z", roomName: "Room 1", churchName: "Church A" },
+  };
+  const whatsappCalls = [];
+  const result = await notifyCheckins(db, "churchA", [occ], {
+    email: fakeProvider({ parent1: { ok: true, retryable: false } }),
+    whatsapp: fakeProvider({ parent1: { ok: true, retryable: false } }, whatsappCalls, "whatsapp"),
+  });
+
+  // enqueued counts records added to the dispatch list -- a skipped_allowance
+  // record is written (see the checks below) but deliberately never
+  // dispatched, so it doesn't add to this count.
+  check("email is dispatched and sent; the exhausted whatsapp record isn't dispatched at all", { enqueued: 1, sent: 1, failed: 0 }, result);
+  check("the provider was never actually called for the exhausted send", 0, whatsappCalls.length);
+
+  const whatsappId = computeNotificationId(occ.eventKey, "parent1", "whatsapp");
+  const whatsappDoc = (await db.collection(NOTIFICATIONS_COLLECTION).doc(whatsappId).get()).data();
+  check("the skipped record exists (auditable) rather than nothing being written at all", true, !!whatsappDoc);
+  check('its status is "skipped_allowance", not silently dropped', "skipped_allowance", whatsappDoc.status);
+
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+console.log("\nreserveWhatsAppAllowance: admission, exhaustion, once-per-month notice\n");
+
+{
+  const db = makeFakeDb();
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "2";
+
+  const first = await reserveWhatsAppAllowance(db, "churchA");
+  const second = await reserveWhatsAppAllowance(db, "churchA");
+  const third = await reserveWhatsAppAllowance(db, "churchA");
+  const fourth = await reserveWhatsAppAllowance(db, "churchA");
+
+  check("first send admitted", { allowed: true, justExhausted: false }, first);
+  check("second send admitted (still under the cap of 2)", { allowed: true, justExhausted: false }, second);
+  check("third send refused -- cap reached, and this is the exhausting request", { allowed: false, justExhausted: true }, third);
+  check("fourth send also refused, but NOT flagged as newly-exhausted again", { allowed: false, justExhausted: false }, fourth);
+
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+{
+  const db = makeFakeDb();
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "0";
+  const result = await reserveWhatsAppAllowance(db, "churchA");
+  check("a zero (unconfigured) allowance refuses immediately -- safe default, never unlimited", { allowed: false, justExhausted: true }, result);
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+{
+  // A church admin (by `role`) and a second one (by `roles` array, the
+  // other place privilege is conferred throughout this codebase) both get
+  // the notice; a volunteer in the same church does not.
+  const db = makeFakeDb({
+    church_public: { churchA: { name: "Church A" } },
+    users: {
+      admin1: { churchId: "churchA", role: "admin", email: "admin1@x.com" },
+      admin2: { churchId: "churchA", roles: ["admin", "volunteer"], email: "admin2@x.com" },
+      volunteer1: { churchId: "churchA", role: "volunteer", email: "volunteer1@x.com" },
+      adminOtherChurch: { churchId: "churchB", role: "admin", email: "other-church-admin@x.com" },
+    },
+  });
+  const sentTo = [];
+  const { sendAllowanceExhaustedNotice } = await import("../notifications/allowance.ts");
+  await sendAllowanceExhaustedNotice(db, "churchA", fakeEmailProviderWithSendRaw(sentTo));
+
+  const recipients = sentTo.map((s) => s.to).sort();
+  check("both of this church's admins (role and roles-array) get the notice", ["admin1@x.com", "admin2@x.com"], recipients);
+  check("the church name appears in the subject", true, sentTo.every((s) => s.subject.includes("Church A")));
+}
+
 // --- Source guards (server.ts) ------------------------------------------
 // The behavior above is proven against the notifications module directly.
 // These pin the server.ts wiring: that the old serial per-child loops are
@@ -457,6 +729,11 @@ check(
   "the cron route checks a shared secret before doing anything",
   true,
   /\/api\/cron\/notifications-sweep[\s\S]{0,400}CRON_SECRET/.test(serverSrc),
+);
+check(
+  "WhatsAppProvider is registered in the notification providers map (PR 5)",
+  true,
+  /notificationProviders = \{[\s\S]{0,80}whatsapp: new WhatsAppProvider\(\)/.test(serverSrc),
 );
 
 const emailServiceSrc = readFileSync(path.join(ROOT, "emailService.ts"), "utf8");

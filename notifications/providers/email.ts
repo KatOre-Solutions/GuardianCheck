@@ -82,4 +82,31 @@ export class EmailProvider implements ChannelProvider {
 
     return { ok: true, providerMessageId: data?.id, retryable: false };
   }
+
+  /**
+   * A plain send, bypassing the check-in/out template entirely -- for
+   * operational notices that aren't tied to a `NotificationRecord` at all
+   * (right now: the WhatsApp allowance-exhaustion notice to a church's
+   * admins, service.ts). Reuses this instance's already-initialised client
+   * and mock-mode behavior rather than standing up a second Resend client.
+   */
+  async sendRaw(to: string, subject: string, html: string): Promise<ChannelSendResult> {
+    if (!this.resend) {
+      console.log(`[MOCK NOTIFICATION EMAIL] To: ${to} | Subject: ${subject}`);
+      return { ok: true, retryable: false };
+    }
+
+    const { data, error } = await this.resend.emails.send({
+      from: `GuardianCheck <${this.fromEmail}>`,
+      to,
+      subject,
+      html,
+    });
+
+    if (error) {
+      return { ok: false, errorCode: error.name, errorMessage: error.message, retryable: RETRYABLE_RESEND_ERROR_CODES.has(error.name) };
+    }
+
+    return { ok: true, providerMessageId: data?.id, retryable: false };
+  }
 }

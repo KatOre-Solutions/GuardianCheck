@@ -1,5 +1,6 @@
 import axios from "axios";
-import type { ChannelSendResult } from "../types.js";
+import { whatsappSummaryText } from "../templates.js";
+import type { ChannelProvider, ChannelSendResult, NotificationEventType, NotificationRecord } from "../types.js";
 
 /**
  * The WhatsApp Cloud API sender: raw `axios` calls to Meta's Graph API, no
@@ -7,12 +8,11 @@ import type { ChannelSendResult } from "../types.js";
  * dependency, and the Graph API surface used here is small).
  *
  * Two callers use this: the OTP verification flow (server.ts,
- * `/api/whatsapp/verify/start`) sends an AUTHENTICATION template right now;
- * the business-event notification pipeline (`notifyCheckins`) will send
- * UTILITY templates once PR 5 wires a `WhatsAppProvider implements
- * ChannelProvider` on top of `sendWhatsAppTemplate` below -- deferred until
- * then because which UTILITY templates exist depends on what Meta actually
- * approves, which doesn't exist yet.
+ * `/api/whatsapp/verify/start`) sends an AUTHENTICATION template; the
+ * business-event notification pipeline (`WhatsAppProvider` below, PR 5)
+ * sends UTILITY templates, registered into `notifyCheckins`' provider map
+ * only when `WHATSAPP_ENABLED` and a church's pilot membership both say so
+ * -- see notifications/eligibility.ts.
  *
  * Mock mode (no WHATSAPP_ACCESS_TOKEN) mirrors notifications/providers/email.ts:
  * logs and reports success without calling the API, so local dev and CI
@@ -128,4 +128,67 @@ export function buildOtpTemplateComponents(code: string): WhatsAppTemplateCompon
     { type: "body", parameters: [{ type: "text", text: code }] },
     { type: "button", sub_type: "copy_code", index: "0", parameters: [{ type: "coupon_code", coupon_code: code }] },
   ];
+}
+
+/**
+ * Which approved UTILITY template name to use for a given event type, read
+ * fresh from the environment on every call (not cached at module load) so
+ * it stays testable and picks up a changed env var without a restart being
+ * load-bearing for correctness. Undefined for an eventType with nothing
+ * configured -- `WhatsAppProvider.send` treats that as "this event type
+ * doesn't go out on WhatsApp," a safe default rather than a guess. Only 3
+ * of the 4 event types are expected to ever have a template here
+ * (docs/whatsapp-communication-plan.md PR 5: "3 UTILITY templates
+ * approved") -- emergency alerts are not in MVP scope for WhatsApp.
+ */
+function utilityTemplateNameFor(eventType: NotificationEventType): string | undefined {
+  switch (eventType) {
+    case "check-in": return process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN || undefined;
+    case "check-out": return process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKOUT || undefined;
+    case "room_move": return process.env.WHATSAPP_UTILITY_TEMPLATE_ROOMMOVE || undefined;
+    case "emergency": return undefined;
+  }
+}
+
+/**
+ * The business-notification `ChannelProvider` -- check-in/check-out/room-move,
+ * registered into `notifyCheckins`' provider map (server.ts) only when
+ * eligibility (notifications/eligibility.ts) says WhatsApp is switched on
+ * for the church. Deliberately re-reads the recipient's live
+ * whatsappNumber/whatsappVerifiedAt at send time rather than trusting
+ * anything captured at enqueue -- the same principle EmailProvider follows,
+ * and more load-bearing here: a retry from the once-daily cron sweep could
+ * run many hours after the family changed or un-verified their number.
+ */
+export class WhatsAppProvider implements ChannelProvider {
+  readonly channel = "whatsapp" as const;
+
+  async send(record: NotificationRecord, deps: { db: any; firestoreOps?: { reads: number; writes: number } }): Promise<ChannelSendResult> {
+    if (record.recipientUserId.startsWith("guardian:")) {
+      return { ok: false, retryable: false, errorMessage: "WhatsApp is not supported for guardian recipients" };
+    }
+
+    const templateName = utilityTemplateNameFor(record.eventType);
+    if (!templateName) {
+      return { ok: false, retryable: false, errorMessage: `no approved UTILITY template configured for eventType "${record.eventType}"` };
+    }
+
+    const userDoc = await deps.db.collection("users").doc(record.recipientUserId).get();
+    if (deps.firestoreOps) deps.firestoreOps.reads++;
+    const userData = userDoc.exists ? userDoc.data() : null;
+
+    if (!userData?.whatsappVerifiedAt || !userData?.whatsappNumber) {
+      // Eligible when enqueued, no longer eligible now (un-verified, or
+      // changed number, between enqueue and this retry) -- not worth
+      // retrying again, the condition won't fix itself.
+      return { ok: false, retryable: false, errorMessage: "recipient is no longer WhatsApp-verified" };
+    }
+
+    return sendWhatsAppTemplate({
+      to: userData.whatsappNumber,
+      templateName,
+      languageCode: process.env.WHATSAPP_UTILITY_LANGUAGE_CODE || "en_US",
+      components: [{ type: "body", parameters: [{ type: "text", text: whatsappSummaryText(record.payload, record.eventType) }] }],
+    });
+  }
 }

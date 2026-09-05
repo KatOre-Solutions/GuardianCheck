@@ -14,7 +14,8 @@ import {
   confirmWhatsappVerification,
   OTP_CHALLENGES_COLLECTION,
 } from "../notifications/whatsapp-verification.ts";
-import { sendWhatsAppTemplate, buildOtpTemplateComponents } from "../notifications/providers/whatsapp.ts";
+import { sendWhatsAppTemplate, buildOtpTemplateComponents, WhatsAppProvider } from "../notifications/providers/whatsapp.ts";
+import { whatsappSummaryText, maskPhone } from "../notifications/templates.ts";
 
 let pass = 0;
 let fail = 0;
@@ -313,6 +314,89 @@ console.log("\nWhatsApp provider: mock mode and error classification\n");
   check("the OTP code appears in the body parameters", "482913", body?.parameters?.[0]?.text);
   check("the OTP code also appears in the button's coupon_code parameter (Meta requires it twice)", "482913", button?.parameters?.[0]?.coupon_code);
   check("the button uses the copy_code sub_type", "copy_code", button?.sub_type);
+}
+
+// --- whatsappSummaryText / maskPhone (templates.ts) ------------------------
+
+console.log("\nwhatsappSummaryText and maskPhone\n");
+
+{
+  const payload = { childName: "Amahle", time: "2026-09-03T09:00:00.000Z", roomName: "Elephants", churchName: "Church A" };
+  check("single-child check-in reads naturally in the singular", true, /^Amahle has been checked in at Church A/.test(whatsappSummaryText(payload, "check-in")));
+  check("single-child check-out", true, /^Amahle has been checked out of Church A/.test(whatsappSummaryText(payload, "check-out")));
+  check("room move names the new room", true, whatsappSummaryText(payload, "room_move").includes("moved to Elephants"));
+  check("emergency doesn't need a child name at all", true, whatsappSummaryText(payload, "emergency").startsWith("Emergency alert at Church A"));
+}
+
+{
+  const consolidatedPayload = {
+    childName: "Amahle", time: "2026-09-03T14:00:00.000Z", roomName: "Elephants", churchName: "Church A",
+    children: [{ childName: "Amahle", roomName: "Elephants" }, { childName: "Bongani", roomName: "Giraffes" }, { childName: "Chipo", roomName: "Lions" }],
+  };
+  const text = whatsappSummaryText(consolidatedPayload, "check-out");
+  check("a consolidated message names every child, Oxford-comma style", true, text.startsWith("Amahle, Bongani and Chipo have been checked out"));
+  check("a consolidated message uses the plural verb", true, text.includes(" have been "));
+}
+
+{
+  check("maskEmail-equivalent for phone: country code + last 2 digits visible", true, maskPhone("+27821234567").startsWith("+27") && maskPhone("+27821234567").endsWith("67"));
+  check("the middle of the number is starred, not present", false, maskPhone("+27821234567").includes("8212345"));
+}
+
+// --- WhatsAppProvider (business notifications) ----------------------------
+
+console.log("\nWhatsAppProvider: business notification send\n");
+
+{
+  process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN = "checkin_utility";
+  delete process.env.WHATSAPP_ACCESS_TOKEN; // mock mode
+
+  const db = makeFakeDb({
+    users: { parent1: { whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" } },
+  });
+  const provider = new WhatsAppProvider();
+  const record = {
+    id: "n1", recipientUserId: "parent1", eventType: "check-in",
+    payload: { childName: "Amahle", time: "2026-09-03T09:00:00.000Z", roomName: "Elephants", churchName: "Church A" },
+  };
+  const result = await provider.send(record, { db });
+  check("a verified recipient with a configured template sends (mock mode) successfully", true, result.ok);
+
+  delete process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN;
+}
+
+{
+  // No WHATSAPP_UTILITY_TEMPLATE_CHECKOUT configured -- the safe default
+  // (this event type just never goes out over WhatsApp) rather than
+  // sending with a guessed or empty template name.
+  delete process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKOUT;
+  const db = makeFakeDb({ users: { parent1: { whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-01-01T00:00:00.000Z" } } });
+  const provider = new WhatsAppProvider();
+  const result = await provider.send({ id: "n1", recipientUserId: "parent1", eventType: "check-out", payload: {} }, { db });
+  check("no configured template for this event type -> not ok, not retryable (won't loop forever)", false, result.ok);
+  check("...and doesn't retry a config problem", false, result.retryable);
+}
+
+{
+  process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN = "checkin_utility";
+  // The record was eligible when enqueued, but the recipient has since
+  // un-verified (or never was) -- re-checked live at send time, same
+  // principle as EmailProvider re-reading the live email address.
+  const db = makeFakeDb({ users: { parent1: { email: "p@x.com" } } }); // no whatsappVerifiedAt
+  const provider = new WhatsAppProvider();
+  const result = await provider.send({ id: "n1", recipientUserId: "parent1", eventType: "check-in", payload: {} }, { db });
+  check("a recipient who is no longer verified is rejected at send time, not just at enqueue", false, result.ok);
+  check("...and not retried (the condition won't fix itself)", false, result.retryable);
+  delete process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN;
+}
+
+{
+  process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN = "checkin_utility";
+  const db = makeFakeDb();
+  const provider = new WhatsAppProvider();
+  const result = await provider.send({ id: "n1", recipientUserId: "guardian:g1", eventType: "check-in", payload: {} }, { db });
+  check("guardian recipients are explicitly unsupported for WhatsApp (no verification flow exists for them)", false, result.ok);
+  delete process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN;
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
