@@ -1,6 +1,6 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Outlet, useLocation } from "react-router-dom";
-import { Shield, User, LogOut, LayoutDashboard, QrCode, ClipboardCheck, Users, Settings, Home as HomeIcon, Calendar } from "lucide-react";
+import { Shield, User, LogOut, LayoutDashboard, QrCode, ClipboardCheck, Users, Settings, Home as HomeIcon, Calendar, Menu, X } from "lucide-react";
 import { auth } from "./lib/firebase";
 import { useAuth } from "./hooks/useAuth";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -85,6 +85,7 @@ function Navigation() {
   const { church } = useTenant();
   const navigate = useNavigate();
   const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -96,102 +97,130 @@ function Navigation() {
   const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
 
   // Hide role-based links on auth/onboarding pages to avoid confusion
-  const isAuthPage = ["/login", "/accept-invite", "/register-church", "/complete-profile", "/pending-approval", "/rejected"].some(path => 
+  const isAuthPage = ["/login", "/accept-invite", "/register-church", "/complete-profile", "/pending-approval", "/rejected"].some(path =>
     location.pathname.includes(path)
   );
+
+  // The links are built as data rather than JSX because they are rendered
+  // twice -- inline on desktop, and inside the mobile sheet below.
+  const isAdmin = hasRole("admin") || hasRole("master_admin");
+  const navLinks: { to: string; label: string; icon: React.ReactNode }[] = [];
+
+  if (isEmailVerified && !isAuthPage) {
+    if (hasRole("master_admin")) {
+      navLinks.push({ to: "/master-admin", label: "Platform Admin", icon: <LayoutDashboard className="h-4 w-4" /> });
+    }
+    if (church) {
+      if (isAdmin) {
+        navLinks.push({ to: `${churchPrefix}/admin`, label: "Admin", icon: <LayoutDashboard className="h-4 w-4" /> });
+        navLinks.push({ to: `${churchPrefix}/admin/settings`, label: "Settings", icon: <Settings className="h-4 w-4" /> });
+        navLinks.push({ to: `${churchPrefix}/admin/events`, label: "Events", icon: <Calendar className="h-4 w-4" /> });
+      }
+      if (isAdmin || hasRole("volunteer")) {
+        navLinks.push({ to: `${churchPrefix}/volunteer`, label: "Volunteer", icon: <ClipboardCheck className="h-4 w-4" /> });
+      }
+      if (isAdmin || hasRole("parent")) {
+        navLinks.push({ to: `${churchPrefix}/parent`, label: "Parent", icon: <HomeIcon className="h-4 w-4" /> });
+      }
+    }
+    navLinks.push({ to: "/profile", label: "Profile", icon: <User className="h-4 w-4" /> });
+  }
+
+  // A left-open menu would otherwise survive the navigation it triggered.
+  React.useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  const linkClass = "text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors";
 
   return (
     <nav className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex items-center">
-            <Link to={churchPrefix || "/"} className="flex items-center space-x-2">
-              <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
-              <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
+        <div className="flex justify-between items-center h-16 gap-2">
+          <div className="flex items-center min-w-0">
+            <Link to={churchPrefix || "/"} className="flex items-center space-x-2 min-w-0">
+              <span className="shrink-0 flex items-center">
+                <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
+              </span>
+              <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0">
                 {church?.name || "GuardianCheck"}
               </span>
             </Link>
           </div>
 
-          <div className="flex items-center space-x-4">
-            {user ? (
-              <>
-                {isEmailVerified && !isAuthPage && (
-                  <>
-                    {hasRole("master_admin") && (
-                      <Link to="/master-admin" className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                        <LayoutDashboard className="h-4 w-4" />
-                        <span className="hidden sm:inline">Platform Admin</span>
-                      </Link>
-                    )}
-                    {church && (
-                      <>
-                        {(hasRole("admin") || hasRole("master_admin")) && (
-                          <>
-                            <Link to={`${churchPrefix}/admin`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                              <LayoutDashboard className="h-4 w-4" />
-                              <span className="hidden sm:inline">Admin</span>
-                            </Link>
-                            <Link to={`${churchPrefix}/admin/settings`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                              <Settings className="h-4 w-4" />
-                              <span className="hidden sm:inline">Settings</span>
-                            </Link>
-                            <Link to={`${churchPrefix}/admin/events`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                              <Calendar className="h-4 w-4" />
-                              <span className="hidden sm:inline">Events</span>
-                            </Link>
-                          </>
-                        )}
-                        {(hasRole("admin") || hasRole("volunteer") || hasRole("master_admin")) && (
-                          <Link to={`${churchPrefix}/volunteer`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                            <ClipboardCheck className="h-4 w-4" />
-                            <span className="hidden sm:inline">Volunteer</span>
-                          </Link>
-                        )}
-                        {(hasRole("admin") || hasRole("parent") || hasRole("master_admin")) && (
-                          <Link to={`${churchPrefix}/parent`} className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors">
-                            <HomeIcon className="h-4 w-4" />
-                            <span className="hidden sm:inline">Parent</span>
-                          </Link>
-                        )}
-                      </>
-                    )}
-                    <Link
-                      to="/profile"
-                      className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
-                    >
-                      <User className="h-4 w-4" />
-                      <span className="hidden sm:inline">Profile</span>
-                    </Link>
-                  </>
-                )}
+          {user ? (
+            <>
+              {/* Every role link at once overflows anything narrower than a
+                  laptop, so below `lg` they move into the sheet under this
+                  bar rather than pushing the page sideways. */}
+              <div className="hidden lg:flex items-center space-x-4 shrink-0">
+                {navLinks.map(link => (
+                  <Link key={link.to} to={link.to} title={link.label} className={linkClass}>
+                    {link.icon}
+                    <span className="hidden xl:inline">{link.label}</span>
+                  </Link>
+                ))}
                 <button
                   onClick={handleLogout}
+                  title="Logout"
                   className="text-gray-600 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors"
                 >
                   <LogOut className="h-4 w-4" />
-                  <span className="hidden sm:inline">Logout</span>
+                  <span className="hidden xl:inline">Logout</span>
                 </button>
-              </>
-            ) : (
-              <div className="flex items-center space-x-3">
-                <Link
-                  to={church ? `${churchPrefix}/login?mode=signup` : "/login?mode=signup"}
-                  className="border border-gray-300 dark:border-gray-700 text-gray-750 dark:text-gray-250 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  Sign Up
-                </Link>
-                <Link
-                  to={church ? `${churchPrefix}/login` : "/login"}
-                  className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
-                >
-                  Login
-                </Link>
               </div>
-            )}
-          </div>
+
+              <button
+                onClick={() => setMobileMenuOpen(open => !open)}
+                aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+                aria-expanded={mobileMenuOpen}
+                aria-controls="mobile-nav"
+                className="lg:hidden shrink-0 p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+              <Link
+                to={church ? `${churchPrefix}/login?mode=signup` : "/login?mode=signup"}
+                className="border border-gray-300 dark:border-gray-700 text-gray-750 dark:text-gray-250 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Sign Up
+              </Link>
+              <Link
+                to={church ? `${churchPrefix}/login` : "/login"}
+                className="bg-primary text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                Login
+              </Link>
+            </div>
+          )}
         </div>
       </div>
+
+      {user && mobileMenuOpen && (
+        <div id="mobile-nav" className="lg:hidden border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-1 bg-white dark:bg-gray-900 shadow-lg">
+          {navLinks.map(link => (
+            <Link
+              key={link.to}
+              to={link.to}
+              onClick={() => setMobileMenuOpen(false)}
+              className="text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors"
+            >
+              {link.icon}
+              <span>{link.label}</span>
+            </Link>
+          ))}
+          <button
+            onClick={handleLogout}
+            className="w-full text-gray-600 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Logout</span>
+          </button>
+        </div>
+      )}
     </nav>
   );
 }
