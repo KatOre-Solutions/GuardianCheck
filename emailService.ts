@@ -12,6 +12,15 @@ const logger = {
   debug: (...args: any[]) => isDev && console.debug(...args),
 };
 
+// Every outbound email signs off with the maker's domain so recipients can see
+// who is behind the app. It lives in one place so a new template cannot
+// quietly ship without it.
+const BRAND_NAME = "KatOre Solutions";
+const BRAND_DOMAIN = "katoresolutions.co.za";
+const brandFooter = () =>
+  `<p style="margin: 4px 0;">&copy; ${new Date().getFullYear()} GuardianCheck by ${BRAND_NAME}</p>` +
+  `<p style="margin: 4px 0;"><a href="https://${BRAND_DOMAIN}" style="color: #999; text-decoration: none;">${BRAND_DOMAIN}</a></p>`;
+
 interface NotificationData {
   childName: string;
   time: string;
@@ -208,7 +217,7 @@ export class EmailService {
           </div>
           <div class="footer">
             <p>This is an automated notification from ${escapedChurchName} Check-In System.</p>
-            <p>&copy; ${new Date().getFullYear()} GuardianCheck</p>
+            ${brandFooter()}
           </div>
         </div>
       </body>
@@ -391,7 +400,7 @@ export class EmailService {
               <p>This invitation will expire in 7 days.</p>
             </div>
             <div class="footer">
-              <p>&copy; ${new Date().getFullYear()} GuardianCheck. All rights reserved.</p>
+              ${brandFooter()}
             </div>
           </div>
         </body>
@@ -477,7 +486,7 @@ export class EmailService {
               <p style="word-break: break-all; font-size: 12px; color: #666;">${verificationLink}</p>
             </div>
             <div class="footer">
-              <p>&copy; ${new Date().getFullYear()} GuardianCheck. All rights reserved.</p>
+              ${brandFooter()}
             </div>
           </div>
         </body>
