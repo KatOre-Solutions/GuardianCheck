@@ -3,6 +3,7 @@ import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { Camera, Upload, X, RefreshCw } from "lucide-react";
 import {
   clearStoredCamera,
+  pickRearCamera,
   readStoredCamera,
   resolveCamera,
   selectableCameras,
@@ -50,6 +51,10 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
   const [cameras, setCameras] = useState<CameraDevice[]>([]);
   const [activeCameraId, setActiveCameraId] = useState<string | null>(null);
   const [source, setSource] = useState<CameraSource | null>(null);
+  /** The camera the ranking would open on this phone, so the picker can name it.
+   *  Null is a real answer — see `pickRearCamera` — and means this phone has no
+   *  recommendation to show, not that we forgot to compute one. */
+  const [recommendedId, setRecommendedId] = useState<string | null>(null);
   const [trackInfo, setTrackInfo] = useState<TrackInfo | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -144,6 +149,10 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
 
     if (isMounted.current) {
       setCameras(selectableCameras(devices));
+      /* The ranking's own pick, not "whatever sorts first" — the two differ on
+       * a phone whose labels classify nothing as rear, where there is genuinely
+       * nothing to recommend. */
+      setRecommendedId(pickRearCamera(devices));
     }
 
     const stored = readStoredCamera();
@@ -281,6 +290,12 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
     }
   };
 
+  /** Display name of the recommended camera, or null when this phone has no
+   *  recommendation. Resolved against the enumerated list rather than stored,
+   *  so it cannot go stale when the device list changes. */
+  const recommendedLabel =
+    cameras.find((cam) => cam.id === recommendedId)?.label || null;
+
   return (
     <div className="w-full max-w-md mx-auto space-y-4">
       <div className="relative aspect-square bg-black rounded-2xl overflow-hidden border-2 border-gray-100 shadow-inner group">
@@ -336,16 +351,27 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
             id={`${elementId}-camera`}
             value={activeCameraId ?? ""}
             onChange={(e) => switchCamera(e.target.value)}
-            className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            {activeCameraId === null && <option value="">Browser default</option>}
+            {/* Only reachable via the facingMode fallback, where the browser
+                picked the lens and we cannot say which. Name the camera the
+                ranking would have used, so the volunteer can see the intended
+                default rather than a bare "Browser default". */}
+            {activeCameraId === null && (
+              <option value="">
+                {recommendedLabel
+                  ? `Browser default — try ${recommendedLabel}`
+                  : "Browser default"}
+              </option>
+            )}
             {cameras.map((cam, index) => (
               <option key={cam.id} value={cam.id}>
-                {cam.label || `Camera ${index + 1}`}{index === 0 ? " (recommended)" : ""}
+                {cam.label || `Camera ${index + 1}`}
+                {cam.id === recommendedId ? " (recommended)" : ""}
               </option>
             ))}
           </select>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
             Blurry or zoomed out? Try another camera — this phone will remember your choice.
           </p>
         </div>
@@ -390,39 +416,39 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
           <summary className="cursor-pointer text-gray-400 hover:text-primary transition-colors">
             Camera details
           </summary>
-          <dl className="mt-2 space-y-1 text-gray-500">
+          <dl className="mt-2 space-y-1 text-gray-500 dark:text-gray-400">
             <div className="flex justify-between gap-4">
               <dt>Camera</dt>
-              <dd className="text-right font-medium text-gray-700">{trackInfo.label}</dd>
+              <dd className="text-right font-medium text-gray-700 dark:text-gray-200">{trackInfo.label}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt>Chosen by</dt>
-              <dd className="text-right font-medium text-gray-700">
+              <dd className="text-right font-medium text-gray-700 dark:text-gray-200">
                 {source ? SOURCE_LABEL[source] : "unknown"}
               </dd>
             </div>
             {trackInfo.width && trackInfo.height && (
               <div className="flex justify-between gap-4">
                 <dt>Resolution</dt>
-                <dd className="text-right font-medium text-gray-700">{trackInfo.width} × {trackInfo.height}</dd>
+                <dd className="text-right font-medium text-gray-700 dark:text-gray-200">{trackInfo.width} × {trackInfo.height}</dd>
               </div>
             )}
             {trackInfo.zoom !== undefined && (
               <div className="flex justify-between gap-4">
                 <dt>Zoom</dt>
-                <dd className="text-right font-medium text-gray-700">{trackInfo.zoom}</dd>
+                <dd className="text-right font-medium text-gray-700 dark:text-gray-200">{trackInfo.zoom}</dd>
               </div>
             )}
             {trackInfo.zoomRange && (
               <div className="flex justify-between gap-4">
                 <dt>Zoom range</dt>
-                <dd className="text-right font-medium text-gray-700">{trackInfo.zoomRange}</dd>
+                <dd className="text-right font-medium text-gray-700 dark:text-gray-200">{trackInfo.zoomRange}</dd>
               </div>
             )}
             {trackInfo.focusMode && (
               <div className="flex justify-between gap-4">
                 <dt>Focus</dt>
-                <dd className="text-right font-medium text-gray-700">{trackInfo.focusMode}</dd>
+                <dd className="text-right font-medium text-gray-700 dark:text-gray-200">{trackInfo.focusMode}</dd>
               </div>
             )}
           </dl>
