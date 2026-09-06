@@ -6,7 +6,7 @@ import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
-import { Plus, User, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
+import { Plus, User, UserPlus, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Link } from "react-router-dom";
 import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-handler";
@@ -23,6 +23,18 @@ export default function ParentDashboard() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showGuardianModal, setShowGuardianModal] = useState(false);
+  // The guardian modal leads with the list; the add form is opened on demand
+  // from the person-plus button so the common case (checking who can collect)
+  // isn't buried under a form.
+  const [showAddGuardianForm, setShowAddGuardianForm] = useState(false);
+  // The form mounts at the top of the scroll area; with a long guardian list
+  // it would otherwise open off-screen above the current scroll position.
+  const guardianModalBodyRef = React.useRef<HTMLDivElement>(null);
+
+  const openAddGuardianForm = () => {
+    setShowAddGuardianForm(true);
+    guardianModalBodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
   const [showGroupQRModal, setShowGroupQRModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedChild, setSelectedChild] = useState<any>(null);
@@ -383,6 +395,10 @@ export default function ParentDashboard() {
   const hasPhoto = (g: any) => !!(g.photoUrl || g.photoURL);
   const isAccountHolder = (g: any) => g.phone === "Account Holder";
 
+  const selectedChildGuardians = selectedChild
+    ? guardians.filter((g) => g.childIds?.includes(selectedChild.id))
+    : [];
+
   const guardiansMissingPhoto = guardians.filter(
     (g) => g.parentId === user?.uid && g.active !== false && !g.deleted && !hasPhoto(g),
   );
@@ -442,6 +458,7 @@ export default function ParentDashboard() {
         showSuccessToast("New guardian added successfully!");
       }
       setNewGuardian({ firstName: "", lastName: "", phone: "", relationship: "Mother", photoUrl: "" });
+      setShowAddGuardianForm(false);
     } catch (err) {
       console.error(err);
       showErrorToast("Failed to add guardian");
@@ -714,6 +731,7 @@ export default function ParentDashboard() {
               <button 
                 onClick={() => {
                   setSelectedChild(child);
+                  setShowAddGuardianForm(false);
                   setShowGuardianModal(true);
                 }}
                 className="text-primary dark:text-primary/80 hover:text-primary/90 dark:hover:text-primary/70 font-bold text-sm flex items-center"
@@ -748,7 +766,7 @@ export default function ParentDashboard() {
       {/* Guardian Management Modal */}
       <AnimatePresence>
         {showGuardianModal && selectedChild && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -760,118 +778,159 @@ export default function ParentDashboard() {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col border border-gray-100 dark:border-gray-800"
+              className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[92vh] sm:max-h-[90vh] flex flex-col border border-gray-100 dark:border-gray-800"
             >
-              <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Guardians for {selectedChild.firstName} {selectedChild.lastName}</h2>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Authorized people who can pick up this child</p>
+              <div className="p-5 sm:p-8 border-b border-gray-100 dark:border-gray-800 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white break-words">Guardians for {selectedChild.firstName} {selectedChild.lastName}</h2>
+                  <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Authorized people who can pick up this child</p>
                 </div>
-                <button onClick={() => setShowGuardianModal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
-                  <X className="h-6 w-6 text-gray-400" />
-                </button>
+                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                  {!showAddGuardianForm && (
+                    <button
+                      onClick={openAddGuardianForm}
+                      aria-label="Add guardian"
+                      title="Add guardian"
+                      className="flex items-center gap-2 bg-primary text-white rounded-full p-2.5 sm:px-4 sm:py-2.5 font-bold text-sm hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20 dark:shadow-none"
+                    >
+                      <UserPlus className="h-5 w-5" />
+                      <span className="hidden sm:inline">Add guardian</span>
+                    </button>
+                  )}
+                  <button onClick={() => setShowGuardianModal(false)} aria-label="Close" className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
+                    <X className="h-6 w-6 text-gray-400" />
+                  </button>
+                </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 space-y-8">
-                <form onSubmit={handleAddGuardian} className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl space-y-6 border border-gray-100 dark:border-gray-700">
-                  <h4 className="font-bold text-gray-900 dark:text-white">Add New Guardian</h4>
-                  
-                  <div className="flex flex-col md:flex-row gap-6">
-                    <div className="flex flex-col items-center space-y-2">
-                      <div className="h-24 w-24 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
-                        {uploading ? (
-                          <div className="flex flex-col items-center space-y-2">
-                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-                            <span className="text-[8px] font-bold text-primary uppercase">Uploading...</span>
-                          </div>
-                        ) : newGuardian.photoUrl || newGuardian.photoURL ? (
-                          <img src={newGuardian.photoUrl || newGuardian.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
-                        )}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleGuardianImageUpload}
-                          disabled={uploading}
-                          className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                        />
-                      </div>
-                      <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase">
-                        {uploading ? "Uploading..." : "Upload Photo"}
-                      </p>
-                    </div>
+              <div ref={guardianModalBodyRef} className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-6">
+                <AnimatePresence initial={false}>
+                  {showAddGuardianForm && (
+                    <motion.form
+                      key="add-guardian-form"
+                      id="add-guardian-form"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      onSubmit={handleAddGuardian}
+                      className="overflow-hidden"
+                    >
+                      <div className="bg-gray-50 dark:bg-gray-800/50 p-5 sm:p-6 rounded-2xl space-y-6 border border-gray-100 dark:border-gray-700">
+                        <h4 className="font-bold text-gray-900 dark:text-white">Add New Guardian</h4>
 
-                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">First Name</label>
-                        <input
-                          required
-                          placeholder="e.g. Jane"
-                          value={newGuardian.firstName}
-                          onChange={e => setNewGuardian({...newGuardian, firstName: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Last Name</label>
-                        <input
-                          required
-                          placeholder="e.g. Doe"
-                          value={newGuardian.lastName}
-                          onChange={e => setNewGuardian({...newGuardian, lastName: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Phone Number</label>
-                        <div className="relative">
-                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <input
-                            required
-                            type="tel"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            placeholder="Phone"
-                            value={newGuardian.phone}
-                            onChange={(e) => setNewGuardian({ ...newGuardian, phone: e.target.value })}
-                            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                          />
+                        <div className="flex flex-col md:flex-row gap-6">
+                          <div className="flex flex-col items-center space-y-2">
+                            <div className="h-24 w-24 bg-white dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden relative group">
+                              {uploading ? (
+                                <div className="flex flex-col items-center space-y-2">
+                                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                                  <span className="text-[8px] font-bold text-primary uppercase">Uploading...</span>
+                                </div>
+                              ) : newGuardian.photoUrl || newGuardian.photoURL ? (
+                                <img src={newGuardian.photoUrl || newGuardian.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
+                              )}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleGuardianImageUpload}
+                                disabled={uploading}
+                                className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                              />
+                            </div>
+                            <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase">
+                              {uploading ? "Uploading..." : "Upload Photo"}
+                            </p>
+                          </div>
+
+                          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">First Name</label>
+                              <input
+                                required
+                                placeholder="e.g. Jane"
+                                value={newGuardian.firstName}
+                                onChange={e => setNewGuardian({...newGuardian, firstName: e.target.value})}
+                                className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Last Name</label>
+                              <input
+                                required
+                                placeholder="e.g. Doe"
+                                value={newGuardian.lastName}
+                                onChange={e => setNewGuardian({...newGuardian, lastName: e.target.value})}
+                                className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Phone Number</label>
+                              <div className="relative">
+                                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                                <input
+                                  required
+                                  type="tel"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  placeholder="Phone"
+                                  value={newGuardian.phone}
+                                  onChange={(e) => setNewGuardian({ ...newGuardian, phone: e.target.value })}
+                                  className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Relationship</label>
+                              <select
+                                required
+                                value={newGuardian.relationship}
+                                onChange={e => setNewGuardian({...newGuardian, relationship: e.target.value})}
+                                className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
+                              >
+                                {RELATIONSHIPS.map(rel => (
+                                  <option key={rel} value={rel} className="dark:bg-gray-900">{rel}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col-reverse sm:flex-row gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setShowAddGuardianForm(false)}
+                            className="sm:w-auto px-6 py-3 rounded-xl font-bold text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={loading}
+                            className="flex-1 bg-primary text-white py-3 rounded-xl font-bold hover:bg-primary/90 transition-all disabled:opacity-50 shadow-lg shadow-primary/10 dark:shadow-none"
+                          >
+                            {loading ? "Adding..." : "Add Guardian"}
+                          </button>
                         </div>
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Relationship</label>
-                        <select
-                          required
-                          value={newGuardian.relationship}
-                          onChange={e => setNewGuardian({...newGuardian, relationship: e.target.value})}
-                          className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
-                        >
-                          {RELATIONSHIPS.map(rel => (
-                            <option key={rel} value={rel} className="dark:bg-gray-900">{rel}</option>
-                          ))}
-                        </select>
-                      </div>
-                      </div>
-                    </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-primary text-white py-3 rounded-xl font-bold hover:bg-primary/90 transition-all disabled:opacity-50 shadow-lg shadow-primary/10 dark:shadow-none"
-                  >
-                    {loading ? "Adding..." : "Add Guardian"}
-                  </button>
-                </form>
+                    </motion.form>
+                  )}
+                </AnimatePresence>
 
                 <div className="space-y-4">
-                  <h4 className="font-bold text-gray-900 dark:text-white">Active Guardians</h4>
+                  {selectedChildGuardians.length > 0 && (
+                    <h4 className="font-bold text-gray-900 dark:text-white">
+                      Active Guardians
+                      <span className="ml-2 text-xs font-bold text-gray-400 dark:text-gray-500">{selectedChildGuardians.length}</span>
+                    </h4>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {guardians.filter(g => g.childIds?.includes(selectedChild.id)).map(guardian => (
+                    {selectedChildGuardians.map(guardian => (
                       <div key={guardian.id} className={`p-4 border rounded-2xl space-y-4 bg-white dark:bg-gray-900 shadow-sm transition-all ${!guardian.active ? "opacity-60 grayscale" : "border-gray-100 dark:border-gray-800"}`}>
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center space-x-3">
-                            <div className="h-12 w-12 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center space-x-3 min-w-0">
+                            <div className="h-10 w-10 shrink-0 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
                               {guardian.photoUrl || guardian.photoURL ? (
                                 <img
                                   src={guardian.photoUrl || guardian.photoURL}
@@ -880,17 +939,17 @@ export default function ParentDashboard() {
                                   referrerPolicy="no-referrer"
                                 />
                               ) : (
-                                <User className="h-6 w-6 text-gray-300 dark:text-gray-600" />
+                                <User className="h-5 w-5 text-gray-300 dark:text-gray-600" />
                               )}
                             </div>
-                            <div>
-                              <div className="flex items-center space-x-2">
-                                <p className="font-bold text-gray-900 dark:text-white">{guardian.firstName} {guardian.lastName}</p>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-x-2 min-w-0">
+                                <p className="font-bold text-gray-900 dark:text-white break-words">{guardian.firstName} {guardian.lastName}</p>
                                 {!guardian.active && (
-                                  <span className="text-[10px] bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded font-bold uppercase">Inactive</span>
+                                  <span className="shrink-0 text-[10px] bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded font-bold uppercase">Inactive</span>
                                 )}
                               </div>
-                              <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">{guardian.relationship} • {guardian.phone}</p>
+                              <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium truncate">{guardian.relationship} • {guardian.phone}</p>
 
                               {/* The nudge's actual destination for a
                                   hand-added guardian. Account-holder records
@@ -920,17 +979,18 @@ export default function ParentDashboard() {
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center space-x-1">
+                          <div className="flex items-center shrink-0">
                             <button
                               onClick={() => toggleGuardianStatus(guardian)}
-                              className={`p-2 rounded-lg transition-colors ${guardian.active ? "text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20" : "text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"}`}
+                              className={`p-1.5 rounded-lg transition-colors ${guardian.active ? "text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20" : "text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"}`}
                               title={guardian.active ? "Deactivate" : "Activate"}
                             >
                               <ShieldCheck className={`h-5 w-5 ${!guardian.active && "opacity-50"}`} />
                             </button>
-                            <button 
+                            <button
                               onClick={() => setGuardianToDelete(guardian)}
-                              className="p-2 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                              title="Remove guardian"
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/20 transition-colors"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -943,13 +1003,13 @@ export default function ParentDashboard() {
                             </div>
                           )}
                           <div className="bg-white p-2 rounded-lg">
-                            <QRCode 
+                            <QRCode
                               id={`qr-${guardian.id}`}
-                              value={guardian.qrToken} 
-                              size={100} 
+                              value={guardian.qrToken}
+                              size={100}
                             />
                           </div>
-                          <button 
+                          <button
                             disabled={!guardian.active}
                             onClick={() => downloadQR(`qr-${guardian.id}`, `${guardian.firstName} ${guardian.lastName}`)}
                             className={`flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${guardian.active ? "text-primary dark:text-primary/80" : "text-gray-400 dark:text-gray-600"}`}
@@ -960,10 +1020,25 @@ export default function ParentDashboard() {
                         </div>
                       </div>
                     ))}
-                    {guardians.filter(g => g.childIds?.includes(selectedChild.id)).length === 0 && (
-                      <p className="col-span-full text-center py-8 text-gray-400 dark:text-gray-500 text-sm italic">
-                        No guardians added yet.
-                      </p>
+                    {selectedChildGuardians.length === 0 && (
+                      <div className="col-span-full py-12 px-6 text-center space-y-4 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-2xl">
+                        <div className="mx-auto h-14 w-14 bg-primary/5 dark:bg-primary/10 rounded-full flex items-center justify-center">
+                          <UserPlus className="h-7 w-7 text-primary/40 dark:text-primary/60" />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-bold text-gray-900 dark:text-white">No guardians yet</p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">Add someone who is allowed to pick up {selectedChild.firstName}.</p>
+                        </div>
+                        {!showAddGuardianForm && (
+                          <button
+                            onClick={openAddGuardianForm}
+                            className="inline-flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-primary/90 transition-colors"
+                          >
+                            <UserPlus className="h-4 w-4" />
+                            <span>Add guardian</span>
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
