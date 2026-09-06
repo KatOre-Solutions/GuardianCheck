@@ -1326,7 +1326,7 @@ export default function AdminDashboard() {
             label="Children attending"
             value={summary.uniqueChildren}
             scope={`${analyticsTimeRange} days`}
-            hint="How many different children came at least once. Each child is counted once no matter how often they attended, so this is smaller than Check-ins."
+            hint="How many different kids came. Someone who came 3 times counts as 1."
             icon={<Users className="h-6 w-6 text-green-600 dark:text-green-400" />}
             color="bg-green-50 dark:bg-green-900/20"
             trend={childrenDelta}
@@ -1697,7 +1697,7 @@ export default function AdminDashboard() {
           <div className="bg-primary/10 dark:bg-primary/20 p-6 rounded-2xl border border-primary/20 dark:border-primary/30">
             <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase tracking-wider mb-1">
               Children attending
-              <HelpTooltip text="How many different children came at least once among the filtered records. Each child is counted once no matter how often they attended." />
+              <HelpTooltip text="How many different kids came. Someone who came 3 times counts as 1." />
             </p>
             <p className="text-3xl font-bold text-gray-900 dark:text-white">
               {historicalSummary.uniqueChildren}

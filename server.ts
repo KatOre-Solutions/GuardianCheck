@@ -1034,6 +1034,36 @@ async function startServer() {
         });
       }
 
+      /* 3b. Resolve the event, so the check-in carries it (#106).
+       *
+       * `eventId` and `eventName` used to be written only by the offline
+       * client fallback, so nearly every real record had neither. Consumers
+       * had to join through the service to recover the event, and that join
+       * dies with the service document — deleting a service silently stripped
+       * its check-ins of their event for good.
+       *
+       * The service is already in hand and newer ones denormalise `eventName`
+       * themselves, so the usual case costs no read at all. Only a service
+       * predating that denormalisation falls through to the event document,
+       * and `getCachedDoc` caches it for the rest of the request.
+       *
+       * Deliberately non-fatal: this is a reporting field, and a check-in is a
+       * safeguarding action. A missing or unreadable event must never be the
+       * reason a child cannot be checked in, so a failure here logs and leaves
+       * the name empty rather than propagating.
+       */
+      const eventId = service.eventId || "";
+      let eventName = service.eventName || "";
+
+      if (eventId && !eventName) {
+        try {
+          const event = await getCachedDoc(req, "events", eventId, churchId);
+          eventName = event?.name || "";
+        } catch (err: any) {
+          console.error("Event name lookup failed for check-in:", err.message);
+        }
+      }
+
       // 4. Atomic Transaction
       await db.runTransaction(async (transaction: any) => {
         const checkinRef = db.collection("checkins").doc(checkinId);
@@ -1053,6 +1083,8 @@ async function startServer() {
           roomName: room.name,
           serviceId,
           serviceName: service.name,
+          eventId,
+          eventName,
           checkInTime: new Date().toISOString(),
           volunteerId,
           volunteerName: (req.user.firstName || req.user.lastName) 
