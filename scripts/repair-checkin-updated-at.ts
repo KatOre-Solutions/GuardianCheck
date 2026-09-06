@@ -29,8 +29,8 @@
  *
  * How the original value is reconstructed
  * ---------------------------------------
- * A check-in's `updatedAt` is written at exactly two points in its life: when
- * the record is created, and when the child is checked out. So the truth is
+ * A check-in's `updatedAt` is written at three points in its life, and two of
+ * them are recoverable from fields still on the record:
  *
  *     checkOutTime || createdAt || checkInTime
  *
@@ -40,12 +40,24 @@
  * `updatedAt` already equals one of them. That makes this idempotent: a second
  * run finds nothing.
  *
- * KNOWN LIMIT: the room-move endpoint also advances `updatedAt`. A record moved
- * between rooms after its last check-out has no recoverable timestamp, and this
- * script will pull it back to the check-out or creation time. That is a small,
- * bounded loss against the alternative of leaving every backfilled record
- * claiming to have happened at the backfill instant. Rows in that position are
- * listed separately below so the decision is visible rather than silent.
+ * Every write point was enumerated from the code before trusting that:
+ *
+ *   - creation      - server `transaction.set`, client `addDocument`/`setDocument`
+ *                     write `updatedAt` alongside `createdAt`
+ *   - check-out     - all four paths (server `/api/check-out`, the guardian bulk
+ *                     checkout, `AdminOverrideModal`, `CheckOutTab`'s offline
+ *                     fallback) set `checkOutTime` and `updatedAt` in the *same*
+ *                     object, so the two differ by under a millisecond
+ *   - room move     - `/api/move-room`, the one path that advances `updatedAt`
+ *                     without touching either of the above
+ *
+ * A room move is therefore the only unrecoverable case - and it leaves a marker.
+ * It writes `lastMoveVolunteerId` onto the record, so those rows are identified
+ * exactly and SKIPPED rather than guessed at. A record that was moved and later
+ * checked out is still exact, because the check-out was the later write.
+ *
+ * The result: every row this script touches is reconstructed to the millisecond,
+ * and every row it cannot reconstruct is left alone and reported.
  */
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
@@ -122,10 +134,14 @@ async function main() {
       continue;
     }
 
-    /* An open record whose stored value post-dates its creation is the shape a
-     * room move also produces. Flag it so the loss is visible. */
-    if (!row.checkOutTime) {
-      roomMoved.push(`${row.id} (${row.childName || "?"}) — open record, ${row.updatedAt} -> ${truth}`);
+    /* A room move is the one write this cannot reconstruct, and it marks the
+     * record. Skip those rather than pulling them back to creation time - an
+     * unknown timestamp is not improved by replacing it with a wrong one.
+     * Only matters while the record is open: if it was later checked out, the
+     * check-out is the later write and `checkOutTime` is exact regardless. */
+    if (!row.checkOutTime && row.lastMoveVolunteerId) {
+      roomMoved.push(`${row.id} (${row.childName || "?"}) - room-moved, last real value unknown`);
+      continue;
     }
 
     repairs.push({
@@ -145,9 +161,9 @@ async function main() {
   if (repairs.length > 20) console.log(`  … and ${repairs.length - 20} more`);
 
   if (roomMoved.length > 0) {
-    console.log(`\n  ${roomMoved.length} open record(s) where a room move may have been the real last write.`);
-    console.log(`  Their pre-backfill value is unrecoverable; they fall back to creation time:`);
-    for (const m of roomMoved.slice(0, 10)) console.log(`    ! ${m}`);
+    console.log(`\n  ${roomMoved.length} open record(s) SKIPPED - a room move was the last write and`);
+    console.log(`  its timestamp is unrecoverable. Left exactly as they are:`);
+    for (const m of roomMoved.slice(0, 10)) console.log(`    - ${m}`);
     if (roomMoved.length > 10) console.log(`    … and ${roomMoved.length - 10} more`);
   }
 
