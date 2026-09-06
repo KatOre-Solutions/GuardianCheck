@@ -33,6 +33,7 @@ import {
   rangeFor,
   serviceDayOf,
   sortByCheckInTimeDesc,
+  spanOf,
   summarise,
   type CheckinRecord,
   type EventRecord,
@@ -339,6 +340,43 @@ const offline: CheckinRecord[] = [
   { id: "off1", childId: "z", eventId: "evt-today", checkInTime: at(2026, 9, 6, 9, 0) },
 ];
 check("offline records still match on their own eventId", 1, filterHistorical(offline, services, "evt-today", "").length);
+
+/* -------------------------------------------------------------------------- */
+/* spanOf                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Found against real data: the Historical panel showed "Average per service:
+ * —" beside "Busiest single service: 1". A service dated 2026-08-30 held a
+ * check-in stamped the 27th, and the range was being derived from the stamp
+ * alone -- so the service fell outside its own records' range and the
+ * denominator came out empty.
+ */
+const driftService: ServiceRecord[] = [
+  { id: "svc-drift", name: "09:00 Service", startTime: "09:00", date: "2026-08-30", eventId: "evt-drift", status: "active" },
+];
+const driftEvents: EventRecord[] = [{ id: "evt-drift", name: "Sunday Service", date: "2026-08-30" }];
+const driftCheckins: CheckinRecord[] = [
+  { id: "d1", childId: "kid-x", serviceId: "svc-drift", serviceName: "09:00 Service", checkInTime: at(2026, 8, 27, 9, 30), status: "checked-in" },
+];
+
+const driftSpan = spanOf(driftCheckins, driftService, driftEvents)!;
+check("span starts at the earlier of stamp and service day", "2026-08-27", isoLocal(driftSpan.from).slice(0, 10));
+check("span ends at the later of the two", "2026-08-30", isoLocal(driftSpan.to).slice(0, 10));
+
+const driftSummary = summarise(driftCheckins, driftService, driftEvents, driftSpan.from, driftSpan.to);
+check("the service is inside its own records' span", 1, driftSummary.servicesHeld);
+check("so the average is a number, not an em dash", 1, driftSummary.averagePerService);
+check("and it agrees with the busiest figure beside it", 1, driftSummary.busiest?.count);
+
+check("span of nothing is null", null, spanOf([], [], []));
+
+const stampOnly = spanOf(
+  [{ id: "s1", childId: "a", checkInTime: at(2026, 9, 4, 10) }],
+  [],
+  [],
+)!;
+check("a record with no service spans its own day", "2026-09-04", isoLocal(stampOnly.from).slice(0, 10));
 
 /* -------------------------------------------------------------------------- */
 /* sortByCheckInTimeDesc                                                      */

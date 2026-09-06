@@ -70,6 +70,7 @@ import {
   inRange,
   rangeFor,
   sortByCheckInTimeDesc,
+  spanOf,
   summarise,
 } from "../lib/analytics";
 import WhatsAppSupport from "../components/WhatsAppSupport";
@@ -77,13 +78,13 @@ import WhatsAppSupport from "../components/WhatsAppSupport";
 import { PLAN_LIMITS, PlanTier } from "../constants/plans";
 
 const HelpTooltip = ({ text }: { text: string }) => (
-  <div className="group relative inline-block ml-1">
+  <span className="group relative inline-block ml-1 align-middle">
     <AlertCircle className="h-3.5 w-3.5 text-gray-400 cursor-help hover:text-primary transition-colors" />
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded-lg shadow-xl z-50 text-center leading-tight">
+    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded-lg shadow-xl z-50 text-center leading-tight">
       {text}
-      <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-gray-900" />
-    </div>
-  </div>
+      <span className="absolute top-full left-1/2 -translate-x-1/2 block border-8 border-transparent border-t-gray-900" />
+    </span>
+  </span>
 );
 
 /**
@@ -792,11 +793,12 @@ export default function AdminDashboard() {
   );
 
   const historicalSummary = useMemo(() => {
-    const times = historicalCheckins
-      .map(c => new Date(c.checkInTime).getTime())
-      .filter(t => !Number.isNaN(t));
+    /* The span is measured on service days, not check-in timestamps: a service
+     * dated the 30th can hold a record stamped the 27th, and deriving the range
+     * from the stamp alone put the service outside its own records' range. */
+    const span = spanOf(historicalCheckins, historicalServices, events);
 
-    if (times.length === 0) {
+    if (!span) {
       return summarise([], [], [], startOfDay(now), endOfDay(now));
     }
 
@@ -804,8 +806,8 @@ export default function AdminDashboard() {
       historicalCheckins,
       historicalServices,
       events,
-      startOfDay(new Date(Math.min(...times))),
-      endOfDay(new Date(Math.max(...times))),
+      span.from,
+      span.to,
     );
   }, [historicalCheckins, historicalServices, events, now]);
 
@@ -1406,7 +1408,7 @@ export default function AdminDashboard() {
               <div className="overflow-x-auto">
                 <div
                   className="h-72"
-                  style={{ minWidth: `max(100%, ${serviceComparison.days.length * 64}px)` }}
+                  style={{ minWidth: `${serviceComparison.days.length * 64}px` }}
                 >
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={serviceComparison.days} barGap={2}>

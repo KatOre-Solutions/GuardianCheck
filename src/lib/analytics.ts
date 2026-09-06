@@ -822,6 +822,51 @@ export function filterHistorical(
   });
 }
 
+/**
+ * The span a set of records covers, measured in service days.
+ *
+ * The Historical panel has no date picker — its filters are the scope — so the
+ * range has to be derived from the records themselves. It must be derived on
+ * the *service day*, not on `checkInTime`: a service dated 30 August can hold a
+ * check-in stamped the 27th (the service document carries the day the service
+ * was scheduled for, and nothing forces the two to agree). Deriving the span
+ * from timestamps alone put that service outside its own records' range, which
+ * emptied the denominator and made "average per service" render "—" next to a
+ * busiest-service figure of 1.
+ *
+ * Returns null when there is nothing to measure.
+ */
+export function spanOf(
+  checkins: CheckinRecord[],
+  services: ServiceRecord[],
+  events: EventRecord[],
+): { from: Date; to: Date } | null {
+  const servicesById = indexById((services || []).filter(notDeleted));
+  const eventsById = indexById((events || []).filter(notDeleted));
+  const days: Date[] = [];
+
+  for (const checkin of checkins || []) {
+    const day = toLocalDay(serviceDayOf(checkin, servicesById, eventsById));
+
+    if (day) days.push(day);
+
+    /* The check-in's own timestamp still widens the span, so a record whose
+     * service day sits earlier than the stamp is covered from both ends. */
+    const checkedInAt = toDate(checkin.checkInTime);
+
+    if (checkedInAt) days.push(startOfDay(checkedInAt));
+  }
+
+  if (days.length === 0) return null;
+
+  const times = days.map((day) => day.getTime());
+
+  return {
+    from: startOfDay(new Date(Math.min(...times))),
+    to: endOfDay(new Date(Math.max(...times))),
+  };
+}
+
 /** Newest first. The table was slicing Firestore's arbitrary document order
  *  and labelling the result "latest 10". */
 export function sortByCheckInTimeDesc(
