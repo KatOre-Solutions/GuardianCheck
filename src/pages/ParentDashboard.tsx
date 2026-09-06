@@ -506,29 +506,43 @@ export default function ParentDashboard() {
   const downloadQR = (id: string, name: string, type: "CHILD" | "GUARDIAN" | "GROUP" = "GUARDIAN") => {
     const svg = document.getElementById(id);
     if (!svg) return;
-    const svgData = new XMLSerializer().serializeToString(svg);
+    // The on-screen QR is sized by its container, so its rendered size varies with
+    // the viewport. Export from a clone pinned to a fixed resolution instead, so
+    // the downloaded card is print-quality regardless of how it happens to display.
+    const EXPORT_SIZE = 1024;
+    const clone = svg.cloneNode(true) as SVGElement;
+    clone.setAttribute("width", String(EXPORT_SIZE));
+    clone.setAttribute("height", String(EXPORT_SIZE));
+    clone.removeAttribute("style");
+    const svgData = new XMLSerializer().serializeToString(clone);
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     const img = new Image();
     img.onload = () => {
-      const padding = 60;
-      canvas.width = img.width + padding * 2;
-      canvas.height = img.height + padding * 2 + 60; // Extra space for text
-      
+      const padding = Math.round(EXPORT_SIZE * 0.08);
+      const captionBand = Math.round(EXPORT_SIZE * 0.16);
+      canvas.width = EXPORT_SIZE + padding * 2;
+      canvas.height = EXPORT_SIZE + padding * 2 + captionBand;
+
       if (ctx) {
         // Background
         ctx.fillStyle = "white";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Draw QR
-        ctx.drawImage(img, padding, padding);
-        
+
+        // Draw QR at the fixed export size rather than the intrinsic image size
+        ctx.drawImage(img, padding, padding, EXPORT_SIZE, EXPORT_SIZE);
+
         // Draw Text
         ctx.fillStyle = "black";
-        ctx.font = "bold 24px sans-serif";
+        ctx.font = `bold ${Math.round(EXPORT_SIZE * 0.055)}px sans-serif`;
         ctx.textAlign = "center";
-        ctx.fillText(`${type}: ${name.toUpperCase()}`, canvas.width / 2, canvas.height - 40);
-        
+        ctx.textBaseline = "middle";
+        ctx.fillText(
+          `${type}: ${name.toUpperCase()}`,
+          canvas.width / 2,
+          EXPORT_SIZE + padding * 2 + captionBand / 2
+        );
+
         const pngFile = canvas.toDataURL("image/png");
         const downloadLink = document.createElement("a");
         downloadLink.download = `${name}-${type}-QR.png`;
@@ -706,8 +720,16 @@ export default function ParentDashboard() {
             </div>
 
             <div className="bg-gray-50 dark:bg-gray-800/50 p-6 rounded-2xl flex flex-col items-center justify-center space-y-4 border border-dashed border-gray-200 dark:border-gray-700 group-hover:border-primary/30 dark:group-hover:border-primary/50 transition-colors">
-              <div className="bg-white p-4 rounded-xl shadow-sm">
-                <QRCode id={`qr-child-${child.id}`} value={child.qrCode} size={120} />
+              {/* Fills the dashed panel: the QR scales with the card width so it
+                  stays as large as the layout allows on any screen. */}
+              <div className="bg-white p-4 rounded-xl shadow-sm w-full">
+                <QRCode
+                  id={`qr-child-${child.id}`}
+                  value={child.qrCode}
+                  size={256}
+                  viewBox="0 0 256 256"
+                  style={{ width: "100%", height: "auto", display: "block" }}
+                />
               </div>
               <div className="flex flex-col items-center space-y-2">
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Child ID Card</p>
@@ -1002,11 +1024,13 @@ export default function ParentDashboard() {
                               <Lock className="h-6 w-6 text-gray-400 dark:text-gray-500" />
                             </div>
                           )}
-                          <div className="bg-white p-2 rounded-lg">
+                          <div className="bg-white p-3 rounded-lg w-full max-w-[260px]">
                             <QRCode
                               id={`qr-${guardian.id}`}
                               value={guardian.qrToken}
-                              size={100}
+                              size={256}
+                              viewBox="0 0 256 256"
+                              style={{ width: "100%", height: "auto", display: "block" }}
                             />
                           </div>
                           <button
@@ -1475,7 +1499,14 @@ export default function ParentDashboard() {
                   {selectedForGroup.length > 0 && (
                     <div className="bg-gray-50 dark:bg-gray-800/50 p-8 rounded-3xl flex flex-col items-center space-y-4 border border-dashed border-gray-200 dark:border-gray-700">
                       <div className="bg-white p-4 rounded-xl shadow-sm">
-                        <QRCode value={groupQRValue} size={180} />
+                        {/* Sized by the container so the larger code still fits
+                            a narrow phone screen inside the modal's padding. */}
+                        <QRCode
+                          value={groupQRValue}
+                          size={256}
+                          viewBox="0 0 256 256"
+                          style={{ width: "100%", height: "auto", maxWidth: 240 }}
+                        />
                       </div>
                       <div className="text-center">
                         <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Group QR Code</p>
