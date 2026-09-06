@@ -182,8 +182,9 @@ export interface Delta {
   previous: number;
   absolute: number;
   /**
-   * `null` when the previous period was 0 — "up 100%" from nothing is not a
-   * meaningful statement, and every alternative rounds to a lie.
+   * `null` when the previous period is too small to carry a percentage — see
+   * `MIN_BASE_FOR_PERCENT`. The absolute change is always shown; the caller
+   * simply omits the percentage.
    */
   percent: number | null;
   direction: "up" | "down" | "flat";
@@ -762,6 +763,21 @@ export function summarise(
   };
 }
 
+/**
+ * Below this base, a percentage describes the smallness of the denominator
+ * rather than the size of the change.
+ *
+ * Bryanston's first full month of real use went from 1 check-in in the
+ * preceding window to 293, which rendered as "+292 (+29200%)". That is
+ * arithmetically correct and completely useless: an admin reads a five-figure
+ * percentage as a broken widget, not as growth. Division by zero is the same
+ * problem in its limit case, not a separate one.
+ *
+ * The absolute change is always shown, so nothing is hidden — only the ratio
+ * that cannot support the weight is dropped.
+ */
+const MIN_BASE_FOR_PERCENT = 5;
+
 /** Period-over-period change. */
 export function delta(current: number, previous: number): Delta {
   const absolute = current - previous;
@@ -770,7 +786,10 @@ export function delta(current: number, previous: number): Delta {
     current,
     previous,
     absolute,
-    percent: previous === 0 ? null : Math.round((absolute / previous) * 100),
+    percent:
+      previous < MIN_BASE_FOR_PERCENT
+        ? null
+        : Math.round((absolute / previous) * 100),
     direction: absolute > 0 ? "up" : absolute < 0 ? "down" : "flat",
   };
 }

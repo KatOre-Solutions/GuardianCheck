@@ -397,6 +397,13 @@ check("delta direction up", "up", delta(15, 10).direction);
 check("delta direction down", "down", delta(5, 10).direction);
 check("delta direction flat", "flat", delta(10, 10).direction);
 check("delta percent is null when the previous period was zero", null, delta(10, 0).percent);
+
+/* Seen on real data: Bryanston went from 1 check-in in the preceding window to
+ * 293, which rendered "+292 (+29200%)". Correct, and unreadable. */
+check("no percentage off a base of one", null, delta(293, 1).percent);
+check("but the absolute change is still reported", 292, delta(293, 1).absolute);
+check("no percentage off a base below the floor", null, delta(20, 4).percent);
+check("a base at the floor does carry a percentage", 100, delta(10, 5).percent);
 check("delta still reports the absolute rise from zero", 10, delta(10, 0).absolute);
 check("zero to zero is flat, not a division by zero", "flat", delta(0, 0).direction);
 check("negative percentage", -50, delta(5, 10).percent);
