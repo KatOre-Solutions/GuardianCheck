@@ -431,16 +431,24 @@ export async function ensureSundayEvents(churchId: string) {
     ]);
     
     if (existingEvents.length === 0) {
+      const eventName = `Sunday Service - ${formatDate(nextSunday)}`;
+
       const eventId = await addDocument("events", {
         churchId,
-        name: `Sunday Service - ${formatDate(nextSunday)}`,
+        name: eventName,
         date: dateStr
       });
       
       if (eventId) {
-        // Create default services
+        /* `eventName` is denormalised here for the same reason
+         * `handleSaveService` denormalises it: a check-in copies it off the
+         * service, and that copy is what lets a record still name its event
+         * after the event document is gone. These auto-created services are
+         * the bulk of every church's services, so omitting it left almost
+         * every check-in with no event name to carry (#106). */
         await addDocument("services", {
           eventId,
+          eventName,
           churchId,
           name: "09:00 Service",
           startTime: "09:00",
@@ -451,6 +459,7 @@ export async function ensureSundayEvents(churchId: string) {
         
         await addDocument("services", {
           eventId,
+          eventName,
           churchId,
           name: "11:00 Service",
           startTime: "11:00",
