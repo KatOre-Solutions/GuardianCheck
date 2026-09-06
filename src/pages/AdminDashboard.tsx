@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { auth } from "../lib/firebase";
@@ -45,12 +45,12 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer,
-  LineChart,
-  Line,
+  Legend,
+  Cell,
   AreaChart,
   Area
 } from "recharts";
-import { format, subDays, startOfDay, endOfDay, isSameDay } from "date-fns";
+import { format, subDays, startOfDay, endOfDay } from "date-fns";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { useActiveService } from "../hooks/useActiveService";
@@ -60,6 +60,18 @@ import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
 import ChildrenDirectory from "../components/ChildrenDirectory";
 import { toCsv, downloadCsv } from "../lib/csv";
+import {
+  buildAttendanceTrend,
+  buildRoomOccupancy,
+  buildServiceComparison,
+  delta,
+  filterHistorical,
+  findStaleCheckins,
+  inRange,
+  rangeFor,
+  sortByCheckInTimeDesc,
+  summarise,
+} from "../lib/analytics";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { PLAN_LIMITS, PlanTier } from "../constants/plans";
@@ -74,8 +86,79 @@ const HelpTooltip = ({ text }: { text: string }) => (
   </div>
 );
 
+/**
+ * One figure, with the period it covers stated on the card.
+ *
+ * The scope badge is not decoration. This page mixes three time horizons —
+ * live occupancy, a selected window, and all-time totals — and nothing on it
+ * used to say which was which, so an admin reading "Total Parents" beside
+ * "Active Service Attendance" had no way to know one was all-time and the
+ * other was the last hour.
+ */
+const StatCard = ({
+  label,
+  value,
+  hint,
+  scope,
+  sub,
+  icon,
+  color,
+  trend,
+  trendLabel,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  scope?: string;
+  /** Secondary line under the value, e.g. which service the peak was. */
+  sub?: string;
+  icon?: React.ReactNode;
+  color?: string;
+  trend?: { absolute: number; percent: number | null; direction: "up" | "down" | "flat" };
+  trendLabel?: string;
+}) => (
+  <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-3">
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex items-center space-x-3 min-w-0">
+        {icon && (
+          <div className={`h-12 w-12 ${color || "bg-gray-100 dark:bg-gray-800"} rounded-2xl flex items-center justify-center shrink-0`}>
+            {icon}
+          </div>
+        )}
+        <p className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider leading-tight">
+          {label}
+          {hint && <HelpTooltip text={hint} />}
+        </p>
+      </div>
+      {scope && (
+        <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-lg whitespace-nowrap shrink-0">
+          {scope}
+        </span>
+      )}
+    </div>
+    <div>
+      <p className="text-2xl font-bold text-gray-900 dark:text-white">{value}</p>
+      {sub && <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{sub}</p>}
+      {trend && (
+        <p className={`text-xs font-medium mt-1 ${
+          trend.direction === "up"
+            ? "text-green-600 dark:text-green-400"
+            : trend.direction === "down"
+            ? "text-red-500 dark:text-red-400"
+            : "text-gray-400 dark:text-gray-500"
+        }`}>
+          {trend.direction === "flat"
+            ? "No change"
+            : `${trend.absolute > 0 ? "+" : ""}${trend.absolute}${trend.percent === null ? "" : ` (${trend.percent > 0 ? "+" : ""}${trend.percent}%)`}`}
+          {trendLabel ? ` ${trendLabel}` : ""}
+        </p>
+      )}
+    </div>
+  </div>
+);
+
 export default function AdminDashboard() {
-  const { user, role, roles, userData } = useAuth();
+  const { user, role, roles, userData, darkMode } = useAuth();
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
   const { activeService, loading: serviceLoading } = useActiveService();
@@ -376,46 +459,48 @@ export default function AdminDashboard() {
   };
 
   const generateReport = () => {
-    const start = startOfDay(new Date(reportRange.start));
-    const end = endOfDay(new Date(reportRange.end));
-
-    const filteredCheckins = checkins.filter(c => {
-      const time = new Date(c.checkInTime);
-      return time >= start && time <= end;
-    });
+    /*
+     * `inRange` is the same filter the dashboard's own totals use, so the row
+     * count of this file matches the "Check-ins" figure for the same span.
+     * The rows used to be joined with a bare `r.join(",")`, which silently
+     * broke the file on any name containing a comma; `toCsv` quotes per
+     * RFC 4180 instead.
+     */
+    const filteredCheckins = inRange(
+      checkins,
+      startOfDay(new Date(reportRange.start)),
+      endOfDay(new Date(reportRange.end)),
+    );
 
     if (filteredCheckins.length === 0) {
       showErrorToast("No data found for the selected range");
       return;
     }
 
-    const headers = ["Child Name", "Room", "Event", "Service", "Check-In Time", "Check-Out Time", "Status", "Guardian", "Volunteer"];
-    const rows = filteredCheckins.map(c => [
-      c.childName,
-      c.roomName,
-      c.eventName || "N/A",
-      c.serviceName || "N/A",
-      c.checkInTime ? format(new Date(c.checkInTime), "yyyy-MM-dd HH:mm") : "",
-      c.checkOutTime ? format(new Date(c.checkOutTime), "yyyy-MM-dd HH:mm") : "",
-      c.status,
-      c.guardianName || "",
-      c.volunteerName || ""
+    const csvContent = toCsv(sortByCheckInTimeDesc(filteredCheckins), [
+      { header: "Child Name", value: (c) => c.childName || "" },
+      { header: "Room", value: (c) => c.roomName || "" },
+      { header: "Event", value: (c) => c.eventName || "N/A" },
+      { header: "Service", value: (c) => c.serviceName || "N/A" },
+      {
+        header: "Check-In Time",
+        value: (c) =>
+          c.checkInTime ? format(new Date(c.checkInTime), "yyyy-MM-dd HH:mm") : "",
+      },
+      {
+        header: "Check-Out Time",
+        value: (c) =>
+          c.checkOutTime ? format(new Date(c.checkOutTime), "yyyy-MM-dd HH:mm") : "",
+      },
+      { header: "Status", value: (c) => c.status || "" },
+      { header: "Guardian", value: (c) => c.guardianName || "" },
+      { header: "Volunteer", value: (c) => c.volunteerName || "" },
     ]);
 
-    const csvContent = [
-      headers.join(","),
-      ...rows.map(r => r.join(","))
-    ].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", `attendance_report_${reportRange.start}_to_${reportRange.end}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(
+      `attendance_report_${reportRange.start}_to_${reportRange.end}.csv`,
+      csvContent,
+    );
     showSuccessToast("Report generated successfully!");
   };
 
@@ -527,70 +612,272 @@ export default function AdminDashboard() {
     }
   };
 
-  // Analytics Data
-  const last30Days = Array.from({ length: analyticsTimeRange }).map((_, i) => {
-    const date = subDays(new Date(), i);
-    const dayStr = format(date, "MMM d");
-    const count = checkins?.filter(c => {
-      const checkinDate = new Date(c.checkInTime);
-      return isSameDay(checkinDate, date);
-    })?.length || 0;
-    return { name: dayStr, count };
-  }).reverse();
+  /* ---------------------------------------------------------------------- */
+  /* Derived numbers                                                        */
+  /*                                                                        */
+  /* Every figure below comes from `src/lib/analytics.ts`, so the trends     */
+  /* panel and the historical panel share one definition of each metric and  */
+  /* cannot drift apart. They are memoised because the previous inline       */
+  /* version rebuilt all eight datasets on every render — including on every */
+  /* keystroke in any modal on this page.                                    */
+  /* ---------------------------------------------------------------------- */
 
-  const serviceComparison = services.filter(s => !s.deleted).map(service => {
-    const count = checkins.filter(c => c.serviceId === service.id).length;
-    return { name: service.name, count };
-  }).filter(s => s.count > 0);
+  /*
+   * One clock for the whole page, so every number a render shows is "as at"
+   * the same instant. It ticks each minute to keep the live zone's timestamp
+   * honest without re-rendering on unrelated state changes.
+   */
+  const [now, setNow] = useState(() => new Date());
 
-  const roomUtilization = rooms.filter(r => !r.deleted).map(room => {
-    const currentCount = checkins.filter(c => c.roomId === room.id && c.status === "checked-in").length;
-    const capacity = parseInt(room.capacity) || 1;
-    const percentage = Math.min(Math.round((currentCount / capacity) * 100), 100);
-    return { name: room.name, value: percentage, count: currentCount, capacity };
-  });
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
-  const historicalCheckins = checkins.filter(c => {
-    if (selectedHistoricalEvent && c.eventId !== selectedHistoricalEvent) return false;
-    if (selectedHistoricalService && c.serviceId !== selectedHistoricalService) return false;
-    return true;
-  });
+  const activeServiceId = activeService?.id ?? null;
 
-  const volunteerActivity = users.filter(u => u.roles?.includes("volunteer") || u.role === "volunteer").map(v => {
-    const checkinsHandled = checkins.filter(c => c.volunteerId === v.id).length;
-    const checkoutsHandled = checkins.filter(c => c.checkOutVolunteerId === v.id).length;
+  // --- Zone B: the 7/30/90 selector governs everything in this group ------
+
+  const range = useMemo(
+    () => rangeFor(analyticsTimeRange, now),
+    [analyticsTimeRange, now],
+  );
+
+  const summary = useMemo(
+    () => summarise(checkins, services, events, range.from, range.to),
+    [checkins, services, events, range],
+  );
+
+  const previousSummary = useMemo(
+    () =>
+      summarise(
+        checkins,
+        services,
+        events,
+        range.previous.from,
+        range.previous.to,
+      ),
+    [checkins, services, events, range],
+  );
+
+  const attendanceTrend = useMemo(
+    () => buildAttendanceTrend(checkins, range.from, range.to),
+    [checkins, range],
+  );
+
+  const serviceComparison = useMemo(
+    () => buildServiceComparison(checkins, services, events, range.from, range.to),
+    [checkins, services, events, range],
+  );
+
+  const checkinsDelta = useMemo(
+    () => delta(summary.totalCheckins, previousSummary.totalCheckins),
+    [summary, previousSummary],
+  );
+
+  const childrenDelta = useMemo(
+    () => delta(summary.uniqueChildren, previousSummary.uniqueChildren),
+    [summary, previousSummary],
+  );
+
+  // --- Zone A: right now ---------------------------------------------------
+
+  const roomOccupancy = useMemo(
+    () => buildRoomOccupancy(rooms, checkins, activeServiceId),
+    [rooms, checkins, activeServiceId],
+  );
+
+  const staleCheckins = useMemo(
+    () => findStaleCheckins(checkins, services, activeServiceId, now),
+    [checkins, services, activeServiceId, now],
+  );
+
+  const liveCounts = useMemo(() => {
+    const live = checkins.filter(c => c.deleted !== true);
+    const startOfToday = startOfDay(now);
+
     return {
-      name: `${v.firstName} ${v.lastName}`,
-      totalActions: checkinsHandled + checkoutsHandled,
-      checkins: checkinsHandled,
-      checkouts: checkoutsHandled
+      checkedIn: live.filter(c => c.status === "checked-in").length,
+      checkedOutToday: live.filter(c => {
+        if (c.status !== "checked-out" || !c.checkOutTime) return false;
+        const out = new Date(c.checkOutTime);
+        return !Number.isNaN(out.getTime()) && out >= startOfToday;
+      }).length,
+      activeServiceAttendance: activeServiceId
+        ? live.filter(
+            c => c.serviceId === activeServiceId && c.status === "checked-in",
+          ).length
+        : null,
     };
-  }).sort((a, b) => b.totalActions - a.totalActions);
+  }, [checkins, activeServiceId, now]);
 
-  const last7Days = Array.from({ length: 7 }).map((_, i) => {
-    const date = subDays(new Date(), i);
-    const dayStr = format(date, "MMM d");
-    const count = checkins?.filter(c => {
-      const checkinDate = new Date(c.checkInTime);
-      return format(checkinDate, "MMM d") === dayStr;
-    })?.length || 0;
-    return { name: dayStr, count };
-  }).reverse();
+  const roomsAtCapacity = useMemo(
+    () => roomOccupancy.filter(r => r.count >= r.capacity).length,
+    [roomOccupancy],
+  );
 
-  const recentActivity = [...checkins]
-    .sort((a, b) => new Date(b.updatedAt || b.checkInTime).getTime() - new Date(a.updatedAt || a.checkInTime).getTime())
-    .slice(0, 5);
+  // --- Zone C: church totals, all time ------------------------------------
 
-  const roomAttendance = rooms?.map(room => ({
-    name: room.name,
-    count: checkins?.filter(c => 
-      c.roomId === room.id && 
-      c.status === "checked-in" &&
-      (!activeService || c.serviceId === activeService.id)
-    )?.length || 0,
-    capacity: room.capacity
-  })) || [];
+  /*
+   * A user's role lives in `roles[]` on current documents and in the legacy
+   * scalar `role` on older ones. The stat cards read only the scalar, so every
+   * user created since the array landed was missing from "Total Parents", and
+   * "Staff/Volunteers" counted `role !== "parent"` — which swept in users with
+   * no role at all, plus everyone who had been deactivated.
+   */
+  const hasRole = (u: any, name: string) =>
+    Array.isArray(u?.roles) ? u.roles.includes(name) : u?.role === name;
 
+  const peopleCounts = useMemo(() => {
+    const active = users.filter(u => !u.deleted && !u.deactivated);
+
+    return {
+      parents: active.filter(u => hasRole(u, "parent")).length,
+      staff: active.filter(
+        u =>
+          hasRole(u, "admin") ||
+          hasRole(u, "volunteer") ||
+          hasRole(u, "master_admin"),
+      ).length,
+      /* `active !== false`, not `active`: guardians approved before the flag
+       * existed have no such field and would otherwise vanish from the count. */
+      guardians: guardians.filter(g => g.active !== false && !g.deleted).length,
+    };
+  }, [users, guardians]);
+
+  /* The server counts a pending invitation as a consumed seat, so the meter
+   * must too — otherwise an admin reads 18/20, invites a volunteer, and is
+   * refused. */
+  const pendingInvitations = useMemo(
+    () => invitations.filter(i => !i.deleted && i.status === "pending").length,
+    [invitations],
+  );
+
+  const usedUserSeats = users.length + pendingInvitations;
+
+  /* Soft-deleted children keep consuming plan quota, because the server
+   * enforces the limit with an unfiltered collection query. The meter says so
+   * rather than quietly showing a number the enforcement disagrees with. */
+  const removedChildren = useMemo(
+    () => children.filter(c => c.deleted).length,
+    [children],
+  );
+
+  // --- Zone D: historical analysis ----------------------------------------
+
+  const historicalCheckins = useMemo(
+    () =>
+      sortByCheckInTimeDesc(
+        filterHistorical(
+          checkins,
+          services,
+          selectedHistoricalEvent,
+          selectedHistoricalService,
+        ),
+      ),
+    [checkins, services, selectedHistoricalEvent, selectedHistoricalService],
+  );
+
+  /* The filters narrow the services too, so "average per service" divides by
+   * the services actually in view rather than by every service the church has
+   * ever held. */
+  const historicalServices = useMemo(
+    () =>
+      services.filter(s => {
+        if (selectedHistoricalService) return s.id === selectedHistoricalService;
+        if (selectedHistoricalEvent) return s.eventId === selectedHistoricalEvent;
+        return true;
+      }),
+    [services, selectedHistoricalEvent, selectedHistoricalService],
+  );
+
+  const historicalSummary = useMemo(() => {
+    const times = historicalCheckins
+      .map(c => new Date(c.checkInTime).getTime())
+      .filter(t => !Number.isNaN(t));
+
+    if (times.length === 0) {
+      return summarise([], [], [], startOfDay(now), endOfDay(now));
+    }
+
+    return summarise(
+      historicalCheckins,
+      historicalServices,
+      events,
+      startOfDay(new Date(Math.min(...times))),
+      endOfDay(new Date(Math.max(...times))),
+    );
+  }, [historicalCheckins, historicalServices, events, now]);
+
+  // --- Other panels --------------------------------------------------------
+
+  const volunteerActivity = useMemo(
+    () =>
+      users
+        .filter(u => hasRole(u, "volunteer"))
+        .map(v => {
+          const checkinsHandled = checkins.filter(c => c.volunteerId === v.id).length;
+          const checkoutsHandled = checkins.filter(
+            c => c.checkOutVolunteerId === v.id,
+          ).length;
+          return {
+            name: `${v.firstName} ${v.lastName}`,
+            totalActions: checkinsHandled + checkoutsHandled,
+            checkins: checkinsHandled,
+            checkouts: checkoutsHandled,
+          };
+        })
+        .sort((a, b) => b.totalActions - a.totalActions),
+    [users, checkins],
+  );
+
+  const recentActivity = useMemo(
+    () =>
+      [...checkins]
+        .sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.checkInTime).getTime() -
+            new Date(a.updatedAt || a.checkInTime).getTime(),
+        )
+        .slice(0, 5),
+    [checkins],
+  );
+
+  // --- Chart chrome --------------------------------------------------------
+
+  /*
+   * Axis, grid and tooltip colours were hardcoded light-mode hex, so in dark
+   * mode the tick labels sat at low contrast on a near-black surface. These
+   * follow the theme the user actually chose.
+   */
+  const chartTheme = useMemo(
+    () => ({
+      axis: darkMode ? "#9ca3af" : "#94a3b8",
+      grid: darkMode ? "#1f2937" : "#f1f5f9",
+      tooltip: {
+        borderRadius: "12px",
+        border: "none",
+        boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
+        backgroundColor: darkMode ? "#111827" : "#1f2937",
+        color: "#fff",
+      },
+    }),
+    [darkMode],
+  );
+
+  /*
+   * Categorical palette for the service slots, in fixed order. Brand-neutral
+   * on purpose: `--primary-color` is set per church, so a palette derived from
+   * it would stop distinguishing slots for whichever colour a church picks.
+   * Validated for colour-vision deficiency and contrast against both the light
+   * (#ffffff) and dark (#111827) chart surfaces; the order is the safety
+   * mechanism, so slots are assigned from the front and never cycled.
+   */
+  const SERIES_COLORS = darkMode
+    ? ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+    : ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+
+  const [serviceChartView, setServiceChartView] = useState<"day" | "totals">("day");
   const Building2 = (props: any) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
   );
@@ -788,27 +1075,493 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {[
-          { label: "Total Parents", value: users?.filter(u => u.role === "parent")?.length || 0, icon: <Users className="h-6 w-6 text-primary dark:text-primary/80" />, color: "bg-primary/10 dark:bg-primary/20" },
-          { label: "Total Children", value: children?.filter(c => !c.deleted)?.length || 0, icon: <TrendingUp className="h-6 w-6 text-green-600 dark:text-green-400" />, color: "bg-green-50 dark:bg-green-900/20" },
-          { label: "Active Service Attendance", value: activeService ? checkins?.filter(c => c.serviceId === activeService.id && c.status === "checked-in")?.length || 0 : "N/A", icon: <CheckCircle2 className="h-6 w-6 text-purple-600 dark:text-purple-400" />, color: "bg-purple-50 dark:bg-purple-900/20" },
-          { label: "Active Guardians", value: guardians?.filter(g => g.active)?.length || 0, icon: <Shield className="h-6 w-6 text-purple-600 dark:text-purple-400" />, color: "bg-purple-50 dark:bg-purple-900/20" },
-          { label: "Total Rooms", value: rooms?.filter(r => !r.deleted)?.length || 0, icon: <LayoutDashboard className="h-6 w-6 text-orange-600 dark:text-orange-400" />, color: "bg-orange-50 dark:bg-orange-900/20" },
-          { label: "Staff/Volunteers", value: users?.filter(u => u.role !== "parent")?.length || 0, icon: <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />, color: "bg-red-50 dark:bg-red-900/20" }
-        ].map((stat, idx) => (
-          <div key={idx} className="bg-white dark:bg-gray-900 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 flex items-center space-x-4">
-            <div className={`h-12 w-12 ${stat.color} rounded-2xl flex items-center justify-center`}>
-              {stat.icon}
+      {/* ================================================================== */}
+      {/* Zone A — Right now                                                 */}
+      {/* ================================================================== */}
+      <section className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-green-50 dark:bg-green-900/20 rounded-2xl flex items-center justify-center">
+              <Clock className="h-6 w-6 text-green-600 dark:text-green-400" />
             </div>
             <div>
-              <p className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{stat.label}</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{stat.value}</p>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Right now</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {activeService
+                  ? `${activeService.name} is running`
+                  : "No service running"}
+              </p>
             </div>
           </div>
-        ))}
-      </div>
+          <span className="self-start md:self-auto text-xs font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg">
+            Live · as at {format(now, "HH:mm")}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard
+            label="Checked in right now"
+            value={liveCounts.checkedIn}
+            scope="Live"
+            hint="Children currently in a room, whatever service they were signed into."
+            icon={<CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />}
+            color="bg-green-50 dark:bg-green-900/20"
+          />
+          <StatCard
+            label="In the active service"
+            value={liveCounts.activeServiceAttendance ?? "No service running"}
+            scope="Live"
+            hint="Open check-ins belonging to the service that is running now."
+            icon={<Zap className="h-6 w-6 text-purple-600 dark:text-purple-400" />}
+            color="bg-purple-50 dark:bg-purple-900/20"
+          />
+          <StatCard
+            label="Checked out today"
+            value={liveCounts.checkedOutToday}
+            scope="Today"
+            hint="Children collected since midnight."
+            icon={<History className="h-6 w-6 text-primary dark:text-primary/80" />}
+            color="bg-primary/10 dark:bg-primary/20"
+          />
+          <StatCard
+            label="Open from earlier services"
+            value={staleCheckins.length}
+            scope="Live"
+            hint="Still checked in against a service that has closed. These need a check-out."
+            icon={<AlertTriangle className="h-6 w-6 text-amber-600 dark:text-amber-400" />}
+            color="bg-amber-50 dark:bg-amber-900/20"
+          />
+        </div>
+
+        {/* Room occupancy */}
+        <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-lg font-bold text-gray-900 dark:text-white">
+              Room occupancy
+              <HelpTooltip text="Every child currently checked in, whatever service they were signed into. This is the number to trust in an evacuation." />
+            </h4>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {roomsAtCapacity > 0
+                ? `${roomsAtCapacity} room${roomsAtCapacity === 1 ? "" : "s"} at or over capacity`
+                : "All rooms within capacity"}
+            </span>
+          </div>
+          {roomOccupancy.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No rooms set up yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {roomOccupancy.map((room) => (
+                <div key={room.id} className="space-y-3">
+                  <div className="flex justify-between items-end">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900 dark:text-white">{room.name}</p>
+                      <p className="text-xs text-gray-500">{room.count} / {room.capacity} children</p>
+                      {/* The stale portion is called out rather than removed:
+                          hiding it would under-report who is in the room. */}
+                      {room.staleCount > 0 && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                          {room.staleCount} from earlier services
+                        </p>
+                      )}
+                    </div>
+                    <span className={`text-xs font-bold ${
+                      room.percentage > 90 ? "text-red-500" : room.percentage > 70 ? "text-orange-500" : "text-green-500"
+                    }`}>
+                      {room.percentage}%
+                    </span>
+                  </div>
+                  <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${room.percentage}%` }}
+                      className={`h-full rounded-full ${
+                        room.percentage > 90 ? "bg-red-500" : room.percentage > 70 ? "bg-orange-500" : "bg-green-500"
+                      }`}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/*
+          Stale check-ins. Read-only by design: GuardianCheck is a safeguarding
+          system, and an automated check-out would assert a collection that
+          never happened. This panel points at the records; a person clears
+          them through the normal Check-Out flow.
+        */}
+        {staleCheckins.length > 0 && (
+          <div className="bg-amber-50 dark:bg-amber-900/10 p-8 rounded-3xl border border-amber-200 dark:border-amber-900/30 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center space-x-3">
+                <AlertTriangle className="h-6 w-6 text-amber-600 dark:text-amber-400 shrink-0" />
+                <div>
+                  <h4 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {staleCheckins.length} open check-in{staleCheckins.length === 1 ? "" : "s"} from an earlier service
+                  </h4>
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    Oldest has been open {staleCheckins[0].daysOpen === 0 ? "since earlier today" : `for ${staleCheckins[0].daysOpen} day${staleCheckins[0].daysOpen === 1 ? "" : "s"}`}.
+                    These children still count towards room occupancy.
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-amber-800 dark:text-amber-300 md:text-right">
+                Check them out from the <span className="font-bold">Check-Out</span> tab.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-amber-200 dark:border-amber-900/30">
+                    <th className="py-3 px-4 text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Child</th>
+                    <th className="py-3 px-4 text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Room</th>
+                    <th className="py-3 px-4 text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Service</th>
+                    <th className="py-3 px-4 text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Checked in</th>
+                    <th className="py-3 px-4 text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Open for</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100 dark:divide-amber-900/20">
+                  {staleCheckins.slice(0, 10).map((record) => (
+                    <tr key={record.id}>
+                      <td className="py-3 px-4">
+                        <p
+                          className="font-bold text-gray-900 dark:text-white cursor-pointer hover:text-primary transition-colors"
+                          onClick={() => {
+                            setSelectedChildId(record.childId);
+                            setShowChildDetailsModal(true);
+                          }}
+                        >
+                          {record.childName}
+                        </p>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">{record.roomName}</td>
+                      <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">{record.serviceLabel}</td>
+                      <td className="py-3 px-4 text-sm text-gray-500">
+                        {record.checkInTime ? format(new Date(record.checkInTime), "EEE d MMM, HH:mm") : "Unknown"}
+                      </td>
+                      <td className="py-3 px-4 text-sm font-bold text-amber-700 dark:text-amber-400">
+                        {record.daysOpen === 0 ? "Today" : `${record.daysOpen} day${record.daysOpen === 1 ? "" : "s"}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {staleCheckins.length > 10 && (
+                <p className="pt-4 text-xs text-amber-800 dark:text-amber-300">
+                  Showing the 10 oldest of {staleCheckins.length}.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ================================================================== */}
+      {/* Zone B — Trends over time                                          */}
+      {/* ================================================================== */}
+      <section className="space-y-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
+              <TrendingUp className="h-6 w-6 text-primary dark:text-primary/80" />
+            </div>
+            <div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Trends over time</h3>
+              {/* The resolved span, not just "30 days" — an admin should never
+                  have to work out which dates a figure covers. */}
+              <p className="text-sm text-gray-500 dark:text-gray-400">{range.label}</p>
+            </div>
+          </div>
+          <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl self-start md:self-auto">
+            {[7, 30, 90].map((days) => (
+              <button
+                key={days}
+                onClick={() => setAnalyticsTimeRange(days)}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                  analyticsTimeRange === days
+                    ? "bg-white dark:bg-gray-700 text-primary shadow-sm"
+                    : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                }`}
+              >
+                {days} Days
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard
+            label="Check-ins"
+            value={summary.totalCheckins}
+            scope={`${analyticsTimeRange} days`}
+            hint="Attendance records in this range. A child attending two services counts twice."
+            icon={<CheckCircle2 className="h-6 w-6 text-primary dark:text-primary/80" />}
+            color="bg-primary/10 dark:bg-primary/20"
+            trend={checkinsDelta}
+            trendLabel={`vs previous ${analyticsTimeRange} days`}
+          />
+          <StatCard
+            label="Unique children"
+            value={summary.uniqueChildren}
+            scope={`${analyticsTimeRange} days`}
+            hint="Distinct children who attended at least once in this range."
+            icon={<Users className="h-6 w-6 text-green-600 dark:text-green-400" />}
+            color="bg-green-50 dark:bg-green-900/20"
+            trend={childrenDelta}
+            trendLabel={`vs previous ${analyticsTimeRange} days`}
+          />
+          <StatCard
+            label="Average per service"
+            value={summary.averagePerService ?? "—"}
+            scope={`${analyticsTimeRange} days`}
+            hint={`Check-ins divided by the ${summary.servicesHeld} service${summary.servicesHeld === 1 ? "" : "s"} held in this range, including any nobody attended.`}
+            icon={<TrendingUp className="h-6 w-6 text-purple-600 dark:text-purple-400" />}
+            color="bg-purple-50 dark:bg-purple-900/20"
+          />
+          <StatCard
+            label="Busiest single service"
+            value={summary.busiest?.count ?? "—"}
+            scope={`${analyticsTimeRange} days`}
+            hint="The one service instance with the highest attendance in this range."
+            sub={summary.busiest?.label}
+            icon={<Zap className="h-6 w-6 text-orange-600 dark:text-orange-400" />}
+            color="bg-orange-50 dark:bg-orange-900/20"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-8">
+          {/* Attendance trend */}
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+            <div className="flex items-center justify-between">
+              <h4 className="text-lg font-bold text-gray-900 dark:text-white">Attendance trend</h4>
+              <span className="text-xs font-bold text-primary dark:text-primary/80 bg-primary/10 dark:bg-primary/20 px-2 py-1 rounded-lg">
+                {range.label}
+              </span>
+            </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={attendanceTrend}>
+                  <defs>
+                    <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartTheme.grid} />
+                  <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: chartTheme.axis }} minTickGap={16} />
+                  <YAxis axisLine={false} tickLine={false} allowDecimals={false} tick={{ fontSize: 10, fill: chartTheme.axis }} />
+                  <Tooltip
+                    contentStyle={chartTheme.tooltip}
+                    itemStyle={{ color: "#fff" }}
+                    labelFormatter={(_label, payload) =>
+                      payload?.[0]?.payload?.fullLabel ?? _label
+                    }
+                    formatter={(value: any) => [value, "Check-ins"]}
+                  />
+                  <Area type="monotone" dataKey="count" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/*
+            Attendance by service. The old "Service Comparison" keyed its
+            category axis on `service.name`, and the weekly job creates a fresh
+            pair of documents both called "09:00 Service" every Sunday — so
+            sixteen services collapsed into two ticks with the bars drawn on
+            top of each other. Keying on the day and treating the slot as a
+            series is what makes it readable.
+          */}
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h4 className="text-lg font-bold text-gray-900 dark:text-white">
+                Attendance by service
+                <HelpTooltip text="Each column is one day; each colour is a service slot. Days a service ran with nobody attending stay visible." />
+              </h4>
+              <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
+                {([["day", "By day"], ["totals", "Totals"]] as const).map(([view, label]) => (
+                  <button
+                    key={view}
+                    onClick={() => setServiceChartView(view)}
+                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      serviceChartView === view
+                        ? "bg-white dark:bg-gray-700 text-primary shadow-sm"
+                        : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {serviceComparison.days.length === 0 ? (
+              <div className="h-64 flex items-center justify-center text-gray-400 italic text-sm">
+                No services ran in this range
+              </div>
+            ) : serviceChartView === "day" ? (
+              /* Wide ranges scroll rather than squash: a 90-day window can hold
+                 a dozen service days and they must stay individually readable. */
+              <div className="overflow-x-auto">
+                <div
+                  className="h-72"
+                  style={{ minWidth: `max(100%, ${serviceComparison.days.length * 64}px)` }}
+                >
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={serviceComparison.days} barGap={2}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartTheme.grid} />
+                      <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: chartTheme.axis }} />
+                      <YAxis axisLine={false} tickLine={false} allowDecimals={false} tick={{ fontSize: 10, fill: chartTheme.axis }} />
+                      <Tooltip
+                        cursor={{ fill: darkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)" }}
+                        contentStyle={chartTheme.tooltip}
+                        itemStyle={{ color: "#fff" }}
+                        labelFormatter={(_label, payload) =>
+                          payload?.[0]?.payload?.fullLabel ?? _label
+                        }
+                        formatter={(value: any, name: any) => [value, name]}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                      {serviceComparison.slots.map((slot, index) => (
+                        <Bar
+                          key={slot}
+                          dataKey={slot}
+                          fill={SERIES_COLORS[index]}
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={28}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={serviceComparison.totals} layout="vertical" margin={{ left: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={chartTheme.grid} />
+                    <XAxis type="number" axisLine={false} tickLine={false} allowDecimals={false} tick={{ fontSize: 10, fill: chartTheme.axis }} />
+                    <YAxis dataKey="slot" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: chartTheme.axis }} width={110} />
+                    <Tooltip
+                      cursor={{ fill: darkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)" }}
+                      contentStyle={chartTheme.tooltip}
+                      itemStyle={{ color: "#fff" }}
+                      formatter={(value: any) => [value, "Check-ins"]}
+                    />
+                    <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={28}>
+                      {serviceComparison.totals.map((entry, index) => (
+                        <Cell key={entry.slot} fill={SERIES_COLORS[index]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* The table view is the relief for the palette's lower-contrast
+                slots in light mode, and the answer to "what is the exact
+                number" that a bar chart never gives well. */}
+            <details className="text-sm">
+              <summary className="cursor-pointer text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider hover:text-primary transition-colors">
+                Show the numbers
+              </summary>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-100 dark:border-gray-800">
+                      <th className="py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Day</th>
+                      {serviceComparison.slots.map((slot, index) => (
+                        <th key={slot} className="py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: SERIES_COLORS[index] }} />
+                            {slot}
+                          </span>
+                        </th>
+                      ))}
+                      <th className="py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                    {serviceComparison.days.map((day) => (
+                      <tr key={day.dateISO}>
+                        <td className="py-2 px-3 text-sm text-gray-700 dark:text-gray-300">{day.fullLabel}</td>
+                        {serviceComparison.slots.map((slot) => (
+                          <td key={slot} className="py-2 px-3 text-sm text-gray-700 dark:text-gray-300">{day[slot]}</td>
+                        ))}
+                        <td className="py-2 px-3 text-sm font-bold text-gray-900 dark:text-white">{day.total}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================== */}
+      {/* Zone C — Church totals                                             */}
+      {/* ================================================================== */}
+      <section className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center space-x-3">
+            <div className="h-12 w-12 bg-gray-100 dark:bg-gray-800 rounded-2xl flex items-center justify-center">
+              <LayoutDashboard className="h-6 w-6 text-gray-600 dark:text-gray-300" />
+            </div>
+            <div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Church totals</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Everything on the books, not tied to a date range</p>
+            </div>
+          </div>
+          <span className="self-start md:self-auto text-xs font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-lg">
+            All time
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <StatCard
+            label="Parent accounts"
+            value={peopleCounts.parents}
+            scope="All time"
+            hint="Active accounts holding the parent role. A user can be both a parent and a volunteer, so these counts overlap and will not sum."
+            icon={<Users className="h-6 w-6 text-primary dark:text-primary/80" />}
+            color="bg-primary/10 dark:bg-primary/20"
+          />
+          <StatCard
+            label="Registered children"
+            value={children?.filter(c => !c.deleted)?.length || 0}
+            scope="All time"
+            hint="Children on the register, excluding any that have been removed."
+            icon={<TrendingUp className="h-6 w-6 text-green-600 dark:text-green-400" />}
+            color="bg-green-50 dark:bg-green-900/20"
+          />
+          <StatCard
+            label="Approved guardians"
+            value={peopleCounts.guardians}
+            scope="All time"
+            hint="Guardians authorised to collect a child."
+            icon={<Shield className="h-6 w-6 text-purple-600 dark:text-purple-400" />}
+            color="bg-purple-50 dark:bg-purple-900/20"
+          />
+          <StatCard
+            label="Rooms"
+            value={rooms?.filter(r => !r.deleted)?.length || 0}
+            scope="All time"
+            hint="Rooms available for check-in."
+            icon={<LayoutDashboard className="h-6 w-6 text-orange-600 dark:text-orange-400" />}
+            color="bg-orange-50 dark:bg-orange-900/20"
+          />
+          <StatCard
+            label="Admins & volunteers"
+            value={peopleCounts.staff}
+            scope="All time"
+            hint="Active accounts holding an admin or volunteer role. A user can be both a parent and a volunteer, so these counts overlap and will not sum."
+            icon={<Shield className="h-6 w-6 text-red-600 dark:text-red-400" />}
+            color="bg-red-50 dark:bg-red-900/20"
+          />
+        </div>
+      </section>
 
       {/* Report Generation Section */}
       <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
@@ -819,8 +1572,8 @@ export default function AdminDashboard() {
         <div className="flex flex-col md:flex-row items-end gap-4">
           <div className="flex-1 space-y-1">
             <label className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Start Date</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={reportRange.start}
               onChange={(e) => setReportRange({ ...reportRange, start: e.target.value })}
               className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
@@ -828,138 +1581,19 @@ export default function AdminDashboard() {
           </div>
           <div className="flex-1 space-y-1">
             <label className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">End Date</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={reportRange.end}
               onChange={(e) => setReportRange({ ...reportRange, end: e.target.value })}
               className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary dark:text-white"
             />
           </div>
-          <button 
+          <button
             onClick={generateReport}
             className="bg-primary text-white px-8 py-2 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
           >
             Generate CSV Report
           </button>
-        </div>
-      </div>
-
-      {/* Charts Section */}
-      {/* Advanced Analytics Section */}
-      <div className="space-y-8">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
-              <TrendingUp className="h-6 w-6 text-primary dark:text-primary/80" />
-            </div>
-            <div>
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Advanced Analytics</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">In-depth attendance trends and comparisons</p>
-            </div>
-          </div>
-          <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
-            {[7, 30, 90].map((days) => (
-              <button
-                key={days}
-                onClick={() => setAnalyticsTimeRange(days)}
-                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                  analyticsTimeRange === days 
-                    ? "bg-white dark:bg-gray-700 text-primary shadow-sm" 
-                    : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                }`}
-              >
-                {days} Days
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Attendance Trend Chart */}
-          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
-            <div className="flex items-center justify-between">
-              <h4 className="text-lg font-bold text-gray-900 dark:text-white">Attendance Trend</h4>
-              <span className="text-xs font-bold text-primary dark:text-primary/80 bg-primary/10 dark:bg-primary/20 px-2 py-1 rounded-lg">
-                Last {analyticsTimeRange} Days
-              </span>
-            </div>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={last30Days}>
-                  <defs>
-                    <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-gray-800" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1f2937', color: '#fff' }}
-                    itemStyle={{ color: '#fff' }}
-                  />
-                  <Area type="monotone" dataKey="count" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Service Comparison Chart */}
-          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6">
-            <h4 className="text-lg font-bold text-gray-900 dark:text-white">Service Comparison</h4>
-            <div className="h-64">
-              {serviceComparison.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={serviceComparison} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" className="dark:stroke-gray-800" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} width={100} />
-                    <Tooltip 
-                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: '#1f2937', color: '#fff' }}
-                      itemStyle={{ color: '#fff' }}
-                    />
-                    <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={20} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-gray-400 italic text-sm">
-                  No service data available
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Room Utilization */}
-          <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-6 lg:col-span-2">
-            <h4 className="text-lg font-bold text-gray-900 dark:text-white">Room Utilization & Capacity</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {roomUtilization.map((room) => (
-                <div key={room.name} className="space-y-3">
-                  <div className="flex justify-between items-end">
-                    <div>
-                      <p className="text-sm font-bold text-gray-900 dark:text-white">{room.name}</p>
-                      <p className="text-xs text-gray-500">{room.count} / {room.capacity} children</p>
-                    </div>
-                    <span className={`text-xs font-bold ${
-                      room.value > 90 ? "text-red-500" : room.value > 70 ? "text-orange-500" : "text-green-500"
-                    }`}>
-                      {room.value}%
-                    </span>
-                  </div>
-                  <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${room.value}%` }}
-                      className={`h-full rounded-full ${
-                        room.value > 90 ? "bg-red-500" : room.value > 70 ? "bg-orange-500" : "bg-green-500"
-                      }`}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -972,7 +1606,7 @@ export default function AdminDashboard() {
             </div>
             <div>
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Historical Analysis</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Filter and analyze past attendance records</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Filter past attendance by event or service</p>
             </div>
           </div>
           
@@ -983,11 +1617,18 @@ export default function AdminDashboard() {
               className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-purple-500 outline-none"
             >
               <option value="">All Events</option>
-              {events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(event => (
-                <option key={event.id} value={event.id}>
-                  {event.name} ({format(new Date(event.date), "MMM d")})
-                </option>
-              ))}
+              {[...events]
+                .filter(e => !e.deleted)
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                .map(event => {
+                  const parsed = event.date ? new Date(event.date) : null;
+                  const dated = parsed && !Number.isNaN(parsed.getTime());
+                  return (
+                    <option key={event.id} value={event.id}>
+                      {event.name}{dated ? " (" + format(parsed as Date, "d MMM yyyy") + ")" : ""}
+                    </option>
+                  );
+                })}
             </select>
             
             <select
@@ -996,11 +1637,17 @@ export default function AdminDashboard() {
               className="bg-gray-50 dark:bg-gray-800 border-none rounded-xl px-4 py-2 text-sm font-medium focus:ring-2 focus:ring-purple-500 outline-none"
             >
               <option value="">All Services</option>
-              {services.filter(s => !selectedHistoricalEvent || s.eventId === selectedHistoricalEvent).map(service => (
-                <option key={service.id} value={service.id}>
-                  {service.name}
-                </option>
-              ))}
+              {/* Several services share a name, so the date is what tells
+                  them apart in this list. */}
+              {services
+                .filter(s => !s.deleted)
+                .filter(s => !selectedHistoricalEvent || s.eventId === selectedHistoricalEvent)
+                .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (a.startTime || "").localeCompare(b.startTime || ""))
+                .map(service => (
+                  <option key={service.id} value={service.id}>
+                    {service.name}{service.date ? " — " + service.date : ""}
+                  </option>
+                ))}
             </select>
 
             <button 
@@ -1018,26 +1665,43 @@ export default function AdminDashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="bg-purple-50 dark:bg-purple-900/10 p-6 rounded-2xl border border-purple-100 dark:border-purple-900/20">
-            <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-1">Total Attendees</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">{historicalCheckins.length}</p>
+            {/* "Total Attendees" implied people; a child attending two services
+                produces two records, so this counts records. */}
+            <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-1">
+              Check-in records
+              <HelpTooltip text="Attendance records matching the filters. A child attending two services appears twice." />
+            </p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">{historicalSummary.totalCheckins}</p>
           </div>
           <div className="bg-primary/10 dark:bg-primary/20 p-6 rounded-2xl border border-primary/20 dark:border-primary/30">
-            <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase tracking-wider mb-1">Unique Children</p>
+            <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase tracking-wider mb-1">Unique children</p>
             <p className="text-3xl font-bold text-gray-900 dark:text-white">
-              {new Set(historicalCheckins.map(c => c.childId)).size}
+              {historicalSummary.uniqueChildren}
             </p>
           </div>
           <div className="bg-green-50 dark:bg-green-900/10 p-6 rounded-2xl border border-green-100 dark:border-green-900/20">
-            <p className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">Avg. Per Service</p>
+            <p className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">
+              Average per service
+              <HelpTooltip text="Divided by the services held in view, including any nobody attended." />
+            </p>
             <p className="text-3xl font-bold text-gray-900 dark:text-white">
-              {historicalCheckins.length > 0 ? Math.round(historicalCheckins.length / (new Set(historicalCheckins.map(c => c.serviceId)).size || 1)) : 0}
+              {historicalSummary.averagePerService ?? "—"}
             </p>
           </div>
           <div className="bg-orange-50 dark:bg-orange-900/10 p-6 rounded-2xl border border-orange-100 dark:border-orange-900/20">
-            <p className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Peak Attendance</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">
-              {Math.max(...roomUtilization.map(r => r.count), 0)}
+            {/* This used to read live room occupancy — a number from the last
+                hour, sitting inside a panel about the past and ignoring both
+                of its filters. */}
+            <p className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">
+              Busiest single service
+              <HelpTooltip text="The one service instance with the highest attendance among the filtered records." />
             </p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white">
+              {historicalSummary.busiest?.count ?? "—"}
+            </p>
+            {historicalSummary.busiest && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{historicalSummary.busiest.label}</p>
+            )}
           </div>
         </div>
 
@@ -1067,8 +1731,12 @@ export default function AdminDashboard() {
                     </p>
                   </td>
                   <td className="py-4 px-4">
-                    <p className="text-sm text-gray-700 dark:text-gray-300">{record.eventName}</p>
-                    <p className="text-xs text-gray-500">{record.serviceName}</p>
+                    {/* The server never writes eventName, so most records
+                        carry only a service. */}
+                    <p className="text-sm text-gray-700 dark:text-gray-300">{record.serviceName || "Unassigned"}</p>
+                    <p className="text-xs text-gray-500">
+                      {record.checkInTime ? format(new Date(record.checkInTime), "EEE d MMM yyyy") : ""}
+                    </p>
                   </td>
                   <td className="py-4 px-4">
                     <span className="text-xs font-medium bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-lg">
@@ -1076,7 +1744,7 @@ export default function AdminDashboard() {
                     </span>
                   </td>
                   <td className="py-4 px-4 text-sm text-gray-500">
-                    {format(new Date(record.checkInTime), "MMM d, HH:mm")}
+                    {record.checkInTime ? format(new Date(record.checkInTime), "d MMM, HH:mm") : "—"}
                   </td>
                   <td className="py-4 px-4">
                     <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
@@ -1096,7 +1764,7 @@ export default function AdminDashboard() {
           )}
           {historicalCheckins.length > 10 && (
             <div className="py-4 text-center">
-              <p className="text-xs text-gray-500">Showing latest 10 of {historicalCheckins.length} records. Use CSV export for full data.</p>
+              <p className="text-xs text-gray-500">Showing the 10 most recent of {historicalCheckins.length} records. Use CSV export for full data.</p>
             </div>
           )}
         </div>
@@ -1405,24 +2073,40 @@ export default function AdminDashboard() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 bg-primary/10 dark:bg-primary/20 rounded-xl border border-primary/20 dark:border-primary/30">
-                <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase mb-1">Users Limit</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">
-                  {users.length} / {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users === Infinity ? "Unlimited" : PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users || 20}
+                <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase mb-1">
+                  Users Limit
+                  <HelpTooltip text="Pending invitations hold a seat, so they are counted here — the same way the server counts them when it decides whether to accept a new invite." />
                 </p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {usedUserSeats} / {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users === Infinity ? "Unlimited" : PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users || 20}
+                </p>
+                {pendingInvitations > 0 && (
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    Includes {pendingInvitations} pending invitation{pendingInvitations === 1 ? "" : "s"}
+                  </p>
+                )}
                 {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users !== Infinity && (
                   <div className="mt-2 h-1.5 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                     <div 
-                      className={`h-full transition-all duration-500 ${users.length >= PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users ? 'bg-red-500' : 'bg-primary'}`}
-                      style={{ width: `${Math.min(100, (users.length / (PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users || 20)) * 100)}%` }}
+                      className={`h-full transition-all duration-500 ${usedUserSeats >= PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users ? 'bg-red-500' : 'bg-primary'}`}
+                      style={{ width: `${Math.min(100, (usedUserSeats / (PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.users || 20)) * 100)}%` }}
                     />
                   </div>
                 )}
               </div>
               <div className="p-4 bg-purple-50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-900/30">
-                <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase mb-1">Children Limit</p>
+                <p className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase mb-1">
+                  Children Limit
+                  <HelpTooltip text="Counts every child record, including removed ones — they still consume plan quota until support clears them, which is exactly how the limit is enforced." />
+                </p>
                 <p className="text-lg font-bold text-gray-900 dark:text-white">
                   {children.length} / {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children === Infinity ? "Unlimited" : PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children || 50}
                 </p>
+                {removedChildren > 0 && (
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    Includes {removedChildren} removed child{removedChildren === 1 ? "" : "ren"}, which still count toward your plan
+                  </p>
+                )}
                 {PLAN_LIMITS[churchData?.plan?.toLowerCase() as PlanTier]?.children !== Infinity && (
                   <div className="mt-2 h-1.5 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                     <div 
