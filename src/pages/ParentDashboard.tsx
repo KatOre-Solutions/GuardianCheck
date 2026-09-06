@@ -641,7 +641,7 @@ export default function ParentDashboard() {
             layout
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white dark:bg-gray-900 rounded-3xl p-8 shadow-sm border border-gray-100 dark:border-gray-800 space-y-6 hover:shadow-xl transition-all group relative"
+            className="bg-white dark:bg-gray-900 rounded-3xl px-8 pb-8 pt-14 shadow-sm border border-gray-100 dark:border-gray-800 space-y-6 hover:shadow-xl transition-all group relative"
           >
             <div className="absolute top-4 right-4 flex items-center space-x-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity z-20">
               <button
