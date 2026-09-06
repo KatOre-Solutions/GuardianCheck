@@ -95,7 +95,8 @@ const unpermissioned: CameraDevice[] = [dev("blank-1", ""), dev("blank-2", "")];
 /* pickRearCamera — ranking                                                   */
 /* -------------------------------------------------------------------------- */
 
-check("iPhone: picks the main wide, not the ultra-wide", "ios-back", pickRearCamera(iphonePro));
+check("iPhone: picks the triple virtual camera so iOS drives the lenses", "ios-triple", pickRearCamera(iphonePro));
+check("iPhone: the triple camera outranks the plain back camera", true, pickRearCamera(iphonePro) !== "ios-back");
 check("iPhone: never the telephoto", true, pickRearCamera(iphonePro) !== "ios-tele");
 check("iPhone: never the ultra-wide", true, pickRearCamera(iphonePro) !== "ios-ultra");
 check("older iPhone: the one rear camera", "old-back", pickRearCamera(iphoneOld));
@@ -138,7 +139,7 @@ check(
 
 check("picker lists every rear camera on iPhone", 5, selectableCameras(iphonePro).length);
 check("picker excludes the front camera", false, selectableCameras(iphonePro).some(d => d.id === "ios-front"));
-check("picker leads with the recommended camera", "ios-back", selectableCameras(iphonePro)[0].id);
+check("picker leads with the recommended camera", "ios-triple", selectableCameras(iphonePro)[0].id);
 check("picker still lists the problem lenses", true, selectableCameras(iphonePro).some(d => d.id === "ios-ultra"));
 
 /* When nothing classifies as rear the volunteer needs the picker most, so it
@@ -187,7 +188,7 @@ check("a label-recovered entry still counts as persisted", "persisted", viaLabel
 check("and resolves to the right device", "ios-back", viaLabel?.deviceId);
 
 const ranked = resolveCamera(iphonePro, storedGone);
-check("a stale entry falls through to the ranking", "ios-back", ranked?.deviceId);
+check("a stale entry falls through to the ranking", "ios-triple", ranked?.deviceId);
 check("and is reported as ranked", "ranked", ranked?.source);
 
 const noStore = resolveCamera(androidMulti, null);

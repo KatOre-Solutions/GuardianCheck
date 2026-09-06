@@ -89,9 +89,23 @@ const REAR = /\b(back|rear)\b|facing back|environment/i;
 const PROBLEM_LENS =
   /ultra[\s-]?wide|ultrawide|telephoto|\btele\b|\bmacro\b|\bdepth\b|monochrome|\bmono\b|infrared|\btof\b|0\.5/i;
 
-/** iOS exposes the main rear camera under these exact names, best first. */
+/** iOS exposes the rear cameras under these exact names, best first.
+ *
+ *  "Back Triple Camera" leads on triple-lens iPhones. It is not a physical
+ *  lens but the virtual device that drives all three, so iOS itself handles
+ *  focus and lens switching — including dropping to the ultra-wide at close
+ *  range, which is what lets a code fill the frame without going soft. Pinning
+ *  to a single fixed lens gives up that behaviour, so the virtual device is
+ *  preferred over the plain "Back Camera" where both are offered.
+ *
+ *  Note this is the opposite of the *raw* ultra-wide, which is still ranked
+ *  last by PROBLEM_LENS: the danger was ever being stuck on it, not iOS
+ *  choosing it deliberately for a close-up. */
+const IOS_TRIPLE = /back triple camera/i;
 const IOS_MAIN = /^back camera$/i;
 const IOS_DUAL_WIDE = /back dual wide camera/i;
+/** Remaining virtual devices — "Back Dual Camera", and any triple variant
+ *  whose naming does not match IOS_TRIPLE exactly. */
 const IOS_VIRTUAL = /back (dual|triple) camera/i;
 
 /** Android: `camera2 0, facing back`. Index 0 is conventionally the main
@@ -116,7 +130,8 @@ function isRear(device: CameraDevice): boolean {
 function scoreOf(device: CameraDevice): number {
   let score = 0;
 
-  if (IOS_MAIN.test(device.label)) score += 100;
+  if (IOS_TRIPLE.test(device.label)) score += 120;
+  else if (IOS_MAIN.test(device.label)) score += 100;
   else if (IOS_DUAL_WIDE.test(device.label)) score += 90;
   else if (IOS_VIRTUAL.test(device.label)) score += 80;
   else score += 50;
