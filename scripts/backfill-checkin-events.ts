@@ -221,15 +221,19 @@ async function main() {
     return;
   }
 
-  // Firestore caps a batch at 500 writes. `update` rather than `set`, so a
-  // field this script does not know about is never dropped.
+  /* Firestore caps a batch at 500 writes. `update` rather than `set`, so a
+   * field this script does not know about is never dropped.
+   *
+   * `updatedAt` is deliberately NOT stamped. On a check-in that field is not
+   * inert metadata — both dashboards sort "Recent Activity" by
+   * `updatedAt || checkInTime` and render it as the activity time — so writing
+   * it here would date every backfilled record to the moment the script ran
+   * and push real activity out of the feed. This script is restoring a field
+   * that should always have been present, not recording an edit. */
   for (let i = 0; i < patches.length; i += 400) {
     const batch = db.batch();
     for (const p of patches.slice(i, i + 400)) {
-      batch.update(db.collection(p.collection).doc(p.id), {
-        ...p.data,
-        updatedAt: new Date().toISOString(),
-      });
+      batch.update(db.collection(p.collection).doc(p.id), { ...p.data });
     }
     await batch.commit();
   }

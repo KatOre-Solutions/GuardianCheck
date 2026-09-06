@@ -241,6 +241,23 @@ function indexById<T extends { id: string }>(rows: T[]): Map<string, T> {
 
 /** Soft-deleted documents are excluded everywhere. Records that predate the
  *  flag have no `deleted` field at all, so only an explicit `true` counts. */
+/**
+ * Whether a service instance actually ran, as opposed to being scheduled.
+ *
+ * Shared by the chart and by the average's denominator so the two cannot
+ * disagree. They used to test this differently — the chart excluded only
+ * `"upcoming"` while the denominator required `"active"` or `"closed"` — so a
+ * document with no `status` at all drew a bar on the chart while "Average per
+ * service" read "—" beside it.
+ *
+ * Both creation paths write `"upcoming"`, so a missing status means a legacy or
+ * hand-edited document. Within a range that has already been bounded to the
+ * past, anything not explicitly still upcoming has run.
+ */
+function hasRun<T extends { status?: string }>(service: T): boolean {
+  return service.status !== "upcoming";
+}
+
 function notDeleted<T extends { deleted?: boolean }>(row: T): boolean {
   return row?.deleted !== true;
 }
@@ -471,7 +488,7 @@ export function buildServiceComparison(
     const day = toLocalDay(dateISO || "");
 
     if (!day || day < startOfDay(from) || day > to) continue;
-    if (service.status === "upcoming") continue;
+    if (!hasRun(service)) continue;
 
     const buckets = ensureDay(dateISO!);
 
@@ -491,7 +508,19 @@ export function buildServiceComparison(
     if (!slotStart.has(slot)) slotStart.set(slot, "");
   }
 
-  const slots = [...slotStart.keys()].sort((a, b) => {
+  /* Ordering is looked up from every live service, but the series list itself
+   * comes only from the days actually in the window. Deriving it from
+   * `slotStart` listed every service name the church has ever used: a spring
+   * service appeared as an empty series in an autumn window, and — because the
+   * list is capped at MAX_SLOTS — could push a slot that *did* run out of the
+   * legend and fold its real attendance into "Other". */
+  const present = new Set<string>();
+
+  for (const buckets of days.values()) {
+    for (const slot of buckets.keys()) present.add(slot);
+  }
+
+  const slots = [...present].sort((a, b) => {
     const startA = slotStart.get(a) || "";
     const startB = slotStart.get(b) || "";
 
@@ -713,7 +742,7 @@ export function countServicesHeld(
 
   return (services || []).filter((service) => {
     if (!notDeleted(service)) return false;
-    if (service.status !== "active" && service.status !== "closed") return false;
+    if (!hasRun(service)) return false;
 
     const dateISO =
       service.date || eventsById.get(service.eventId || "")?.date || "";

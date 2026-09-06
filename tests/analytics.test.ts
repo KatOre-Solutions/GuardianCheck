@@ -42,6 +42,9 @@ import {
   type ServiceRecord,
 } from "../src/lib/analytics";
 
+/** Mirrors the module-private OTHER constant in analytics.ts. */
+const OTHER_LABEL = "Other";
+
 let pass = 0;
 let fail = 0;
 
@@ -341,6 +344,87 @@ const offline: CheckinRecord[] = [
   { id: "off1", childId: "z", eventId: "evt-today", checkInTime: at(2026, 9, 6, 9, 0) },
 ];
 check("offline records still match on their own eventId", 1, filterHistorical(offline, services, "evt-today", "").length);
+
+/* -------------------------------------------------------------------------- */
+/* buildServiceComparison — series come from the window, not from history     */
+/* -------------------------------------------------------------------------- */
+
+/* Slot ordering is looked up across every live service, but the series list
+ * itself must come from the days in the window. Building it from the ordering
+ * map listed every name the church had ever used. */
+const septFrom = new Date(2026, 8, 1, 0, 0, 0);
+const septTo = new Date(2026, 8, 6, 23, 59, 59);
+
+const springAndAutumn: ServiceRecord[] = [
+  { id: "in", name: "09:00 Service", startTime: "09:00", date: "2026-09-06", status: "closed" },
+  { id: "out", name: "Easter Sunrise", startTime: "05:00", date: "2026-04-05", status: "closed" },
+];
+const septCheckins: CheckinRecord[] = [
+  { id: "sc1", childId: "kid-a", serviceId: "in", serviceName: "09:00 Service", checkInTime: at(2026, 9, 6, 9, 5) },
+];
+
+const septChart = buildServiceComparison(septCheckins, springAndAutumn, [], septFrom, septTo);
+
+check("a service outside the window is not a series", 1, septChart.slots.length);
+check("and the series is the one that ran", "09:00 Service", septChart.slots[0]);
+
+/* The worst form of the same bug: with more than MAX_SLOTS historical names,
+ * the cap evicted a slot that *did* run and folded its attendance into
+ * "Other", so the only real data on the chart lost its label. */
+const manyOld: ServiceRecord[] = [];
+for (let i = 0; i < 9; i += 1) {
+  manyOld.push({ id: `old${i}`, name: `Old Service ${i}`, startTime: `0${i}:00`, date: "2026-04-05", status: "closed" });
+}
+manyOld.push({ id: "evening", name: "Evening Service", startTime: "18:00", date: "2026-09-06", status: "closed" });
+
+const eveningCheckins: CheckinRecord[] = [
+  { id: "ec1", childId: "kid-a", serviceId: "evening", serviceName: "Evening Service", checkInTime: at(2026, 9, 6, 18, 5) },
+  { id: "ec2", childId: "kid-b", serviceId: "evening", serviceName: "Evening Service", checkInTime: at(2026, 9, 6, 18, 7) },
+];
+
+const eveningChart = buildServiceComparison(eveningCheckins, manyOld, [], septFrom, septTo);
+
+check("history cannot crowd the window's own slot out of the legend", true, eveningChart.slots.includes("Evening Service"));
+check("so its attendance is not folded into Other", 2, (eveningChart.days[0] as any)["Evening Service"]);
+check("and nothing is left in Other", undefined, (eveningChart.days[0] as any)[OTHER_LABEL]);
+
+/* -------------------------------------------------------------------------- */
+/* A service with no status at all                                            */
+/* -------------------------------------------------------------------------- */
+
+/* Both creation paths write "upcoming", so a missing status means a legacy or
+ * hand-edited document. The chart excluded only "upcoming" while the average's
+ * denominator required "active" or "closed", so such a service drew a bar
+ * while "Average per service" read "—" right beside it. */
+const statusless: ServiceRecord[] = [
+  { id: "nostatus", name: "09:00 Service", startTime: "09:00", date: "2026-09-06" },
+];
+const statuslessCheckins: CheckinRecord[] = [
+  { id: "nc1", childId: "kid-a", serviceId: "nostatus", checkInTime: at(2026, 9, 6, 9, 5) },
+];
+
+check(
+  "a status-less service is charted",
+  1,
+  buildServiceComparison(statuslessCheckins, statusless, [], septFrom, septTo).days.length,
+);
+check(
+  "and counted as held, so the chart and the average agree",
+  1,
+  countServicesHeld(statusless, [], septFrom, septTo),
+);
+check(
+  "so the average is a number, not a dash",
+  1,
+  summarise(statuslessCheckins, statusless, [], septFrom, septTo).averagePerService,
+);
+
+/* An upcoming service is still excluded from both. */
+const upcoming: ServiceRecord[] = [
+  { id: "later", name: "18:00 Service", startTime: "18:00", date: "2026-09-06", status: "upcoming" },
+];
+check("an upcoming service is not counted as held", 0, countServicesHeld(upcoming, [], septFrom, septTo));
+check("nor charted", 0, buildServiceComparison([], upcoming, [], septFrom, septTo).days.length);
 
 /* -------------------------------------------------------------------------- */
 /* eventNameOf                                                                */
