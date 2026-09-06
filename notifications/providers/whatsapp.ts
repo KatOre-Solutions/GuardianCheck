@@ -1,5 +1,6 @@
 import axios from "axios";
 import { whatsappSummaryText } from "../templates.js";
+import { mintQrAccessToken } from "../qr-access.js";
 import type { ChannelProvider, ChannelSendResult, NotificationEventType, NotificationRecord } from "../types.js";
 
 /**
@@ -147,6 +148,9 @@ function utilityTemplateNameFor(eventType: NotificationEventType): string | unde
     case "check-out": return process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKOUT || undefined;
     case "room_move": return process.env.WHATSAPP_UTILITY_TEMPLATE_ROOMMOVE || undefined;
     case "emergency": return undefined;
+    // A separate approved template from the three above: it carries an IMAGE
+    // header, which the others do not, so Meta reviews it on its own terms.
+    case "qr-delivery": return process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY || undefined;
   }
 }
 
@@ -184,11 +188,85 @@ export class WhatsAppProvider implements ChannelProvider {
       return { ok: false, retryable: false, errorMessage: "recipient is no longer WhatsApp-verified" };
     }
 
+    const languageCode = process.env.WHATSAPP_UTILITY_LANGUAGE_CODE || "en_US";
+
+    if (record.eventType === "qr-delivery") {
+      return this.sendQrDelivery(record, deps, { to: userData.whatsappNumber, templateName, languageCode });
+    }
+
     return sendWhatsAppTemplate({
       to: userData.whatsappNumber,
       templateName,
-      languageCode: process.env.WHATSAPP_UTILITY_LANGUAGE_CODE || "en_US",
+      languageCode,
       components: [{ type: "body", parameters: [{ type: "text", text: whatsappSummaryText(record.payload, record.eventType) }] }],
     });
+  }
+
+  /**
+   * The pickup-QR send. Differs from the other utility templates in one way
+   * that matters: the message carries an image, and Meta fetches that image
+   * itself rather than us uploading it.
+   *
+   * So a fresh access token is minted here, at send time, not at enqueue --
+   * which also means a cron retry mints its own rather than reusing a token
+   * that has since expired or been spent. The token's hash comes back on the
+   * result so markResult can persist it (see service.ts), giving a join from
+   * this notification to the qr_access_log rows recording Meta's fetches.
+   */
+  private async sendQrDelivery(
+    record: NotificationRecord,
+    deps: { db: any; firestoreOps?: { reads: number; writes: number } },
+    args: { to: string; templateName: string; languageCode: string },
+  ): Promise<ChannelSendResult> {
+    const guardianId = record.payload.guardianId;
+    if (!guardianId) {
+      return { ok: false, retryable: false, errorMessage: "qr-delivery record has no guardianId in its payload" };
+    }
+
+    // Meta fetches over the public internet, so a relative path or a
+    // localhost origin cannot work. Failing loudly beats sending a template
+    // whose image silently 404s for the recipient.
+    const appUrl = process.env.APP_URL;
+    if (!appUrl || !/^https:\/\//.test(appUrl)) {
+      return { ok: false, retryable: false, errorMessage: "APP_URL must be set to an https origin for QR delivery" };
+    }
+
+    const guardianDoc = await deps.db.collection("guardians").doc(guardianId).get();
+    if (deps.firestoreOps) deps.firestoreOps.reads++;
+    const guardian = guardianDoc.exists ? guardianDoc.data() : null;
+
+    if (!guardian || guardian.churchId !== record.churchId || guardian.deleted === true || guardian.active !== true || !guardian.qrToken) {
+      // The endpoint re-checks this too. Checking here as well avoids minting
+      // a token and sending a message whose image is already certain to 410.
+      return { ok: false, retryable: false, errorMessage: "guardian is not available for QR delivery" };
+    }
+
+    const { raw, tokenId } = await mintQrAccessToken(
+      deps.db,
+      { guardianId, churchId: record.churchId, notificationId: record.id },
+      { firestoreOps: deps.firestoreOps },
+    );
+
+    const result = await sendWhatsAppTemplate({
+      to: args.to,
+      templateName: args.templateName,
+      languageCode: args.languageCode,
+      components: [
+        // Header image. Meta's documented contract for a `link` asset: PNG or
+        // JPEG, 5 MB max, fetched from a public URL at send time and cached
+        // for 10 minutes against that exact URL string. Our URLs are unique
+        // per send, so that cache never serves one record's image for
+        // another's. The exact component shape still needs verifying against
+        // the real approved template once a WABA exists -- same caveat as
+        // buildOtpTemplateComponents above; a mismatch is a loud 4xx, not a
+        // silent failure.
+        { type: "header", parameters: [{ type: "image", image: { link: `${appUrl.replace(/\/$/, "")}/api/qr/${raw}` } }] },
+        { type: "body", parameters: [{ type: "text", text: whatsappSummaryText(record.payload, record.eventType) }] },
+      ],
+    });
+
+    // Returned whether or not the send succeeded: a minted-then-unused token
+    // is still a token that exists, and the audit trail should say so.
+    return { ...result, meta: { qrTokenId: tokenId } };
   }
 }

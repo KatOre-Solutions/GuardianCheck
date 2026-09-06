@@ -694,6 +694,33 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Access tokens for GET /api/qr/:token, keyed by the SHA-256 of the token
+    // itself -- see notifications/qr-access.ts.
+    //
+    // Entirely server-only, with no exception for any client identity
+    // including master admin. The document id IS the hash of a live
+    // credential, so `list` access alone would hand an attacker the set of
+    // valid tokens to confirm against, and read access would expose which
+    // guardian each one resolves to. Nothing in the app needs to read these
+    // from a browser: the endpoint runs through the Admin SDK, which bypasses
+    // these rules.
+    match /qr_access_tokens/{tokenId} {
+      allow read, write: if false;
+    }
+
+    // Audit trail for that endpoint -- one row per request, including refused
+    // ones, since a burst of refusals is what enumeration looks like.
+    //
+    // Master admin only, not church admins: rows carry requester IP and
+    // user-agent, which is personal information about whoever fetched the
+    // image (in the normal case, Meta's infrastructure; in the abnormal case,
+    // someone probing). A church has no operational need for it, and
+    // retention is still open -- see docs/qr-endpoint-threat-model.md.
+    match /qr_access_log/{entryId} {
+      allow read: if isMasterAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /{path=**} {
       allow read, write: if false;
     }

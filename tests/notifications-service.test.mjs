@@ -24,6 +24,7 @@ import {
   dispatchMany,
   notifyCheckins,
   runNotificationSweep,
+  notifyQrDelivery,
   NOTIFICATIONS_COLLECTION,
 } from "../notifications/service.ts";
 import { resolveRecipients } from "../notifications/recipients.ts";
@@ -752,6 +753,286 @@ check(
   "generateTemplate moved out of emailService.ts (now notifications/templates.ts)",
   false,
   /generateTemplate/.test(emailServiceSrc),
+);
+
+// --- notifyQrDelivery -----------------------------------------------------
+//
+// Delivering the pickup QR over WhatsApp. Structurally unlike notifyCheckins:
+// the QR belongs to a *guardian*, not to a child, so the unit is one message
+// per guardian per service rather than one per child or per event.
+//
+// Every early return below is safe for one reason, which is worth stating
+// once: the check-in email enqueued by notifyCheckins already carries the
+// same QR as an inline attachment. WhatsApp is supplementary. There is no
+// fallback branch to test because the fallback is the email that was already
+// sent -- what these tests check is that nothing here can *prevent* it.
+
+console.log("\nnotifyQrDelivery\n");
+
+const qrSeed = () => ({
+  children: { child1: { parentId: "parent1", churchId: "churchA" } },
+  users: {
+    parent1: {
+      email: "parent@example.com",
+      whatsappNumber: "+27821234567",
+      whatsappVerifiedAt: "2026-09-01T00:00:00.000Z",
+    },
+  },
+  guardians: {
+    g_mom: { churchId: "churchA", parentId: "parent1", active: true, deleted: false, qrToken: "gq_" + "A".repeat(32) },
+  },
+  church_public: { churchA: { name: "Church A" } },
+});
+
+const qrArgs = (over = {}) => ({
+  checkinId: "checkin_1",
+  childId: "child1",
+  guardianId: "g_mom",
+  serviceId: "svc_1",
+  dateKey: "20260905",
+  payload: { childName: "Amahle", time: "2026-09-05T09:00:00.000Z", roomName: "Elephants", churchName: "Church A" },
+  ...over,
+});
+
+{
+  // Kill switch. Unset means every church, so this is the default state and
+  // the one that must never send.
+  delete process.env.WHATSAPP_ENABLED;
+  const db = makeFakeDb(qrSeed());
+  const calls = [];
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({}, calls, "whatsapp"),
+  });
+
+  check("with the flag off, QR delivery declines", "not_eligible", outcome);
+  check("...sending nothing", 0, calls.length);
+  check("...and creating no record at all", 0, [...db.store.keys()].filter((k) => k.startsWith(NOTIFICATIONS_COLLECTION)).length);
+}
+
+{
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const db = makeFakeDb(qrSeed());
+  const calls = [];
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({ parent1: { ok: true, providerMessageId: "wamid.qr", retryable: false, meta: { qrTokenId: "a".repeat(64) } } }, calls, "whatsapp"),
+  });
+
+  check("an eligible recipient receives the QR", "sent", outcome);
+  check("...on the whatsapp channel only", ["parent1"], calls);
+
+  const records = [...db.store.entries()].filter(([k]) => k.startsWith(NOTIFICATIONS_COLLECTION));
+  check("exactly one record is created", 1, records.length);
+  const rec = records[0][1];
+  check("...typed as qr-delivery", "qr-delivery", rec.eventType);
+  check("...on the whatsapp channel", "whatsapp", rec.channel);
+  check("...marked sent", "sent", rec.status);
+  check("...carrying the guardian id the QR belongs to", "g_mom", rec.payload.guardianId);
+  // The join from a notification to the qr_access_log rows recording Meta's
+  // fetches of the token it minted.
+  check("...and the hash of the access token minted for it", "a".repeat(64), rec.qrTokenId);
+  // Same guarantee as every other record: no dialable number is persisted.
+  check("the record masks the recipient rather than storing the number", true, /^\+27\*+67$/.test(rec.recipientMasked));
+  check("...and never stores the raw number", false, JSON.stringify(rec).includes("+27821234567"));
+}
+
+{
+  // The reason the event key is keyed on guardian+service rather than child:
+  // three siblings checking in must produce one QR message, not three.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const seed = qrSeed();
+  seed.children.child2 = { parentId: "parent1", churchId: "churchA" };
+  seed.children.child3 = { parentId: "parent1", churchId: "churchA" };
+  const db = makeFakeDb(seed);
+  const calls = [];
+  const providers = {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({ parent1: { ok: true, providerMessageId: "wamid.qr", retryable: false } }, calls, "whatsapp"),
+  };
+
+  const first = await notifyQrDelivery(db, "churchA", qrArgs({ childId: "child1", checkinId: "checkin_1" }), providers);
+  const second = await notifyQrDelivery(db, "churchA", qrArgs({ childId: "child2", checkinId: "checkin_2" }), providers);
+  const third = await notifyQrDelivery(db, "churchA", qrArgs({ childId: "child3", checkinId: "checkin_3" }), providers);
+
+  check("the first sibling's check-in sends the QR", "sent", first);
+  check("the second does not re-send", "already_delivered", second);
+  check("nor does the third", "already_delivered", third);
+  check("exactly one message was sent for the family", 1, calls.length);
+  check("...and exactly one record exists", 1, [...db.store.keys()].filter((k) => k.startsWith(NOTIFICATIONS_COLLECTION)).length);
+}
+
+{
+  // A different service on the same day is a genuinely new pickup window and
+  // does get its own QR.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const db = makeFakeDb(qrSeed());
+  const calls = [];
+  const providers = {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({ parent1: { ok: true, retryable: false } }, calls, "whatsapp"),
+  };
+
+  await notifyQrDelivery(db, "churchA", qrArgs({ serviceId: "svc_1" }), providers);
+  const second = await notifyQrDelivery(db, "churchA", qrArgs({ serviceId: "svc_2" }), providers);
+
+  check("a second service on the same day gets its own QR", "sent", second);
+  check("...so two messages were sent", 2, calls.length);
+}
+
+{
+  // Allowance exhaustion. Auditable, never silent -- and the email carrying
+  // the same QR is untouched.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "0";
+
+  const db = makeFakeDb(qrSeed());
+  const calls = [];
+  const adminEmails = [];
+  const seedUsers = db.store.get("users/parent1");
+  db.store.set("users/adminA", { email: "admin@example.com", churchId: "churchA", role: "admin" });
+  void seedUsers;
+
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(adminEmails),
+    whatsapp: fakeProvider({}, calls, "whatsapp"),
+  });
+
+  check("an exhausted allowance skips the send", "skipped_allowance", outcome);
+  check("...dispatching nothing", 0, calls.length);
+
+  const records = [...db.store.entries()].filter(([k]) => k.startsWith(NOTIFICATIONS_COLLECTION));
+  check("...but still recording the intent, auditably", 1, records.length);
+  check("...with a status that says why", "skipped_allowance", records[0][1].status);
+  check("...and notifying an admin once", 1, adminEmails.length);
+
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+{
+  // An unverified recipient. WhatsApp declines; the email already went.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const seed = qrSeed();
+  delete seed.users.parent1.whatsappVerifiedAt;
+  const db = makeFakeDb(seed);
+  const calls = [];
+
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({}, calls, "whatsapp"),
+  });
+
+  check("an unverified recipient is skipped", "not_eligible", outcome);
+  check("...with nothing sent", 0, calls.length);
+}
+
+{
+  // A hard send failure. The record must show it rather than the failure
+  // vanishing -- and again, the parent still has the QR by email.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const db = makeFakeDb(qrSeed());
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: {
+      channel: "whatsapp",
+      async send() { throw new Error("Meta unreachable"); },
+    },
+  });
+
+  check("a thrown send is caught and reported, not propagated", "failed", outcome);
+  const rec = [...db.store.entries()].filter(([k]) => k.startsWith(NOTIFICATIONS_COLLECTION))[0][1];
+  check("...leaving a retryable record for the sweep", "failed", rec.status);
+  check("...with the reason recorded", "Meta unreachable", rec.errorMessage);
+}
+
+{
+  // A guardian deactivated between check-in and delivery.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const seed = qrSeed();
+  seed.guardians.g_mom.active = false;
+  const db = makeFakeDb(seed);
+  const calls = [];
+
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({}, calls, "whatsapp"),
+  });
+
+  check("a deactivated guardian's QR is not delivered", "not_eligible", outcome);
+  check("...with nothing sent", 0, calls.length);
+}
+
+{
+  // The QR belongs to the guardian record's owner. A recipient who would
+  // receive check-in notifications but does not own this guardian must not
+  // receive someone else's pickup credential.
+  process.env.WHATSAPP_ENABLED = "true";
+  process.env.WHATSAPP_PILOT_CHURCH_IDS = "churchA";
+  process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT = "100";
+
+  const seed = qrSeed();
+  seed.guardians.g_mom.parentId = "someone_else";
+  const db = makeFakeDb(seed);
+  const calls = [];
+
+  const outcome = await notifyQrDelivery(db, "churchA", qrArgs(), {
+    email: fakeEmailProviderWithSendRaw(),
+    whatsapp: fakeProvider({}, calls, "whatsapp"),
+  });
+
+  check("a guardian owned by another account is not delivered to this parent", "not_eligible", outcome);
+  check("...with nothing sent", 0, calls.length);
+
+  delete process.env.WHATSAPP_ENABLED;
+  delete process.env.WHATSAPP_PILOT_CHURCH_IDS;
+  delete process.env.WHATSAPP_MONTHLY_ALLOWANCE_DEFAULT;
+}
+
+// --- Source guards for the QR delivery wiring ----------------------------
+
+check(
+  "the check-in route calls notifyQrDelivery after notifyCheckins",
+  true,
+  (() => {
+    const checkinHandler = serverSrc.slice(serverSrc.indexOf('app.post("/api/check-in"'), serverSrc.indexOf('app.post("/api/check-out"'));
+    const notifyAt = checkinHandler.indexOf("notifyCheckins(");
+    const qrAt = checkinHandler.indexOf("notifyQrDelivery(");
+    return notifyAt !== -1 && qrAt !== -1 && notifyAt < qrAt;
+  })(),
+);
+check(
+  "...in its own try/catch, so a QR failure cannot break check-in",
+  true,
+  /try \{\s*const outcome = await notifyQrDelivery\(/.test(serverSrc),
+);
+check(
+  "the reconciliation sweep still only backfills email",
+  true,
+  (() => {
+    const reconcile = serverSrc.length && readFileSync(path.join(ROOT, "notifications", "service.ts"), "utf8");
+    const fn = reconcile.slice(reconcile.indexOf("async function reconcileRecentCheckins"));
+    // The only enqueue in that function names the email channel explicitly.
+    return /channel: "email"/.test(fn) && !/channel: "whatsapp"/.test(fn.slice(0, fn.indexOf("return newIds")));
+  })(),
 );
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

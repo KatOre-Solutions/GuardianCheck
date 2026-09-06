@@ -27,13 +27,20 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
-import { notifyCheckins, buildEventKey, runNotificationSweep } from "./notifications/service.js";
+import { notifyCheckins, notifyQrDelivery, buildEventKey, runNotificationSweep } from "./notifications/service.js";
 import { EmailProvider } from "./notifications/providers/email.js";
 import { WhatsAppProvider } from "./notifications/providers/whatsapp.js";
 import type { Occurrence } from "./notifications/service.js";
 import { startWhatsappVerification, confirmWhatsappVerification } from "./notifications/whatsapp-verification.js";
 import { normalizeToE164 } from "./src/lib/phone.js";
 import { mintGuardianQrToken } from "./guardian-tokens.js";
+import { renderGuardianQrPng } from "./notifications/qr-image.js";
+import {
+  resolveQrAccessToken,
+  logQrFetch,
+  hashQrToken,
+  QR_TOKEN_PATTERN,
+} from "./notifications/qr-access.js";
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -246,25 +253,30 @@ app.use((req, res, next) => {
   res.setHeader("X-Trace-Id", req.traceId);
   res.setHeader('Content-Type', 'application/json');
   
+  // GET /api/qr/:token carries a live credential in its path, and this log
+  // line is shipped off-server. Redacted here, at the one place every request
+  // passes through, rather than trusted to each call site.
+  const redactPath = (url: string) => url.replace(/^(\/api\/qr\/)[^/?]+/, "$1:token");
+
   // Capture response finish to log
   res.on("finish", () => {
     const duration = Date.now() - req.startTime;
     const logData = {
       traceId: req.traceId,
       method: req.method,
-      path: req.originalUrl,
+      path: redactPath(req.originalUrl),
       status: res.statusCode,
       duration: `${duration}ms`,
       userId: req.user?.uid || "unauthenticated",
       churchId: req.user?.churchId || "none",
       firestore: req.firestoreOps
     };
-    
+
     console.log(`[API_LOG] ${JSON.stringify(logData)}`);
-    
+
     // Cost Guardrail: Log warning for heavy requests
     if (req.firestoreOps.reads > 10 || req.firestoreOps.writes > 5) {
-      console.warn(`[COST_WARNING] High Firestore usage on ${req.originalUrl}:`, req.firestoreOps);
+      console.warn(`[COST_WARNING] High Firestore usage on ${redactPath(req.originalUrl)}:`, req.firestoreOps);
     }
   });
   
@@ -353,6 +365,32 @@ const whatsappOtpConfirmLimiter = rateLimit({
   skipSuccessfulRequests: true,
   requestWasSuccessful: (_req: any, res: any) => res.statusCode < 400 && res.locals.otpVerified === true,
   message: { error: "Too many attempts. Please request a new code." }
+});
+
+// GET /api/qr/:token -- the one route in this app that answers without a
+// session, because Meta's servers fetch a template's header image themselves
+// and cannot authenticate. Two limiters, because they stop different things.
+//
+// Per-token: bounds how much any single URL can be replayed, independently of
+// where the replay comes from. Keyed on a hash so the limiter's own key space
+// never holds a live token.
+const qrFetchTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req: any) => crypto.createHash("sha256").update(String(req.params?.token ?? "")).digest("hex").slice(0, 32),
+  message: { error: "Not found" }
+});
+
+// Per-IP: bounds enumeration, which by definition presents a different token
+// every time and so slips straight past the per-token limiter above. The
+// keyspace is 2^256, so this is defence in depth rather than the real
+// protection -- but it is what makes a scan expensive and, more usefully,
+// loud in qr_access_log.
+const qrFetchIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  keyGenerator: (req: any) => ipKeyGenerator(req.ip),
+  message: { error: "Not found" }
 });
 
 // Validation Middleware
@@ -863,6 +901,97 @@ async function startServer() {
     }
   );
 
+  // Serves a guardian's pickup QR as a PNG, without a session.
+  //
+  // This is the only unauthenticated route in the app, and it exists for one
+  // reason: a WhatsApp template with an image header does not carry the
+  // image. Meta's servers fetch it themselves at send time, from a URL in the
+  // send payload, and they cannot authenticate here. The email channel embeds
+  // the same QR as an inline attachment and never touches this endpoint.
+  //
+  // What stands in for authentication: a 256-bit opaque token minted per
+  // send, stored only as a SHA-256 hash, valid for QR_ACCESS_TTL_MINUTES,
+  // spendable QR_ACCESS_MAX_FETCHES times, rate-limited per token and per IP,
+  // and logged on every request including refusals. See
+  // docs/qr-endpoint-threat-model.md.
+  //
+  // Registered here rather than at module scope so it sits behind the
+  // generalLimiter mount above -- the same trap /api/auth/send-verification
+  // was in.
+  app.get("/api/qr/:token", qrFetchIpLimiter, qrFetchTokenLimiter, async (req, res) => {
+    const rawToken = String(req.params.token || "");
+    const ip = req.ip || null;
+    const userAgent = req.get("user-agent") || null;
+
+    // Every response body below is this same shape. A caller must not be able
+    // to tell "no such token" from "expired" from "the guardian was
+    // deactivated" -- the status code carries the distinction for our own
+    // debugging (404 vs 410) but the body never elaborates.
+    const refuse = async (
+      status: number,
+      outcome: "malformed" | "not_found" | "expired" | "consumed" | "guardian_unavailable" | "error",
+      tokenId: string,
+    ) => {
+      await logQrFetch(db, { tokenId, outcome, status, ip, userAgent, traceId: req.traceId }, { firestoreOps: req.firestoreOps });
+      res.status(status).json({ error: "Not found" });
+    };
+
+    // Shape-checked before Firestore is touched, so a scan of malformed
+    // values costs a regex rather than a read.
+    if (!QR_TOKEN_PATTERN.test(rawToken)) {
+      return refuse(404, "malformed", hashQrToken(rawToken));
+    }
+
+    try {
+      const resolved = await resolveQrAccessToken(db, rawToken, { firestoreOps: req.firestoreOps });
+
+      if (resolved.outcome === "not_found") return refuse(404, "not_found", resolved.tokenId);
+      // 410 rather than 404 for a token that existed and is finished: it is
+      // accurate, and it is the difference between "you guessed" and "you
+      // were too late", which matters when reading the log later.
+      if (resolved.outcome === "expired") return refuse(410, "expired", resolved.tokenId);
+      if (resolved.outcome === "consumed") return refuse(410, "consumed", resolved.tokenId);
+
+      const guardianDoc = await db.collection("guardians").doc(resolved.guardianId!).get();
+      req.firestoreOps.reads++;
+      const guardian = guardianDoc.exists ? guardianDoc.data() : null;
+
+      // Re-checked at fetch time, not trusted from mint time. A guardian
+      // deactivated between the send and Meta's fetch must not have their QR
+      // rendered -- their token no longer resolves at checkout either, so the
+      // image would be a code that cannot work.
+      if (
+        !guardian ||
+        guardian.churchId !== resolved.churchId ||
+        guardian.deleted === true ||
+        guardian.active !== true ||
+        !guardian.qrToken
+      ) {
+        return refuse(410, "guardian_unavailable", resolved.tokenId);
+      }
+
+      const png = await renderGuardianQrPng(guardian.qrToken);
+
+      await logQrFetch(db, { tokenId: resolved.tokenId, outcome: "ok", status: 200, ip, userAgent, traceId: req.traceId }, { firestoreOps: req.firestoreOps });
+
+      // The trace-id middleware sets application/json for every /api route;
+      // this one returns image bytes, so it is overridden here.
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Content-Length", String(png.length));
+      // Never cached anywhere but Meta's own 10-minute asset cache. A CDN or
+      // proxy holding this would outlive the token's whole point.
+      res.setHeader("Cache-Control", "no-store, private");
+      // helmet defaults Cross-Origin-Resource-Policy to same-origin, which
+      // would block a cross-origin fetcher. Meta is exactly that.
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.status(200).end(png);
+    } catch (error: any) {
+      // Deliberately does not include req.params.token in the message.
+      console.error("QR fetch failed:", error?.message ?? error);
+      return refuse(500, "error", hashQrToken(rawToken));
+    }
+  });
+
   // Mints (or re-mints) a guardian's pickup QR token server-side. The browser
   // used to choose this value itself with Math.random() -- see
   // guardian-tokens.ts for why that was two problems, not one. Also the
@@ -1361,6 +1490,37 @@ async function startServer() {
         }], notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
       } catch (err: any) {
         console.error("Check-in notification failed:", err.message);
+      }
+
+      // Pickup QR over WhatsApp, in its own try/catch after the notification
+      // above. Supplementary by design: the check-in email enqueued by
+      // notifyCheckins already carries this QR as an inline attachment, so
+      // every way this can decline -- flag off, church not piloted, recipient
+      // unverified, allowance spent, send failed -- leaves the parent holding
+      // the QR anyway. That is the fallback; there is no second code path.
+      if (guardianId) {
+        try {
+          const outcome = await notifyQrDelivery(db, churchId, {
+            checkinId,
+            childId,
+            guardianId,
+            serviceId,
+            dateKey: todayStr,
+            payload: {
+              childName: `${child.firstName} ${child.lastName}`,
+              time: checkInTime,
+              roomName: room.name,
+              churchName,
+              serviceName: service.name,
+            },
+          }, notificationProviders, { traceId: req.traceId, firestoreOps: req.firestoreOps });
+
+          if (outcome !== "not_eligible" && outcome !== "already_delivered") {
+            console.log(`[QR_DELIVERY] ${JSON.stringify({ checkinId, guardianId, outcome, traceId: req.traceId })}`);
+          }
+        } catch (err: any) {
+          console.error("QR delivery failed:", err.message);
+        }
       }
 
       res.json({ success: true, checkinId });
