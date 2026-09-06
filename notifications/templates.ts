@@ -46,6 +46,15 @@ export function renderEmailHtml(
       message = `An emergency alert has been triggered for <strong>${escapedChurchName}</strong>. Please follow safety protocols.`;
       color = "#dc2626"; // red
       break;
+    case "qr-delivery":
+      // Never actually enqueued for email -- notifyQrDelivery only ever
+      // creates a whatsapp record, because the email channel already carries
+      // this QR as an attachment on the ordinary check-in confirmation.
+      // Handled here so the switch stays exhaustive rather than silently
+      // rendering an untitled email if that ever changes.
+      title = "Pickup QR Code";
+      message = `Your pickup QR code for <strong>${escapedChurchName}</strong>.`;
+      break;
   }
 
   // A `cid:` reference to an attachment on this same message (see
@@ -137,6 +146,7 @@ export function emailSubject(payload: NotificationPayload, eventType: Notificati
   const verb = eventType === "check-in" ? "Checked In"
     : eventType === "check-out" ? "Checked Out"
     : eventType === "room_move" ? "Moved Rooms"
+    : eventType === "qr-delivery" ? "Pickup QR Code"
     : "Emergency Alert";
   const subject = `${payload.churchName} - ${payload.childName} ${verb}`;
   return eventType === "emergency" ? `URGENT: ${subject}` : subject;
@@ -207,5 +217,9 @@ export function whatsappSummaryText(payload: NotificationPayload, eventType: Not
       return `${names} ${plural ? "have" : "has"} been moved to ${payload.roomName} at ${payload.churchName}.`;
     case "emergency":
       return `Emergency alert at ${payload.churchName} (${time}). Please follow safety protocols.`;
+    case "qr-delivery":
+      // Single {{1}} body parameter, same as the other utility templates.
+      // The QR itself rides in the template's image header, not in this text.
+      return payload.churchName;
   }
 }

@@ -82,9 +82,10 @@ interface EnqueueArgs {
  * success rather than an error -- that is the idempotency the deterministic
  * id exists for.
  */
-async function enqueueOne(db: any, args: EnqueueArgs, ctx?: NotifyContext): Promise<string> {
+async function enqueueOne(db: any, args: EnqueueArgs, ctx?: NotifyContext): Promise<{ id: string; created: boolean }> {
   const id = computeNotificationId(args.eventKey, args.recipient.userId, args.channel);
   const now = new Date().toISOString();
+  let created = true;
   const recipientMasked = args.channel === "whatsapp" && args.recipient.whatsappNumber
     ? maskPhone(args.recipient.whatsappNumber)
     : maskEmail(args.recipient.email);
@@ -118,9 +119,14 @@ async function enqueueOne(db: any, args: EnqueueArgs, ctx?: NotifyContext): Prom
   } catch (err: any) {
     // gRPC code 6 = ALREADY_EXISTS. Anything else is a real failure.
     if (err?.code !== 6 && err?.code !== "already-exists") throw err;
+    // Not an error -- this is the idempotency the deterministic id exists
+    // for. Reported back because some callers need to distinguish "I just
+    // created this" from "this was already here": notifyQrDelivery must not
+    // re-send a QR that already went out for the same guardian and service.
+    created = false;
   }
 
-  return id;
+  return { id, created };
 }
 
 /**
@@ -166,6 +172,11 @@ async function markResult(db: any, record: NotificationRecord, result: ChannelSe
     outcome = "dead";
     patch = { status: "dead", failedAt: now, updatedAt: now, errorCode: result.errorCode ?? null, errorMessage: result.errorMessage ?? null };
   }
+
+  // Persisted on success and failure alike: a QR access token that was minted
+  // and then not used is still a token that exists, and the audit trail
+  // should be able to account for it.
+  if (result.meta?.qrTokenId) patch.qrTokenId = result.meta.qrTokenId;
 
   await ref.update(patch);
   if (ctx?.firestoreOps) ctx.firestoreOps.writes++;
@@ -313,7 +324,7 @@ export async function notifyCheckins(
     // not nothing. It's still never dispatched (not added to whatsappIds),
     // and the email records enqueued above are completely unaffected
     // either way.
-    const id = await enqueueOne(db, {
+    const { id } = await enqueueOne(db, {
       churchId,
       checkinId: group.occs[0].checkinId,
       eventKey,
@@ -333,7 +344,7 @@ export async function notifyCheckins(
     }
   }
 
-  const allIds = [...emailIdBatches.flat(), ...whatsappIds];
+  const allIds = [...emailIdBatches.flat().map((r) => r.id), ...whatsappIds];
   const results = await dispatchMany(db, allIds, providers, ctx);
 
   return {
@@ -341,6 +352,103 @@ export async function notifyCheckins(
     sent: results.filter((r) => r.result === "sent").length,
     failed: results.filter((r) => r.result === "failed" || r.result === "dead").length,
   };
+}
+
+export interface QrDeliveryArgs {
+  checkinId: string;
+  childId: string;
+  /** Whose pickup QR this is. The parent who owns this guardian record is the only recipient. */
+  guardianId: string;
+  /** Together with the date, what makes one QR per guardian per service rather than one per child. */
+  serviceId: string;
+  /** yyyyMMdd, so two services on the same day still get their own QR message. */
+  dateKey: string;
+  payload: NotificationPayload;
+}
+
+export type QrDeliveryOutcome =
+  | "not_eligible"
+  | "already_delivered"
+  | "skipped_allowance"
+  | "sent"
+  | "failed"
+  | "dead"
+  | "skipped";
+
+/**
+ * Sends the pickup QR to a parent over WhatsApp at check-in.
+ *
+ * Separate from notifyCheckins on purpose. That function notifies about
+ * something that happened to a child, consolidating per recipient and event
+ * type; this delivers a credential belonging to a guardian, and the natural
+ * unit is completely different -- the QR is per guardian, not per child, so a
+ * family checking in three siblings needs one message, not three, and the
+ * grouping key has nothing to do with which children were involved.
+ *
+ * Email is untouched by any of this. The ordinary check-in confirmation
+ * already carries the same QR as an inline attachment (providers/email.ts),
+ * which is why every early return here is safe: the parent has the QR either
+ * way, and WhatsApp is the supplementary channel. That is also why there is
+ * no fallback branch to write -- the fallback is the email that was already
+ * enqueued by notifyCheckins before this function was called.
+ */
+export async function notifyQrDelivery(
+  db: any,
+  churchId: string,
+  args: QrDeliveryArgs,
+  providers: Partial<Record<string, ChannelProvider>>,
+  ctx?: NotifyContext,
+): Promise<QrDeliveryOutcome> {
+  if (!isWhatsAppEnabledForChurch(churchId)) return "not_eligible";
+
+  const guardianDoc = await db.collection("guardians").doc(args.guardianId).get();
+  if (ctx?.firestoreOps) ctx.firestoreOps.reads++;
+  const guardian = guardianDoc.exists ? guardianDoc.data() : null;
+  if (!guardian || guardian.churchId !== churchId || guardian.deleted === true || guardian.active !== true) {
+    return "not_eligible";
+  }
+
+  // The QR belongs to this guardian, so it goes to the account that owns the
+  // record -- not to every recipient who would get a check-in notification.
+  const recipients = await resolveRecipients(db, churchId, args.childId, ctx);
+  const recipient = recipients.find((r) => r.userId === guardian.parentId);
+  if (!recipient || !isWhatsAppEligibleRecipient(recipient)) return "not_eligible";
+
+  // One QR per guardian per service per day. Deliberately independent of
+  // childId: deterministic ids then make the second and third sibling's
+  // check-in no-ops rather than duplicate messages, without needing to know
+  // whether the siblings were checked in together or minutes apart.
+  const eventKey = `qr-delivery:${args.guardianId}:${args.serviceId}:${args.dateKey}`;
+
+  const { allowed, justExhausted } = await reserveWhatsAppAllowance(db, churchId, ctx);
+
+  const { id, created } = await enqueueOne(db, {
+    churchId,
+    checkinId: args.checkinId,
+    eventKey,
+    eventType: "qr-delivery",
+    channel: "whatsapp",
+    childIds: [args.childId],
+    recipient,
+    payload: { ...args.payload, guardianId: args.guardianId },
+    traceId: ctx?.traceId,
+    initialStatus: allowed ? "queued" : "skipped_allowance",
+  }, ctx);
+
+  // Already sent for this guardian and service. Returning before dispatch is
+  // what stops sibling check-ins re-sending; the record is untouched.
+  if (!created) return "already_delivered";
+
+  if (!allowed) {
+    if (justExhausted) {
+      const emailProvider = providers.email as EmailProvider | undefined;
+      if (emailProvider) await sendAllowanceExhaustedNotice(db, churchId, emailProvider, ctx);
+    }
+    return "skipped_allowance";
+  }
+
+  const outcome = await dispatchOne(db, id, providers, ctx);
+  return outcome.result;
 }
 
 // --- Cron sweep -------------------------------------------------------
@@ -357,7 +465,10 @@ export async function notifyCheckins(
 //      `notifyCheckins` ever got called. Scoped to check-in/check-out only,
 //      matching the plan: room-move and emergency are one-off actions an
 //      admin can just retry, not safeguarding events with the same durable-
-//      intent obligation as a check-in/check-out record.
+//      intent obligation as a check-in/check-out record. qr-delivery is
+//      likewise excluded: the same QR reaches the parent on the check-in
+//      email this sweep *does* reconcile, so backfilling it would spend
+//      allowance and mint a token to re-send something already delivered.
 //
 // Every query here is a single equality (or, for the checkins scan, a single
 // range) filter with any further narrowing done in application code, so none

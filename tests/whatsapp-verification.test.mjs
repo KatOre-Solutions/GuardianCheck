@@ -399,5 +399,168 @@ console.log("\nWhatsAppProvider: business notification send\n");
   delete process.env.WHATSAPP_UTILITY_TEMPLATE_CHECKIN;
 }
 
+// --- qr-delivery: the template payload handed to Meta --------------------
+//
+// The one send in this system that carries an image. Meta fetches that image
+// itself from a URL in this payload, so what the components array contains is
+// the whole interface between us and their fetcher -- worth pinning
+// precisely, since a mistake here is a message whose image silently fails for
+// a parent.
+
+console.log("\nWhatsAppProvider: qr-delivery\n");
+
+/** The fake db above only models .doc(); qr-delivery also mints an access token, which needs .set() on a token doc. FakeDocRef already provides it. */
+const qrDeliveryDb = (over = {}) => makeFakeDb({
+  users: {
+    parent1: { whatsappNumber: "+27821234567", whatsappVerifiedAt: "2026-09-01T00:00:00.000Z" },
+  },
+  guardians: {
+    g_mom: { churchId: "churchA", parentId: "parent1", active: true, deleted: false, qrToken: "gq_" + "A".repeat(32) },
+  },
+  ...over,
+});
+
+const qrRecord = (over = {}) => ({
+  id: "notif_qr_1",
+  churchId: "churchA",
+  recipientUserId: "parent1",
+  eventType: "qr-delivery",
+  payload: { childName: "Amahle", time: "2026-09-05T09:00:00.000Z", roomName: "Elephants", churchName: "Church A", guardianId: "g_mom" },
+  ...over,
+});
+
+{
+  process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY = "qr_delivery";
+  process.env.APP_URL = "https://guardiancheck.co.za";
+  delete process.env.WHATSAPP_ACCESS_TOKEN; // mock mode
+
+  const db = qrDeliveryDb();
+  const provider = new WhatsAppProvider();
+  const result = await provider.send(qrRecord(), { db });
+
+  check("a qr-delivery send succeeds in mock mode", true, result.ok);
+  // The join to qr_access_log. A hash, never the token.
+  check("...returning the minted token's hash for the record", true, /^[0-9a-f]{64}$/.test(result.meta?.qrTokenId ?? ""));
+
+  const tokenDocs = [...db.store.entries()].filter(([k]) => k.startsWith("qr_access_tokens/"));
+  check("...having minted exactly one access token", 1, tokenDocs.length);
+  check("...stored under the hash it reported", `qr_access_tokens/${result.meta.qrTokenId}`, tokenDocs[0][0]);
+  check("...pointing at the right guardian", "g_mom", tokenDocs[0][1].guardianId);
+  check("...and back at the notification that caused it", "notif_qr_1", tokenDocs[0][1].notificationId);
+}
+
+{
+  // The component shape itself. Captured by intercepting the outbound call
+  // rather than asserting on mock-mode side effects.
+  process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY = "qr_delivery";
+  process.env.APP_URL = "https://guardiancheck.co.za";
+  process.env.WHATSAPP_ACCESS_TOKEN = "test-token";
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "123456";
+
+  const captured = [];
+  const realPost = axios.post;
+  axios.post = async (url, payload) => {
+    captured.push({ url, payload });
+    return { data: { messages: [{ id: "wamid.qr" }] } };
+  };
+
+  try {
+    const db = qrDeliveryDb();
+    const provider = new WhatsAppProvider();
+    await provider.send(qrRecord(), { db });
+
+    const components = captured[0]?.payload?.template?.components ?? [];
+    check("the template carries exactly two components", 2, components.length);
+
+    const header = components.find((c) => c.type === "header");
+    check("a header component is present", true, !!header);
+    check("...whose single parameter is an image", "image", header?.parameters?.[0]?.type);
+
+    // Meta's documented contract for a `link` asset: a public URL its servers
+    // fetch at send time.
+    const link = header?.parameters?.[0]?.image?.link ?? "";
+    check("...supplied as a link, not an uploaded media id", true, typeof link === "string" && link.length > 0);
+    check("...pointing at this app's QR endpoint over https", true, link.startsWith("https://guardiancheck.co.za/api/qr/"));
+
+    const presented = link.split("/api/qr/")[1];
+    check("...with a 43-character opaque token in the path", 43, presented.length);
+    // The decisive property: the URL token and the QR's own payload are two
+    // different secrets. Meta learns the former and never the latter.
+    check("...which is NOT the guardian's pickup token", true, presented !== ("gq_" + "A".repeat(32)));
+
+    const body = components.find((c) => c.type === "body");
+    check("a body component is present", true, !!body);
+    check("...with a single text parameter", 1, body?.parameters?.length);
+    check("...carrying the church name", "Church A", body?.parameters?.[0]?.text);
+  } finally {
+    axios.post = realPost;
+    delete process.env.WHATSAPP_ACCESS_TOKEN;
+    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+  }
+}
+
+{
+  // Meta fetches over the public internet. A missing or non-https APP_URL
+  // would produce a template whose image cannot load, which is worse than
+  // not sending: the parent gets a broken message instead of none.
+  process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY = "qr_delivery";
+  delete process.env.APP_URL;
+
+  const provider = new WhatsAppProvider();
+  const result = await provider.send(qrRecord(), { db: qrDeliveryDb() });
+  check("a missing APP_URL refuses the send", false, result.ok);
+  check("...permanently, since a retry cannot fix configuration", false, result.retryable);
+
+  process.env.APP_URL = "http://localhost:3000";
+  const insecure = await provider.send(qrRecord(), { db: qrDeliveryDb() });
+  check("a non-https APP_URL is refused too", false, insecure.ok);
+
+  process.env.APP_URL = "https://guardiancheck.co.za";
+}
+
+{
+  process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY = "qr_delivery";
+  const provider = new WhatsAppProvider();
+  const result = await provider.send(qrRecord({ payload: { churchName: "Church A" } }), { db: qrDeliveryDb() });
+  check("a record with no guardianId is refused", false, result.ok);
+  check("...and no token is minted for it", false, /qrTokenId/.test(JSON.stringify(result.meta ?? {})));
+}
+
+{
+  // A guardian deactivated between enqueue and dispatch -- which a cron retry
+  // makes a real possibility hours later.
+  process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY = "qr_delivery";
+  const db = qrDeliveryDb({
+    guardians: { g_mom: { churchId: "churchA", parentId: "parent1", active: false, deleted: false, qrToken: "gq_x" } },
+  });
+  const provider = new WhatsAppProvider();
+  const result = await provider.send(qrRecord(), { db });
+
+  check("a deactivated guardian refuses the send", false, result.ok);
+  check("...without minting a token", 0, [...db.store.keys()].filter((k) => k.startsWith("qr_access_tokens/")).length);
+}
+
+{
+  // Unset template name is the safe default: QR delivery simply never
+  // attempts a send, and the email attachment still carries the QR.
+  delete process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY;
+  const provider = new WhatsAppProvider();
+  const result = await provider.send(qrRecord(), { db: qrDeliveryDb() });
+  check("no configured template means no send", false, result.ok);
+  check("...reported as non-retryable", false, result.retryable);
+}
+
+{
+  // qr-delivery reuses the same live re-check as every other WhatsApp send.
+  process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY = "qr_delivery";
+  const db = qrDeliveryDb({ users: { parent1: { whatsappNumber: "+27821234567" } } });
+  const provider = new WhatsAppProvider();
+  const result = await provider.send(qrRecord(), { db });
+  check("a recipient no longer verified refuses the send", false, result.ok);
+
+  delete process.env.WHATSAPP_UTILITY_TEMPLATE_QR_DELIVERY;
+  delete process.env.APP_URL;
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

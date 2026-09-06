@@ -18,7 +18,17 @@
 
 export type NotificationChannel = "email" | "whatsapp";
 
-export type NotificationEventType = "check-in" | "check-out" | "room_move" | "emergency";
+/**
+ * "qr-delivery" is not a business event the way the others are -- nothing in
+ * the app "happens" to a child for it. It is the pickup QR being sent to the
+ * parent over WhatsApp at check-in time, modelled as its own event so it gets
+ * the same durable record, retry and audit treatment as everything else.
+ *
+ * It is WhatsApp-only in practice: the same QR reaches the parent by email as
+ * an inline attachment on the ordinary check-in confirmation (providers/email.ts),
+ * which is what makes this channel supplementary rather than load-bearing.
+ */
+export type NotificationEventType = "check-in" | "check-out" | "room_move" | "emergency" | "qr-delivery";
 
 export type NotificationStatus =
   | "queued"
@@ -76,6 +86,14 @@ export interface ChannelSendResult {
   errorMessage?: string;
   /** True for a transient provider condition worth trying again later. */
   retryable: boolean;
+  /**
+   * Provider-specific detail worth persisting on the record. Currently only
+   * `qrTokenId` -- the hash of the QR access token minted for a qr-delivery
+   * send, which is the join between a notification, the token it handed to
+   * Meta, and the rows in qr_access_log showing that token being fetched.
+   * A hash, never the token.
+   */
+  meta?: { qrTokenId?: string };
 }
 
 /**
@@ -106,6 +124,8 @@ export interface NotificationRecord {
   providerMessageId: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** Hash of the QR access token minted for a qr-delivery send; null for every other record. Joins this notification to its rows in qr_access_log. */
+  qrTokenId?: string | null;
   traceId: string | null;
   createdAt: string;
   updatedAt: string;
