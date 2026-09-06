@@ -288,6 +288,36 @@ function slotNameOf(
   return service?.name || UNASSIGNED;
 }
 
+/**
+ * The event a check-in belongs to, resolved the same way the historical filter
+ * resolves it.
+ *
+ * The trusted server check-in path writes neither `eventId` nor `eventName`
+ * (#106), so reading `checkin.eventName` alone made the report's Event column
+ * read "N/A" on every row a real check-in produced. Only the offline client
+ * fallback denormalises those fields, so that value is preferred when present
+ * and the service is what carries the link for everything else.
+ *
+ * Returns "" when nothing resolves, leaving the caller to render its own
+ * placeholder.
+ */
+export function eventNameOf(
+  checkin: CheckinRecord,
+  servicesById: Map<string, ServiceRecord>,
+  eventsById: Map<string, EventRecord>,
+): string {
+  if (checkin.eventName) return checkin.eventName;
+
+  const service = checkin.serviceId
+    ? servicesById.get(checkin.serviceId)
+    : undefined;
+
+  const eventId = service?.eventId || checkin.eventId;
+  const event = eventId ? eventsById.get(eventId) : undefined;
+
+  return event?.name || "";
+}
+
 /* -------------------------------------------------------------------------- */
 /* Ranges                                                                     */
 /* -------------------------------------------------------------------------- */

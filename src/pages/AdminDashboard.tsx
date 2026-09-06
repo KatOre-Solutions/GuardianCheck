@@ -65,6 +65,7 @@ import {
   buildRoomOccupancy,
   buildServiceComparison,
   delta,
+  eventNameOf,
   filterHistorical,
   findStaleCheckins,
   inRange,
@@ -72,6 +73,8 @@ import {
   sortByCheckInTimeDesc,
   spanOf,
   summarise,
+  type EventRecord,
+  type ServiceRecord,
 } from "../lib/analytics";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 
@@ -478,10 +481,26 @@ export default function AdminDashboard() {
       return;
     }
 
+    /*
+     * The Event column read `checkin.eventName`, which the trusted server
+     * check-in path never writes (#106) — so every row of a real report said
+     * "N/A". `eventNameOf` resolves it through the service, the same way the
+     * historical event filter does.
+     */
+    const servicesById = new Map<string, ServiceRecord>(
+      services.filter((s) => !s.deleted).map((s) => [s.id, s]),
+    );
+    const eventsById = new Map<string, EventRecord>(
+      events.filter((e) => !e.deleted).map((e) => [e.id, e]),
+    );
+
     const csvContent = toCsv(sortByCheckInTimeDesc(filteredCheckins), [
       { header: "Child Name", value: (c) => c.childName || "" },
       { header: "Room", value: (c) => c.roomName || "" },
-      { header: "Event", value: (c) => c.eventName || "N/A" },
+      {
+        header: "Event",
+        value: (c) => eventNameOf(c, servicesById, eventsById) || "N/A",
+      },
       { header: "Service", value: (c) => c.serviceName || "N/A" },
       {
         header: "Check-In Time",
@@ -1304,10 +1323,10 @@ export default function AdminDashboard() {
             trendLabel={`vs previous ${analyticsTimeRange} days`}
           />
           <StatCard
-            label="Unique children"
+            label="Children attending"
             value={summary.uniqueChildren}
             scope={`${analyticsTimeRange} days`}
-            hint="Distinct children who attended at least once in this range."
+            hint="How many different children came at least once. Each child is counted once no matter how often they attended, so this is smaller than Check-ins."
             icon={<Users className="h-6 w-6 text-green-600 dark:text-green-400" />}
             color="bg-green-50 dark:bg-green-900/20"
             trend={childrenDelta}
@@ -1676,7 +1695,10 @@ export default function AdminDashboard() {
             <p className="text-3xl font-bold text-gray-900 dark:text-white">{historicalSummary.totalCheckins}</p>
           </div>
           <div className="bg-primary/10 dark:bg-primary/20 p-6 rounded-2xl border border-primary/20 dark:border-primary/30">
-            <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase tracking-wider mb-1">Unique children</p>
+            <p className="text-xs font-bold text-primary dark:text-primary/80 uppercase tracking-wider mb-1">
+              Children attending
+              <HelpTooltip text="How many different children came at least once among the filtered records. Each child is counted once no matter how often they attended." />
+            </p>
             <p className="text-3xl font-bold text-gray-900 dark:text-white">
               {historicalSummary.uniqueChildren}
             </p>

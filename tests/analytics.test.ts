@@ -27,6 +27,7 @@ import {
   buildServiceComparison,
   countServicesHeld,
   delta,
+  eventNameOf,
   filterHistorical,
   findStaleCheckins,
   inRange,
@@ -340,6 +341,44 @@ const offline: CheckinRecord[] = [
   { id: "off1", childId: "z", eventId: "evt-today", checkInTime: at(2026, 9, 6, 9, 0) },
 ];
 check("offline records still match on their own eventId", 1, filterHistorical(offline, services, "evt-today", "").length);
+
+/* -------------------------------------------------------------------------- */
+/* eventNameOf                                                                */
+/* -------------------------------------------------------------------------- */
+
+/* The attendance report's Event column read `checkin.eventName` directly.
+ * The trusted server check-in path writes neither `eventId` nor `eventName`
+ * (#106), so every row of a real report said "N/A". */
+const byServiceId = new Map(services.map((s) => [s.id, s]));
+const byEventId = new Map(events.map((e) => [e.id, e]));
+const named = (checkin: CheckinRecord) =>
+  eventNameOf(checkin, byServiceId, byEventId);
+
+check(
+  "event name resolves through the service when the record carries none",
+  "Sunday Service",
+  named({ id: "n1", serviceId: "svc-today-9", checkInTime: at(2026, 9, 6, 9, 0) }),
+);
+check(
+  "a denormalised eventName wins, so a deleted event still reports",
+  "Christmas Carols",
+  named({ id: "n2", serviceId: "svc-today-9", eventName: "Christmas Carols" }),
+);
+check(
+  "an offline record's own eventId still resolves",
+  "Youth Night",
+  named({ id: "n3", eventId: "evt-youth" }),
+);
+check(
+  "a record tied to nothing resolves to empty, not to some other event",
+  "",
+  named({ id: "n4", checkInTime: at(2026, 9, 6, 9, 0) }),
+);
+check(
+  "an unknown serviceId does not throw or invent a name",
+  "",
+  named({ id: "n5", serviceId: "svc-gone" }),
+);
 
 /* -------------------------------------------------------------------------- */
 /* spanOf                                                                     */
