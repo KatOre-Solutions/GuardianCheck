@@ -727,7 +727,6 @@ export default function ParentDashboard() {
                   id={`qr-child-${child.id}`}
                   value={child.qrCode}
                   size={256}
-                  viewBox="0 0 256 256"
                   style={{ width: "100%", height: "auto", display: "block" }}
                 />
               </div>
@@ -1029,7 +1028,6 @@ export default function ParentDashboard() {
                               id={`qr-${guardian.id}`}
                               value={guardian.qrToken}
                               size={256}
-                              viewBox="0 0 256 256"
                               style={{ width: "100%", height: "auto", display: "block" }}
                             />
                           </div>
@@ -1504,7 +1502,6 @@ export default function ParentDashboard() {
                         <QRCode
                           value={groupQRValue}
                           size={256}
-                          viewBox="0 0 256 256"
                           style={{ width: "100%", height: "auto", maxWidth: 240 }}
                         />
                       </div>

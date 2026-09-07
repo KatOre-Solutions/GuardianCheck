@@ -5,7 +5,7 @@ import {
   clearStoredCamera,
   pickRearCamera,
   readStoredCamera,
-  resolveCamera,
+  resolveWithPreference,
   selectableCameras,
   storedCameraIsStale,
   writeStoredCamera,
@@ -55,10 +55,17 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
    *  Null is a real answer — see `pickRearCamera` — and means this phone has no
    *  recommendation to show, not that we forgot to compute one. */
   const [recommendedId, setRecommendedId] = useState<string | null>(null);
+  /** Set when a manual pick could not be honoured because it no longer names a
+   *  device we can see. The picker visibly snapping to another camera is
+   *  otherwise unexplained, and a volunteer will just keep re-tapping it. */
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null);
   const [trackInfo, setTrackInfo] = useState<TrackInfo | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMounted = useRef(true);
+  /** Re-entrancy lock for `startCamera`. A ref, not state: a start already in
+   *  flight has to be visible to the very next call, and state would not be. */
+  const startingRef = useRef(false);
 
   const onScanSuccessRef = useRef(onScanSuccess);
   const onScanFailureRef = useRef(onScanFailure);
@@ -112,7 +119,13 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
    * sticky on that phone, which is worse than the bug this fixes.
    */
   const startCamera = useCallback(async (preferredId?: string) => {
-    if (!scannerRef.current || isCameraActive || isInitializing) return;
+    /* Two separate conditions, deliberately not read from state: a start
+     * already in flight (the ref), and a camera already running (the library's
+     * own truth, which the cleanup and stopCamera already trust). Reading
+     * `isCameraActive` here instead is what broke the picker — switchCamera's
+     * restart ran against a closure that still had it baked in as true. */
+    if (!scannerRef.current || startingRef.current || scannerRef.current.isScanning) return;
+    startingRef.current = true;
 
     setIsInitializing(true);
     setIsCameraActive(true); // Hide overlay immediately
@@ -131,13 +144,22 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
       aspectRatio: 1.0
     };
 
-    const onDecoded = (text: string) => {
-      stopCamera();
+    const onDecoded = async (text: string) => {
+      /* Awaited so the track is down before the success handler runs: it
+       * usually navigates or unmounts, and the unmount cleanup's own stop()
+       * would then race this one, which html5-qrcode rejects. */
+      await stopCamera();
       onScanSuccessRef.current(text);
     };
     const onDecodeError = (err: string) => onScanFailureRef.current?.(err);
 
-    /* Enumerating needs camera permission for labels to be populated, so this
+    /* Everything from here to the try below must stay non-throwing: it runs
+     * outside that try, so a throw would skip the finally and leave the
+     * re-entrancy lock set, permanently wedging the camera shut. It holds today
+     * -- getCameras has its own catch, readStoredCamera is fully try-wrapped,
+     * and the camera.ts helpers all tolerate a null device list.
+     *
+     * Enumerating needs camera permission for labels to be populated, so this
      * is also what triggers the prompt on first use. A failure here is not
      * fatal -- it just means we fall through to the facingMode chain. */
     let devices: CameraDevice[] = [];
@@ -160,9 +182,20 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
       clearStoredCamera();
     }
 
-    const target = preferredId
-      ? { deviceId: preferredId, source: "manual" as CameraSource }
-      : resolveCamera(devices, stored);
+    const target = resolveWithPreference(devices, stored, preferredId);
+
+    /* Only a pick that still resolves comes back as "manual", so anything else
+     * here means the chosen id no longer names a visible device. Say so rather
+     * than silently opening something the volunteer did not ask for. */
+    const preferenceDropped = !!preferredId && target?.source !== "manual";
+
+    if (isMounted.current) {
+      setPickerNotice(
+        preferenceDropped
+          ? "That camera is no longer available — using the recommended one."
+          : null,
+      );
+    }
 
     /** Reads what the track actually gave us, so a wrong lens is visible
      *  rather than mysterious. Capabilities are absent on some browsers. */
@@ -249,11 +282,14 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
         }
       }
     } finally {
+      /* Outside the isMounted check on purpose: the lock is a ref, not state,
+       * and has to be released even when the component is going away. */
+      startingRef.current = false;
       if (isMounted.current) {
         setIsInitializing(false);
       }
     }
-  }, [fps, isCameraActive, isInitializing, stopCamera]);
+  }, [fps, stopCamera]);
 
   /**
    * The recovery path. The ranking cannot detect its own mistakes -- a wrong
@@ -262,11 +298,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
    */
   const switchCamera = async (deviceId: string) => {
     await stopCamera();
-    /* stopCamera's state update is async; startCamera guards on isCameraActive,
-     * so hand it a clean slate before restarting. */
-    setIsCameraActive(false);
-    setIsInitializing(false);
-    setTimeout(() => startCamera(deviceId), 0);
+    await startCamera(deviceId);
   };
 
   // Where scanning is the entire purpose of the screen, making the volunteer
@@ -274,8 +306,7 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
   // startCamera early-returns if it is already active or initialising.
   useEffect(() => {
     if (autoStart) startCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStart]);
+  }, [autoStart, startCamera]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -351,7 +382,10 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
             id={`${elementId}-camera`}
             value={activeCameraId ?? ""}
             onChange={(e) => switchCamera(e.target.value)}
-            className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary"
+            /* A second change mid-start would be swallowed by the re-entrancy
+               lock, leaving the picker showing a camera that never opened. */
+            disabled={isInitializing}
+            className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
           >
             {/* Only reachable via the facingMode fallback, where the browser
                 picked the lens and we cannot say which. Name the camera the
@@ -371,8 +405,15 @@ export function QRScanner({ onScanSuccess, onScanFailure, fps = 10, elementId = 
               </option>
             ))}
           </select>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Blurry or zoomed out? Try another camera — this phone will remember your choice.
+          <p
+            className={`text-xs ${
+              pickerNotice
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-gray-500 dark:text-gray-400"
+            }`}
+          >
+            {pickerNotice ??
+              "Blurry or zoomed out? Try another camera — this phone will remember your choice."}
           </p>
         </div>
       )}
