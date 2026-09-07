@@ -10,8 +10,14 @@
 /* html5-qrcode injects a <video> with an inline pixel width and no height, so the
    element sizes itself from the camera stream's intrinsic aspect ratio. On iOS that
    yields a small landscape strip inside the square frame. Force it to fill the
-   scanner area instead. !important is required to beat the library's inline width. */
-#qr-reader video {
+   scanner area instead. !important is required to beat the library's inline width.
+
+   Every scanner mount point needs this, not just the first one: QRScanner takes an
+   `elementId` prop so two scanners can coexist, and CheckOutTab mounts as
+   #qr-reader-checkout. That instance went without this rule -- and so stayed
+   letterboxed on iOS -- from the day the rule was added. Attribute-prefix matching
+   covers any future id rather than waiting for the next one to be missed. */
+[id^="qr-reader"] video {
   width: 100% !important;
   height: 100% !important;
   object-fit: cover;
