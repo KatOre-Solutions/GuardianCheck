@@ -185,14 +185,26 @@ export function selectableCameras(devices: CameraDevice[]): CameraDevice[] {
   const rear = all.filter(isRear);
   const candidates = rear.length > 0 ? rear : all.filter((d) => !isFront(d));
 
-  if (candidates.length === 0) return [...all];
+  /* Ranked even here: "best-guess first" is the contract every caller reads,
+   * and a front-only set can still contain a problem lens worth sorting last. */
+  const offered = candidates.length > 0 ? candidates : all;
 
-  return [...candidates].sort((a, b) => scoreOf(b) - scoreOf(a));
+  return [...offered].sort((a, b) => scoreOf(b) - scoreOf(a));
 }
 
 /* -------------------------------------------------------------------------- */
 /* Rung 1 — the persisted known-good camera                                   */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Whether two labels can be said to contradict each other.
+ *
+ * A blank label is an absence, not a disagreement: `enumerateDevices` returns
+ * blank labels before permission is granted, and a pick saved for a device that
+ * was not in the list is stored with a blank label. Treating either as a
+ * contradiction would discard a volunteer's saved choice for no reason.
+ */
+const labelsAgree = (a: string, b: string) => !a || !b || a === b;
 
 /**
  * Resolves a stored choice against the devices actually present.
@@ -210,7 +222,12 @@ export function findStoredCamera(
 
   const byId = (devices || []).find((d) => d.id === stored.id);
 
-  if (byId) return byId;
+  /* An id match alone is not enough. Ids rotate, and a rotated id can land on a
+   * different physical lens — which would then open silently while reporting
+   * itself as the most-trusted rung. Corroborate with the label where we have
+   * one on both sides; a contradicted id falls through to the label match
+   * below, which is the designed recovery for exactly this. */
+  if (byId && labelsAgree(stored.label, byId.label)) return byId;
 
   if (!stored.label) return null;
 
@@ -236,6 +253,33 @@ export function resolveCamera(
   if (ranked) return { deviceId: ranked, source: "ranked" };
 
   return null;
+}
+
+/**
+ * Rung 3 — the ladder with a human's pick on top of it.
+ *
+ * A manual choice is honoured only while it still names a device we can see.
+ * Ids rotate, so a pick made moments ago can address nothing by the time the
+ * camera restarts, and starting on a dead id throws — where the caller's only
+ * rescue is the `facingMode` chain, i.e. the browser picking the lens again.
+ * That is the original bug, reached through the escape hatch added to fix it,
+ * so a pick that no longer resolves is dropped here instead.
+ *
+ * An empty list means enumeration failed, not that the camera is gone. The pick
+ * stands in that case: distrusting it there lands on that same chain.
+ */
+export function resolveWithPreference(
+  devices: CameraDevice[],
+  stored: StoredCamera | null,
+  preferredId?: string,
+): ResolvedCamera | null {
+  const list = devices || [];
+
+  if (preferredId && (list.length === 0 || list.some((d) => d.id === preferredId))) {
+    return { deviceId: preferredId, source: "manual" };
+  }
+
+  return resolveCamera(list, stored);
 }
 
 /** True when a stored entry no longer matches any present device, so the

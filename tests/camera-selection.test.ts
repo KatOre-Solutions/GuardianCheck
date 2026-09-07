@@ -17,6 +17,7 @@ import {
   findStoredCamera,
   pickRearCamera,
   resolveCamera,
+  resolveWithPreference,
   selectableCameras,
   storedCameraIsStale,
   type CameraDevice,
@@ -149,6 +150,14 @@ check("blank-label set still offers something", 2, selectableCameras(unpermissio
 check("no devices means nothing to offer", 0, selectableCameras([]).length);
 check("a lone webcam is still offered", 1, selectableCameras(laptop).length);
 
+/* The fallback list is ranked too — "best-guess first" is the contract, and a
+ * front-only set can still hold a lens worth sorting last. */
+check(
+  "a front-only fallback list is still best-guess first",
+  "f-plain",
+  selectableCameras([dev("f-macro", "Front Macro Camera"), dev("f-plain", "Front Camera")])[0].id,
+);
+
 /* -------------------------------------------------------------------------- */
 /* findStoredCamera / staleness                                               */
 /* -------------------------------------------------------------------------- */
@@ -172,6 +181,34 @@ check("no stored entry is not stale", false, storedCameraIsStale(iphonePro, null
 
 const storedNoLabel: StoredCamera = { id: "gone", label: "" };
 check("a rotated id with no label cannot be recovered", null, findStoredCamera(iphonePro, storedNoLabel));
+
+/* The dangerous half of rotation: the id does not go missing, it gets reused by
+ * a different physical lens. Nothing looks wrong — it resolves, and resolves as
+ * the most-trusted rung — so the stored label is the only thing that can catch
+ * it. Here "ios-ultra" now names the fixed-focus ultra-wide this PR exists to
+ * avoid, while the volunteer actually confirmed "Back Camera". */
+const storedReassigned: StoredCamera = { id: "ios-ultra", label: "Back Camera" };
+check("a reassigned id loses to the stored label", "ios-back", findStoredCamera(iphonePro, storedReassigned)?.id);
+check("and is not stale, because the label recovered it", false, storedCameraIsStale(iphonePro, storedReassigned));
+
+const storedReassignedGone: StoredCamera = { id: "ios-ultra", label: "Some Removed Camera" };
+check("a reassigned id whose label is gone resolves to null", null, findStoredCamera(iphonePro, storedReassignedGone));
+check("and is reported stale so the bad entry is discarded", true, storedCameraIsStale(iphonePro, storedReassignedGone));
+
+/* A blank label is an absence, not a contradiction. Both directions must keep
+ * working, or a saved choice is thrown away on any load where labels were not
+ * populated — which is every load before permission is granted. */
+const blankLabels: CameraDevice[] = [dev("ios-back", ""), dev("ios-front", "")];
+check(
+  "a blank device label does not veto an id match",
+  "ios-back",
+  findStoredCamera(blankLabels, { id: "ios-back", label: "Back Camera" })?.id,
+);
+check(
+  "a blank stored label still trusts its id",
+  "ios-back",
+  findStoredCamera(iphonePro, { id: "ios-back", label: "" })?.id,
+);
 
 /* -------------------------------------------------------------------------- */
 /* resolveCamera — the ladder                                                 */
@@ -205,6 +242,64 @@ check(
   "falling through does not throw on a stale entry with no devices",
   null,
   resolveCamera([], storedGone),
+);
+
+/* A contradicted entry must not keep claiming the ladder's most-trusted rung. */
+const contradicted = resolveCamera(iphonePro, storedReassignedGone);
+check("a contradicted entry falls through to the ranking", "ios-triple", contradicted?.deviceId);
+check("and is reported as ranked, not persisted", "ranked", contradicted?.source);
+
+/* -------------------------------------------------------------------------- */
+/* resolveWithPreference — rung 3, the human's pick                           */
+/* -------------------------------------------------------------------------- */
+
+check(
+  "a manual pick that still exists is honoured",
+  "ios-ultra",
+  resolveWithPreference(iphonePro, null, "ios-ultra")?.deviceId,
+);
+check(
+  "and is reported as manual",
+  "manual",
+  resolveWithPreference(iphonePro, null, "ios-ultra")?.source,
+);
+
+/* The id rotated between the picker listing it and the camera restarting.
+ * Passing it to start() anyway throws, and the only rescue left is the
+ * facingMode chain — the very bug the picker exists to escape. */
+check(
+  "a pick that no longer exists is dropped, not passed through",
+  "ios-triple",
+  resolveWithPreference(iphonePro, null, "vanished")?.deviceId,
+);
+check(
+  "and the source names the rung that actually decided",
+  "ranked",
+  resolveWithPreference(iphonePro, null, "vanished")?.source,
+);
+check(
+  "a dropped pick still yields to a persisted entry",
+  "ios-back",
+  resolveWithPreference(iphonePro, storedRotatedId, "vanished")?.deviceId,
+);
+
+/* An empty list means enumeration failed, not that the camera vanished. */
+check(
+  "a pick survives a failed enumeration",
+  "ios-ultra",
+  resolveWithPreference([], null, "ios-ultra")?.deviceId,
+);
+check("and is still manual", "manual", resolveWithPreference([], null, "ios-ultra")?.source);
+
+check(
+  "no preference behaves exactly like resolveCamera",
+  "ios-triple",
+  resolveWithPreference(iphonePro, null)?.deviceId,
+);
+check(
+  "no preference and nothing to rank falls through to the caller",
+  null,
+  resolveWithPreference(localised, null),
 );
 
 /* -------------------------------------------------------------------------- */
