@@ -3,6 +3,7 @@ import { useNavigate, useLocation, useMatch } from "react-router-dom";
 import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
+import { RESERVED_SLUGS } from "../constants/appRoutes";
 
 interface ChurchBranding {
   logoUrl?: string;
@@ -39,8 +40,11 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const urlChurchSlug = match?.params.churchSlug;
   const { userData, loading: authLoading } = useAuth();
   
-  const reservedKeywords = ["login", "register-church", "accept-invite", "complete-profile", "pending-approval", "rejected", "profile", "master-admin", "admin", "volunteer", "parent", "api", "assets", "static", "policy-acceptance"];
-  const isReserved = !!urlChurchSlug && reservedKeywords.includes(urlChurchSlug);
+  // Derived from the route manifest, not a second hand-maintained copy of it.
+  // The copy had already fallen behind: /app was absent, so launching the
+  // installed app looked up a church called "app", found none, and raised a
+  // not-found error that outlived the redirect that followed.
+  const isReserved = !!urlChurchSlug && RESERVED_SLUGS.includes(urlChurchSlug);
   
   // Use slug from URL if it's not a reserved keyword, otherwise fallback to user's church slug
   const churchSlug = isReserved ? userData?.churchSlug : (urlChurchSlug || userData?.churchSlug);
@@ -52,6 +56,13 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const location = useLocation();
 
   useEffect(() => {
+    // Every lookup after this one supersedes it. Without the guard a slow
+    // response from a slug the user has already navigated away from lands on
+    // top of the current one, and the two halves of the page disagree: the
+    // header renders the church that resolved while the body renders the
+    // not-found state left behind by the stale request.
+    let superseded = false;
+
     async function fetchChurch() {
       // If we're still loading auth and don't have a valid URL slug, wait
       if (authLoading && (!urlChurchSlug || isReserved)) return;
@@ -77,7 +88,8 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           limit(1)
         );
         const querySnapshot = await getDocs(q);
-        
+        if (superseded) return;
+
         if (querySnapshot.empty) {
           setError("Church not found");
           setChurch(null);
@@ -110,14 +122,25 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (err) {
+        if (superseded) return;
         console.error("Error fetching church:", err);
         setError("Failed to load church details");
+        // Dropped alongside the error. Leaving the previous church in place
+        // would render one tenant's branding and pages under another tenant's
+        // URL -- the failure this whole context exists to prevent.
+        setChurch(null);
       } finally {
-        setLoading(false);
+        if (!superseded) setLoading(false);
       }
     }
 
     fetchChurch();
+
+    return () => {
+      superseded = true;
+    };
+    // `churchSlug` is the only input to the query, so navigating between two
+    // reserved paths that resolve to the same church must not refetch it.
   }, [churchSlug, authLoading]);
 
   return (
