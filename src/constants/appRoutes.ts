@@ -30,6 +30,9 @@
 /** Exact top-level paths, each declared by a `<Route path=…>` in `App.tsx`. */
 export const EXACT_ROUTES = [
   "/",
+  // The installed PWA's start_url. It must be a real route at the edge or the
+  // app opens on a 404 from the home screen.
+  "/app",
   "/login",
   "/register-church",
   "/accept-invite",
