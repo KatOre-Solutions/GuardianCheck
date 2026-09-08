@@ -25,12 +25,23 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <!--
-      Manifest scope is deliberately favicon + theme only. `display: browser` keeps this
-      out of installable-PWA territory, which would need a service worker and an offline
-      story the marketing site has no reason to own.
+      Installable app. `display: standalone` plus the fetch handler in public/sw.js is
+      what makes Chrome offer "Install"; the manifest's start_url is /app, which routes
+      each signed-in user to the dashboard their role owns.
     -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#2563eb" />
+
+    <!--
+      iOS. Safari reads none of the manifest for "Add to Home Screen" before iOS 17 and
+      still prefers these, so the standalone chrome and the home-screen title have to be
+      declared here as well. `black-translucent` lets the app paint under the status bar;
+      the app's own sticky header supplies the safe-area padding.
+    -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="GuardianCheck" />
 
     <!--
       Social cards. These static values describe the home page and are what most

@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+  Shown by sw.js when a page load fails with no network. It has to stand alone:
+  no bundle, no fonts, no images beyond the precached icon, because by
+  definition nothing can be fetched when this renders.
+-->
+<html lang="en-ZA">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Offline — GuardianCheck</title>
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f9fafb;
+        --card: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --primary: #2563eb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #030712;
+          --card: #111827;
+          --text: #f9fafb;
+          --muted: #9ca3af;
+          --border: #1f2937;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      .card {
+        width: 100%;
+        max-width: 26rem;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 32px 28px;
+        text-align: center;
+      }
+      img { width: 56px; height: 56px; border-radius: 14px; }
+      h1 { font-size: 1.25rem; margin: 20px 0 8px; }
+      p { color: var(--muted); font-size: 0.925rem; line-height: 1.55; margin: 0 0 24px; }
+      button {
+        width: 100%;
+        padding: 12px 16px;
+        font: inherit;
+        font-weight: 600;
+        color: #ffffff;
+        background: var(--primary);
+        border: 0;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button:hover { filter: brightness(0.95); }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <img src="/icon.svg" alt="GuardianCheck" />
+      <h1>You're offline</h1>
+      <p>
+        GuardianCheck needs a connection to load check-in data. Reconnect to Wi-Fi or mobile data,
+        then try again.
+      </p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+    <script>
+      // Reload the moment the device comes back, so a parent waiting at pickup
+      // doesn't have to notice and tap.
+      addEventListener("online", function () {
+        location.reload();
+      });
+    </script>
+  </body>
+</html>
