@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation, useMatch } from "react-router-dom";
 import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -48,6 +48,13 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [church, setChurch] = useState<Church | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /* The slug of the lookup that is in flight or already resolved. The effect
+     also depends on `authLoading`, so on a tenant URL it ran twice -- once
+     while auth was pending and again when it settled -- and the second run's
+     `setLoading(true)` re-showed the placeholder *after* the page had already
+     painted. The slug is the only input to the query, so a re-run for the same
+     one has nothing to do. */
+  const fetchedSlug = useRef<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -57,10 +64,14 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       if (authLoading && (!urlChurchSlug || isReserved)) return;
 
       if (!churchSlug) {
+        fetchedSlug.current = null;
         setChurch(null);
         setLoading(false);
         return;
       }
+
+      if (fetchedSlug.current === churchSlug) return;
+      fetchedSlug.current = churchSlug;
 
       setLoading(true);
       setError(null);
@@ -111,6 +122,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         console.error("Error fetching church:", err);
+        // Let a later run try again -- the guard above is there to stop
+        // duplicate work, not to make a failure permanent.
+        fetchedSlug.current = null;
         setError("Failed to load church details");
       } finally {
         setLoading(false);

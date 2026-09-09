@@ -31,6 +31,7 @@ import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
 import { isKnownAppPath } from "./constants/appRoutes";
 import { Seo } from "./components/Seo";
+import { PageLoading } from "./components/PageLoading";
 
 function DashboardRedirect() {
   const { user, userData, roles, loading } = useAuth();
@@ -74,16 +75,16 @@ function DashboardRedirect() {
   // never reach ProtectedRoute, so they need their own noindex rather than
   // inheriting whatever head tags the previous route left behind.
   return (
-    <div className="min-h-[60vh] flex items-center justify-center">
+    <>
       <Seo title="Dashboard" noindex />
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-    </div>
+      <PageLoading />
+    </>
   );
 }
 
 function Navigation() {
-  const { user, roles, userData } = useAuth();
-  const { church } = useTenant();
+  const { user, roles, userData, loading: authLoading } = useAuth();
+  const { church, loading: tenantLoading } = useTenant();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -144,12 +145,27 @@ function Navigation() {
                 <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
               </span>
               <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0">
-                {church?.name || "GuardianCheck"}
+                {/* On a tenant URL the church's name is coming; showing
+                    "GuardianCheck" first and replacing it is a visible swap in
+                    the header. Hold the space until we know. */}
+                {tenantLoading && !church ? (
+                  <span className="inline-block h-5 w-40 align-middle rounded bg-gray-100 dark:bg-gray-800" aria-hidden="true" />
+                ) : (
+                  church?.name || "GuardianCheck"
+                )}
               </span>
             </Link>
           </div>
 
-          {user ? (
+          {authLoading ? (
+            /* Not signed out -- not yet known. Rendering the signed-out
+               buttons here and replacing them a moment later is a guaranteed
+               swap in the header; this holds the same space silently. */
+            <div className="flex items-center space-x-2 sm:space-x-3 shrink-0" aria-hidden="true">
+              <div className="h-9 w-20 rounded-lg bg-gray-100 dark:bg-gray-800" />
+              <div className="h-9 w-16 rounded-lg bg-gray-100 dark:bg-gray-800" />
+            </div>
+          ) : user ? (
             <>
               {/* Every role link at once overflows anything narrower than a
                   laptop, so below `lg` they move into the sheet under this
@@ -259,11 +275,7 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   }, [user, role, roles, status, loading, tenantLoading, navigate, allowedRoles, church, userData]);
 
   if (loading || tenantLoading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
+    return <PageLoading />;
   }
 
   const hasAccess = roles.some(r => allowedRoles.includes(r as any));
@@ -277,7 +289,12 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
       <Seo title="Dashboard" noindex />
       {children}
     </>
-  ) : null;
+  ) : (
+    // Not a dead end: the effect above is redirecting. Returning null here
+    // blanked the page for the length of that navigation, which is the empty
+    // frame at the start of the load.
+    <PageLoading />
+  );
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
@@ -296,10 +313,12 @@ function TenantLayout() {
   const location = useLocation();
 
   if (loading) {
+    // Inside <Layout>: this branch used to render bare, so the header vanished
+    // at the start of every tenant navigation and reappeared a moment later.
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
+      <Layout>
+        <PageLoading />
+      </Layout>
     );
   }
 
@@ -373,30 +392,36 @@ export default function App() {
                 <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
               
                 {/* Generic Role Redirects */}
-                <Route path="/admin" element={<DashboardRedirect />} />
-                <Route path="/volunteer" element={<DashboardRedirect />} />
-                <Route path="/parent" element={<DashboardRedirect />} />
+                <Route path="/admin" element={<Layout><DashboardRedirect /></Layout>} />
+                <Route path="/volunteer" element={<Layout><DashboardRedirect /></Layout>} />
+                <Route path="/parent" element={<Layout><DashboardRedirect /></Layout>} />
 
                 <Route path="/profile" element={
-                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
-                    <PolicyGuard>
-                      <Layout><Profile /></Layout>
-                    </PolicyGuard>
-                  </ProtectedRoute>
+                  <Layout>
+                    <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
+                      <PolicyGuard>
+                        <Profile />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  </Layout>
                 } />
                 <Route path="/master-admin" element={
-                  <ProtectedRoute allowedRoles={["master_admin"]}>
-                    <PolicyGuard>
-                      <Layout><MasterAdminDashboard /></Layout>
-                    </PolicyGuard>
-                  </ProtectedRoute>
+                  <Layout>
+                    <ProtectedRoute allowedRoles={["master_admin"]}>
+                      <PolicyGuard>
+                        <MasterAdminDashboard />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  </Layout>
                 } />
                 <Route path="/master-admin/logs" element={
-                  <ProtectedRoute allowedRoles={["master_admin"]}>
-                    <PolicyGuard>
-                      <Layout><MasterAdminLogs /></Layout>
-                    </PolicyGuard>
-                  </ProtectedRoute>
+                  <Layout>
+                    <ProtectedRoute allowedRoles={["master_admin"]}>
+                      <PolicyGuard>
+                        <MasterAdminLogs />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  </Layout>
                 } />
 
                 {/* Tenant Routes */}

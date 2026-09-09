@@ -4,6 +4,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { CURRENT_POLICY_VERSION } from "../constants/legalContent";
+import { PageLoading } from "./PageLoading";
 
 interface PolicyGuardProps {
   children: React.ReactNode;
@@ -58,11 +59,7 @@ export function PolicyGuard({ children }: PolicyGuardProps) {
   }, [user, authLoading, navigate, location.pathname]);
 
   if (authLoading || loading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
+    return <PageLoading />;
   }
 
   // If on policy page, or user is not logged in (AuthGuard handles that), or accepted
@@ -70,5 +67,8 @@ export function PolicyGuard({ children }: PolicyGuardProps) {
     return <>{children}</>;
   }
 
-  return null;
+  // Redirecting to /policy-acceptance, or the acceptance read failed. Either
+  // way the user is on their way somewhere -- returning null showed a blank
+  // page for the length of that navigation.
+  return <PageLoading />;
 }
