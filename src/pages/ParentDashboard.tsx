@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
+import { DashboardSkeleton } from "../components/Skeleton";
+import { AccessDenied } from "../components/AccessDenied";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
@@ -13,7 +15,10 @@ import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-ha
 import { registerChild } from "../lib/api";
 
 export default function ParentDashboard() {
-  const { user, userData, role, roles } = useAuth();
+  const { user, userData, role, roles, loading: authLoading } = useAuth();
+  // Membership, not `role`. A parent whose roles are ["volunteer","parent"]
+  // could not open their own dashboard.
+  const isParent = roles.includes("parent") || roles.includes("admin") || roles.includes("master_admin");
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
   const [children, setChildren] = useState<any[]>([]);
@@ -553,10 +558,16 @@ export default function ParentDashboard() {
     img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
   };
 
+  // A permission decision may only be rendered once auth has settled, and a
+  // signed-out visitor is ProtectedRoute's redirect to make, not a message here.
+  if (authLoading) {
+    return <DashboardSkeleton />;
+  }
+
   if (!user) return <div className="text-center py-12">Please login to view your dashboard.</div>;
 
-  if (role !== "admin" && role !== "parent" && !roles.includes("master_admin")) {
-    return <div className="text-center py-12">Access denied. Parent permissions required.</div>;
+  if (!isParent) {
+    return <AccessDenied requirement="parent" />;
   }
 
   return (

@@ -55,7 +55,8 @@ import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { useActiveService } from "../hooks/useActiveService";
 import SetupWizard from "../components/SetupWizard";
-import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+import { DashboardSkeleton } from "../components/Skeleton";
+import { AccessDenied } from "../components/AccessDenied";
 import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
 import ChildrenDirectory from "../components/ChildrenDirectory";
@@ -162,7 +163,10 @@ const StatCard = ({
 );
 
 export default function AdminDashboard() {
-  const { user, role, roles, userData, darkMode } = useAuth();
+  const { user, role, roles, userData, darkMode, loading: authLoading } = useAuth();
+  // Membership, not `role`. `role` is roles[0], so an account whose roles are
+  // ["volunteer","admin"] was permanently denied its own admin dashboard.
+  const isAdmin = roles.includes("admin") || roles.includes("master_admin");
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
   const { activeService, loading: serviceLoading } = useActiveService();
@@ -903,8 +907,15 @@ export default function AdminDashboard() {
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
   );
 
-  if (role !== "admin" && !roles.includes("master_admin")) {
-    return <div className="text-center py-12">Access denied. Admin permissions required.</div>;
+  // Order matters: a permission decision may only be rendered once auth has
+  // settled. `roles` starts empty, so checking first meant every admin saw
+  // "Access denied" flash on the way to their own dashboard.
+  if (authLoading) {
+    return <DashboardSkeleton />;
+  }
+
+  if (!isAdmin) {
+    return <AccessDenied requirement="admin" />;
   }
 
   if (serviceLoading && !churchData) {

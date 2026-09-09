@@ -28,10 +28,13 @@ import { hasRecordedAllergies } from "../lib/child-utils";
 import { useActiveService } from "../hooks/useActiveService";
 import { activateService, closeService } from "../lib/firestore";
 import { DashboardSkeleton } from "../components/Skeleton";
+import { AccessDenied } from "../components/AccessDenied";
 import { useTenant } from "../contexts/TenantContext";
 
 export default function VolunteerDashboard() {
-  const { user, userData, role, roles, darkMode } = useAuth();
+  const { user, userData, role, roles, darkMode, loading: authLoading } = useAuth();
+  // Membership, not `role` -- see AdminDashboard for the same fix.
+  const isVolunteer = roles.includes("volunteer") || roles.includes("admin") || roles.includes("master_admin");
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
   const { activeService, upcomingServices, loading: serviceLoading } = useActiveService();
@@ -476,8 +479,13 @@ export default function VolunteerDashboard() {
     }
   };
 
-  if (role !== "admin" && role !== "volunteer" && !roles.includes("master_admin")) {
-    return <div className="text-center py-12">Access denied. Volunteer permissions required.</div>;
+  // A permission decision may only be rendered once auth has settled.
+  if (authLoading) {
+    return <DashboardSkeleton />;
+  }
+
+  if (!isVolunteer) {
+    return <AccessDenied requirement="volunteer" />;
   }
 
   if (serviceLoading) {
