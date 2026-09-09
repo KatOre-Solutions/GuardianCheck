@@ -76,6 +76,16 @@ interface ChildrenDirectoryProps {
   children: ChildRecord[];
   guardians: GuardianRecord[];
   users: UserRecord[];
+  /**
+   * Whether the props above are still being fetched.
+   *
+   * Required because this component opens no listeners of its own and so
+   * cannot tell an empty array from an unanswered query. Without it the
+   * directory told admins "No children registered yet." for as long as the
+   * children snapshot took to arrive -- a statement about loaded data, made
+   * before the data loaded.
+   */
+  loading?: boolean;
   churchId: string;
   churchName?: string;
   currentUserId: string;
@@ -109,6 +119,7 @@ export default function ChildrenDirectory({
   children,
   guardians,
   users,
+  loading = false,
   churchId,
   churchName,
   currentUserId,
@@ -396,7 +407,20 @@ export default function ChildrenDirectory({
           </div>
         ))}
 
-        {visibleRows.length === 0 && (
+        {loading && rows.length === 0 && (
+          <div className="p-4 space-y-3" aria-hidden="true">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-14 rounded-2xl bg-gray-100 dark:bg-gray-800/60 motion-safe:animate-pulse" />
+            ))}
+          </div>
+        )}
+
+        {/* Not `!loading`: once rows have arrived, a search that matches
+            nothing has a real answer to give even while a slower prop (the
+            guardian or user list) is still in flight. Gating on `!loading`
+            left that case rendering neither the skeleton above nor a message.
+            `rows.length === 0` here therefore implies the data has answered. */}
+        {visibleRows.length === 0 && !(loading && rows.length === 0) && (
           <div className="p-10 text-center">
             <p className="text-sm text-gray-400 italic">
               {rows.length === 0

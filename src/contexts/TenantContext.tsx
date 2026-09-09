@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { useNavigate, useLocation, useMatch } from "react-router-dom";
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from "react";
+import { useMatch } from "react-router-dom";
 import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
@@ -52,26 +52,44 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [church, setChurch] = useState<Church | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
-  const location = useLocation();
+  /* The slug this context has asked for. It answers both questions the effect
+     needs, which is why it is one ref rather than two guards:
+
+     - Should this run start a lookup? Only if the slug differs from the one
+       already asked for. The effect also depends on `authLoading`, so on a
+       tenant URL it runs twice -- once while auth is pending and again when it
+       settles -- and without this the second run repeats the query and its
+       `setLoading(true)` re-shows the placeholder after the page has painted.
+
+     - Should this response be applied? Only if the slug is still the one
+       wanted. A slow answer for a church the user has already navigated away
+       from must not land on top of the current one, or the header renders the
+       church that resolved while the body renders the not-found state left
+       behind by the stale request.
+
+     Judging staleness by slug rather than by which effect run issued the
+     request matters: a re-run for the *same* slug must not cancel the lookup
+     already in flight for it, or nothing ever resolves and the page sits in a
+     placeholder forever. */
+  const requestedSlug = useRef<string | null>(null);
 
   useEffect(() => {
-    // Every lookup after this one supersedes it. Without the guard a slow
-    // response from a slug the user has already navigated away from lands on
-    // top of the current one, and the two halves of the page disagree: the
-    // header renders the church that resolved while the body renders the
-    // not-found state left behind by the stale request.
-    let superseded = false;
+    /** True once the slug this run asked for is no longer the one wanted. */
+    const stale = () => requestedSlug.current !== churchSlug;
 
     async function fetchChurch() {
       // If we're still loading auth and don't have a valid URL slug, wait
       if (authLoading && (!urlChurchSlug || isReserved)) return;
 
       if (!churchSlug) {
+        requestedSlug.current = null;
         setChurch(null);
         setLoading(false);
         return;
       }
+
+      if (requestedSlug.current === churchSlug) return;
+      requestedSlug.current = churchSlug;
 
       setLoading(true);
       setError(null);
@@ -88,7 +106,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           limit(1)
         );
         const querySnapshot = await getDocs(q);
-        if (superseded) return;
+        if (stale()) return;
 
         if (querySnapshot.empty) {
           setError("Church not found");
@@ -122,32 +140,37 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (err) {
-        if (superseded) return;
+        if (stale()) return;
         console.error("Error fetching church:", err);
         setError("Failed to load church details");
         // Dropped alongside the error. Leaving the previous church in place
         // would render one tenant's branding and pages under another tenant's
         // URL -- the failure this whole context exists to prevent.
         setChurch(null);
+        // Cleared *after* `loading`, and `loading` cleared here rather than in
+        // `finally`: `stale()` reads this ref, so resetting it first makes the
+        // `finally` below skip `setLoading(false)` and the page sits in its
+        // placeholder forever instead of showing the error.
+        setLoading(false);
+        // Let a later run try again -- the guard above is there to stop
+        // duplicate work, not to make a failure permanent.
+        requestedSlug.current = null;
       } finally {
-        if (!superseded) setLoading(false);
+        if (!stale()) setLoading(false);
       }
     }
 
     fetchChurch();
-
-    return () => {
-      superseded = true;
-    };
     // `churchSlug` is the only input to the query, so navigating between two
     // reserved paths that resolve to the same church must not refetch it.
   }, [churchSlug, authLoading]);
 
-  return (
-    <TenantContext.Provider value={{ church, loading, error }}>
-      {children}
-    </TenantContext.Provider>
-  );
+  // Memoised because this provider re-renders whenever auth state changes and
+  // it sits above the whole app; a fresh object would re-render every
+  // `useTenant` consumer for nothing.
+  const value = useMemo(() => ({ church, loading, error }), [church, loading, error]);
+
+  return <TenantContext.Provider value={value}>{children}</TenantContext.Provider>;
 }
 
 export function useTenant() {

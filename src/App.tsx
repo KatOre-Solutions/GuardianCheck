@@ -6,6 +6,8 @@ import { useAuth } from "./hooks/useAuth";
 import ErrorBoundary from "./components/ErrorBoundary";
 import NetworkStatus from "./components/NetworkStatus";
 import { Toaster } from "sonner";
+import { MotionConfig } from "motion/react";
+import { AuthProvider } from "./contexts/AuthContext";
 import { TenantProvider, useTenant } from "./contexts/TenantContext";
 import { ChurchLogo } from "./components/ChurchLogo";
 
@@ -28,9 +30,11 @@ import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
-import { isKnownAppPath } from "./constants/appRoutes";
+import { isKnownAppPath, RESERVED_SLUGS } from "./constants/appRoutes";
 import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
+import { PageLoading } from "./components/PageLoading";
+import { AccessDenied } from "./components/AccessDenied";
 
 function DashboardRedirect() {
   const { user, userData, loading } = useAuth();
@@ -60,19 +64,24 @@ function DashboardRedirect() {
   // that never reach ProtectedRoute, so they need their own noindex rather
   // than inheriting whatever head tags the previous route left behind.
   return (
-    <div className="min-h-[60vh] flex items-center justify-center">
+    <>
       <Seo title="Dashboard" noindex />
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-    </div>
+      <PageLoading />
+    </>
   );
 }
 
 function Navigation() {
-  const { user, roles, userData } = useAuth();
-  const { church } = useTenant();
+  const { user, roles, userData, loading: authLoading } = useAuth();
+  const { church, loading: tenantLoading } = useTenant();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  /* Whether this URL names a church at all. `/:churchSlug` is any single
+     segment that is not one of the app's own paths -- the same test
+     TenantProvider applies before it looks a slug up. */
+  const firstSegment = location.pathname.split("/").filter(Boolean)[0];
+  const expectingChurch = !!firstSegment && !RESERVED_SLUGS.includes(firstSegment);
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -130,12 +139,32 @@ function Navigation() {
                 <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
               </span>
               <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0">
-                {church?.name || "GuardianCheck"}
+                {/* On a tenant URL the church's name is coming; showing
+                    "GuardianCheck" first and replacing it is a visible swap in
+                    the header, so hold the space until we know.
+                    Only on a tenant URL, though: everywhere else no church is
+                    coming and the wordmark is the final answer. Holding space
+                    there put a grey bar where "GuardianCheck" belongs on the
+                    marketing home page, for the whole of auth initialisation,
+                    for every first-time anonymous visitor. */}
+                {expectingChurch && tenantLoading && !church ? (
+                  <span className="inline-block h-5 w-40 align-middle rounded bg-gray-100 dark:bg-gray-800" aria-hidden="true" />
+                ) : (
+                  church?.name || "GuardianCheck"
+                )}
               </span>
             </Link>
           </div>
 
-          {user ? (
+          {authLoading ? (
+            /* Not signed out -- not yet known. Rendering the signed-out
+               buttons here and replacing them a moment later is a guaranteed
+               swap in the header; this holds the same space silently. */
+            <div className="flex items-center space-x-2 sm:space-x-3 shrink-0" aria-hidden="true">
+              <div className="h-9 w-20 rounded-lg bg-gray-100 dark:bg-gray-800" />
+              <div className="h-9 w-16 rounded-lg bg-gray-100 dark:bg-gray-800" />
+            </div>
+          ) : user ? (
             <>
               {/* Every role link at once overflows anything narrower than a
                   laptop, so below `lg` they move into the sheet under this
@@ -245,15 +274,26 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   }, [user, role, roles, status, loading, tenantLoading, navigate, allowedRoles, church, userData]);
 
   if (loading || tenantLoading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
+    return <PageLoading />;
   }
 
   const hasAccess = roles.some(r => allowedRoles.includes(r as any));
   const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
+
+  // The one case the effect above does not redirect: a signed-in, verified
+  // account holding no roles at all. Its role-mismatch branch is guarded on
+  // `roles.length > 0`, and the cross-tenant branch only fires under a church,
+  // so on /profile or /master-admin nothing navigates. A placeholder here
+  // would be a skeleton that never resolves, so say what is actually true.
+  //
+  // Onboarding statuses are excluded: those *do* redirect, and a role-less
+  // account mid-signup would otherwise be told it lacks permission for one
+  // frame on its way to /complete-profile -- the flash this change removes
+  // everywhere else.
+  const onboarding = status === "incomplete_profile" || status === "rejected";
+  if (user && isEmailVerified && roles.length === 0 && !onboarding) {
+    return <AccessDenied requirement={allowedRoles.join(" or ")} />;
+  }
 
   // Every route behind auth is noindex by definition, so it is set here once
   // rather than in each dashboard. Pages rendered as `children` must not
@@ -263,7 +303,12 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
       <Seo title="Dashboard" noindex />
       {children}
     </>
-  ) : null;
+  ) : (
+    // Not a dead end: the effect above is redirecting. Returning null here
+    // blanked the page for the length of that navigation, which is the empty
+    // frame at the start of the load.
+    <PageLoading />
+  );
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
@@ -282,10 +327,12 @@ function TenantLayout() {
   const location = useLocation();
 
   if (loading) {
+    // Inside <Layout>: this branch used to render bare, so the header vanished
+    // at the start of every tenant navigation and reappeared a moment later.
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
+      <Layout>
+        <PageLoading />
+      </Layout>
     );
   }
 
@@ -339,110 +386,130 @@ function TenantLayout() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <Router>
-        <TenantProvider>
-          <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
-            <Routes>
-              {/* Global Routes - These take precedence over dynamic :churchSlug */}
-              <Route path="/" element={<Layout><Home /></Layout>} />
-              <Route path="/login" element={<Layout><Login /></Layout>} />
-              <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
-              <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
-              <Route path="/complete-profile" element={<Layout><ProfileCompletion /></Layout>} />
-              <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
-              <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
-              <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
+      {/* Outside the Router deliberately: the provider needs no router hooks,
+          and keeping it here guarantees nothing routing does can tear down the
+          auth listener. TenantProvider must stay inside both -- it calls
+          useAuth as well as useMatch/useNavigate. */}
+      {/* `reducedMotion="user"` makes every motion animation in the app respect
+          the OS setting: transform and layout animations are dropped, opacity
+          is kept, so things still fade in without sliding. Nothing here
+          honoured the preference before. */}
+      <MotionConfig reducedMotion="user">
+        <AuthProvider>
+          <Router>
+          <TenantProvider>
+              <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
+                <Routes>
+                  {/* Global Routes - These take precedence over dynamic :churchSlug */}
+                  <Route path="/" element={<Layout><Home /></Layout>} />
+                  <Route path="/login" element={<Layout><Login /></Layout>} />
+                  <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
+                  <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
+                  <Route path="/complete-profile" element={<Layout><ProfileCompletion /></Layout>} />
+                  <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
+                  <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
+                  <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
               
-              {/* The installed app's start_url. Landing here rather than on the
-                  marketing home page is what sends a parent to the parent
-                  screen, a volunteer to theirs, and an admin to theirs when the
-                  app is opened from the home screen. */}
-              <Route path="/app" element={<DashboardRedirect />} />
+                  {/* The installed app's start_url. Landing here rather than on the
+                      marketing home page is what sends a parent to the parent
+                      screen, a volunteer to theirs, and an admin to theirs when the
+                      app is opened from the home screen. */}
+                  <Route path="/app" element={<Layout><DashboardRedirect /></Layout>} />
 
-              {/* Generic Role Redirects */}
-              <Route path="/admin" element={<DashboardRedirect />} />
-              <Route path="/volunteer" element={<DashboardRedirect />} />
-              <Route path="/parent" element={<DashboardRedirect />} />
+                  {/* Generic Role Redirects. Wrapped in Layout so the header is
+                      present while the redirect resolves, like every other
+                      route -- these rendered bare before. */}
+                  <Route path="/admin" element={<Layout><DashboardRedirect /></Layout>} />
+                  <Route path="/volunteer" element={<Layout><DashboardRedirect /></Layout>} />
+                  <Route path="/parent" element={<Layout><DashboardRedirect /></Layout>} />
 
-              <Route path="/profile" element={
-                <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
-                  <PolicyGuard>
-                    <Layout><Profile /></Layout>
-                  </PolicyGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="/master-admin" element={
-                <ProtectedRoute allowedRoles={["master_admin"]}>
-                  <PolicyGuard>
-                    <Layout><MasterAdminDashboard /></Layout>
-                  </PolicyGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="/master-admin/logs" element={
-                <ProtectedRoute allowedRoles={["master_admin"]}>
-                  <PolicyGuard>
-                    <Layout><MasterAdminLogs /></Layout>
-                  </PolicyGuard>
-                </ProtectedRoute>
-              } />
+                  <Route path="/profile" element={
+                    <Layout>
+                      <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
+                        <PolicyGuard>
+                          <Profile />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    </Layout>
+                  } />
+                  <Route path="/master-admin" element={
+                    <Layout>
+                      <ProtectedRoute allowedRoles={["master_admin"]}>
+                        <PolicyGuard>
+                          <MasterAdminDashboard />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    </Layout>
+                  } />
+                  <Route path="/master-admin/logs" element={
+                    <Layout>
+                      <ProtectedRoute allowedRoles={["master_admin"]}>
+                        <PolicyGuard>
+                          <MasterAdminLogs />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    </Layout>
+                  } />
 
-              {/* Tenant Routes */}
-              <Route path="/:churchSlug" element={<TenantLayout />}>
-                <Route index element={<Home />} />
-                <Route path="login" element={<Login />} />
-                <Route path="parent" element={
-                  <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
-                    <PolicyGuard>
-                      <ParentDashboard />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="volunteer" element={
-                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer"]}>
-                    <PolicyGuard>
-                      <VolunteerDashboard />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="admin" element={
-                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
-                    <PolicyGuard>
-                      <AdminDashboard />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="admin/settings" element={
-                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
-                    <PolicyGuard>
-                      <ChurchSettings />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="admin/events" element={
-                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
-                    <PolicyGuard>
-                      <EventsServices />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                {/* Unmatched child of a real church, e.g. /randmeth/nonsense.
-                    Without this the Outlet renders nothing and the page is
-                    simply blank. */}
-                <Route path="*" element={<NotFound />} />
-              </Route>
+                  {/* Tenant Routes */}
+                  <Route path="/:churchSlug" element={<TenantLayout />}>
+                    <Route index element={<Home />} />
+                    <Route path="login" element={<Login />} />
+                    <Route path="parent" element={
+                      <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
+                        <PolicyGuard>
+                          <ParentDashboard />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="volunteer" element={
+                      <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer"]}>
+                        <PolicyGuard>
+                          <VolunteerDashboard />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="admin" element={
+                      <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                        <PolicyGuard>
+                          <AdminDashboard />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="admin/settings" element={
+                      <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                        <PolicyGuard>
+                          <ChurchSettings />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    } />
+                    <Route path="admin/events" element={
+                      <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                        <PolicyGuard>
+                          <EventsServices />
+                        </PolicyGuard>
+                      </ProtectedRoute>
+                    } />
+                    {/* Unmatched child of a real church, e.g. /randmeth/nonsense.
+                        Without this the Outlet renders nothing and the page is
+                        simply blank. */}
+                    <Route path="*" element={<NotFound />} />
+                  </Route>
 
-              {/* Backstop. `/:churchSlug/*` above is greedy enough to swallow
-                  every non-root path today, so this rarely fires -- TenantLayout
-                  delegates here instead. It stays as the safety net for if that
-                  route is ever narrowed. */}
-              <Route path="*" element={<Layout><NotFound /></Layout>} />
-            </Routes>
-            <Toaster position="top-right" richColors />
-            <NetworkStatus />
-            <SpeedInsights />
-          </div>
-        </TenantProvider>
-      </Router>
+                  {/* Backstop. `/:churchSlug/*` above is greedy enough to swallow
+                      every non-root path today, so this rarely fires -- TenantLayout
+                      delegates here instead. It stays as the safety net for if that
+                      route is ever narrowed. */}
+                  <Route path="*" element={<Layout><NotFound /></Layout>} />
+                </Routes>
+                <Toaster position="top-right" richColors />
+                <NetworkStatus />
+                <SpeedInsights />
+              </div>
+            </TenantProvider>
+          </Router>
+        </AuthProvider>
+      </MotionConfig>
     </ErrorBoundary>
   );
 }

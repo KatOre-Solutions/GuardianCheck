@@ -243,14 +243,40 @@ export async function getInvitationByToken(token: string) {
   }
 }
 
-export function subscribeToCollection(path: string, constraints: QueryConstraint[], callback: (data: any[]) => void) {
+/**
+ * Realtime query.
+ *
+ * `onError` is *additive*: the default reporting still runs, and the callback
+ * runs after it. `handleFirestoreError` ends by throwing a sanitised payload
+ * for `await`-style callers, so it has to be caught here -- nothing awaits a
+ * listener, and letting that throw escape would skip `onError` entirely and
+ * leave every caller of `useLiveData` stuck in `loading` forever.
+ * This differs from `subscribeToDocument` below, whose `onError`
+ * replaces the default handler -- worth knowing before you copy one for the
+ * other. Callers need the signal because a failed subscription never invokes
+ * `callback` at all, so a caller waiting for a first snapshot waits forever.
+ * That is not theoretical: ChildDetailsModal's recent-check-ins query needs a
+ * composite index the database does not have, and the failure has been silent.
+ */
+export function subscribeToCollection(
+  path: string,
+  constraints: QueryConstraint[],
+  callback: (data: any[]) => void,
+  onError?: (error: any) => void,
+) {
   const colRef = collection(db, path);
   const q = query(colRef, ...constraints);
   return onSnapshot(q, (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     callback(data);
   }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
+    try {
+      handleFirestoreError(error, OperationType.LIST, path);
+    } catch {
+      // Reported above; the rethrow is for callers that `await`. Swallowing it
+      // here is what makes `onError` reachable.
+    }
+    onError?.(error);
   });
 }
 

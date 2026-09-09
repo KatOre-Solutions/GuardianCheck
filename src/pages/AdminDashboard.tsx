@@ -2,8 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { auth } from "../lib/firebase";
-import { getCollection, addDocument, updateDocument, removeDocument, subscribeToCollection, getDocument, subscribeToDocument, setDocument, restoreDocument, logAudit } from "../lib/firestore";
-import { where } from "firebase/firestore";
+import { getCollection, addDocument, updateDocument, removeDocument, getDocument, setDocument, restoreDocument, logAudit } from "../lib/firestore";
 import { 
   LayoutDashboard, 
   Users, 
@@ -55,7 +54,12 @@ import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { useActiveService } from "../hooks/useActiveService";
 import SetupWizard from "../components/SetupWizard";
-import { DashboardSkeleton, Skeleton } from "../components/Skeleton";
+import { AdminDashboardSkeleton } from "../components/skeletons";
+import { AccessDenied } from "../components/AccessDenied";
+// The card surface the skeleton draws too, so the two cannot drift apart --
+// which is the whole reason surfaces.ts exists.
+import { STAT_CARD } from "../components/ui/surfaces";
+import { useChurchCollection, useLiveDocument } from "../hooks/useLiveData";
 import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
 import ChildrenDirectory from "../components/ChildrenDirectory";
@@ -121,7 +125,7 @@ const StatCard = ({
   trend?: { absolute: number; percent: number | null; direction: "up" | "down" | "flat" };
   trendLabel?: string;
 }) => (
-  <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-3">
+  <div className={STAT_CARD}>
     <div className="flex items-start justify-between gap-3">
       <div className="flex items-center space-x-3 min-w-0">
         {icon && (
@@ -162,18 +166,58 @@ const StatCard = ({
 );
 
 export default function AdminDashboard() {
-  const { user, role, roles, userData, darkMode } = useAuth();
+  const { user, role, roles, userData, darkMode, loading: authLoading } = useAuth();
+  // Membership, not `role`. `role` is roles[0], so an account whose roles are
+  // ["volunteer","admin"] was permanently denied its own admin dashboard.
+  const isAdmin = roles.includes("admin") || roles.includes("master_admin");
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
   const { activeService, loading: serviceLoading } = useActiveService();
   const [searchParams] = useSearchParams();
-  const [rooms, setRooms] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
-  const [checkins, setCheckins] = useState<any[]>([]);
-  const [children, setChildren] = useState<any[]>([]);
-  const [guardians, setGuardians] = useState<any[]>([]);
-  const [events, setEvents] = useState<any[]>([]);
-  const [services, setServices] = useState<any[]>([]);
+  /* Live data. These replace ten useState + two useEffect blocks whose only
+     signal was the data itself, so an empty array was indistinguishable from a
+     query that had not answered yet -- which is what made this page render a
+     setup wizard and a "create your first room" checklist to churches that
+     were fully set up. Each subscription now reports loading / ready / error,
+     and the sections below wait for `ready` before drawing a conclusion.
+
+     The `.data` values keep the original local names so the ~200 references
+     further down this file are untouched. */
+  const canSubscribe = !authLoading && isAdmin && !!churchId;
+  const churchDoc = useLiveDocument("churches", canSubscribe ? churchId : null);
+  const securityDoc = useLiveDocument("church_security", canSubscribe ? churchId : null);
+  const roomsQ = useChurchCollection("rooms", churchId, canSubscribe);
+  const usersQ = useChurchCollection("users", churchId, canSubscribe);
+  const checkinsQ = useChurchCollection("checkins", churchId, canSubscribe);
+  const childrenQ = useChurchCollection("children", churchId, canSubscribe);
+  const guardiansQ = useChurchCollection("guardians", churchId, canSubscribe);
+  const invitationsQ = useChurchCollection("invitations", churchId, canSubscribe);
+  const eventsQ = useChurchCollection("events", churchId, canSubscribe);
+  const servicesQ = useChurchCollection("services", churchId, canSubscribe);
+
+  /* The checklist counts rooms, services, children and volunteers, all of
+     which start as empty arrays. Waiting for all four to answer is what stops
+     it announcing "ACTION REQUIRED" to a church that has hundreds of children
+     and then vanishing a second later. */
+  const setupChecklistReady =
+    roomsQ.loaded && servicesQ.loaded && childrenQ.loaded && usersQ.loaded;
+
+  const churchData = churchDoc.data;
+  const churchSecurity = securityDoc.data;
+  const rooms = roomsQ.data;
+  const users = usersQ.data;
+  const checkins = checkinsQ.data;
+  const children = childrenQ.data;
+  const guardians = guardiansQ.data;
+  const invitations = invitationsQ.data;
+  const events = eventsQ.data;
+  const services = servicesQ.data;
+
+  const setupChecklistIncomplete =
+    rooms.filter((r: any) => !r.deleted).length < 1 ||
+    services.filter((sv: any) => !sv.deleted).length < 1 ||
+    children.filter((c: any) => !c.deleted).length < 1 ||
+    users.filter((u: any) => u.role === "volunteer" || u.roles?.includes("volunteer")).length < 1;
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [newRoom, setNewRoom] = useState({ name: "", capacity: "20", minAge: "0", maxAge: "12" });
   const [loading, setLoading] = useState(false);
@@ -187,8 +231,6 @@ export default function AdminDashboard() {
   const [showDeleteRoomModal, setShowDeleteRoomModal] = useState(false);
   const [userToDelete, setUserToDelete] = useState<any>(null);
   const [showDeleteUserModal, setShowDeleteUserModal] = useState(false);
-  const [churchData, setChurchData] = useState<any>(null);
-  const [churchSecurity, setChurchSecurity] = useState<any>(null);
   const [showPin, setShowPin] = useState(false);
   const [regeneratingPin, setRegeneratingPin] = useState(false);
   const [selectedHistoricalEvent, setSelectedHistoricalEvent] = useState<string>("");
@@ -217,42 +259,6 @@ export default function AdminDashboard() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    if ((role === "admin" || roles.includes("master_admin")) && churchId) {
-      const unsubChurch = subscribeToDocument("churches", churchId, setChurchData);
-      const unsubSecurity = subscribeToDocument("church_security", churchId, setChurchSecurity);
-      return () => {
-        unsubChurch();
-        unsubSecurity();
-      };
-    }
-  }, [role, roles, churchId]);
-
-  useEffect(() => {
-    if ((role === "admin" || roles.includes("master_admin")) && churchId) {
-      const constraints = [where("churchId", "==", churchId)];
-      const unsubRooms = subscribeToCollection("rooms", constraints, setRooms);
-      const unsubUsers = subscribeToCollection("users", constraints, setUsers);
-      const unsubCheckins = subscribeToCollection("checkins", constraints, setCheckins);
-      const unsubChildren = subscribeToCollection("children", constraints, setChildren);
-      const unsubGuardians = subscribeToCollection("guardians", constraints, setGuardians);
-      const unsubInvitations = subscribeToCollection("invitations", constraints, setInvitations);
-      const unsubEvents = subscribeToCollection("events", constraints, setEvents);
-      const unsubServices = subscribeToCollection("services", constraints, setServices);
-
-      return () => {
-        unsubRooms();
-        unsubUsers();
-        unsubCheckins();
-        unsubChildren();
-        unsubGuardians();
-        unsubInvitations();
-        unsubEvents();
-        unsubServices();
-      };
-    }
-  }, [role, roles, churchId]);
-
   const handleAddRoom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!churchId) return;
@@ -278,7 +284,6 @@ export default function AdminDashboard() {
     }
   };
 
-  const [invitations, setInvitations] = useState<any[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
   const [newUser, setNewUser] = useState({ firstName: "", lastName: "", email: "", role: "volunteer" });
 
@@ -903,18 +908,47 @@ export default function AdminDashboard() {
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
   );
 
-  if (role !== "admin" && !roles.includes("master_admin")) {
-    return <div className="text-center py-12">Access denied. Admin permissions required.</div>;
+  // Order matters: a permission decision may only be rendered once auth has
+  // settled. `roles` starts empty, so checking first meant every admin saw
+  // "Access denied" flash on the way to their own dashboard.
+  if (authLoading) {
+    return <AdminDashboardSkeleton />;
   }
 
-  if (serviceLoading && !churchData) {
-    return <DashboardSkeleton />;
+  if (!isAdmin) {
+    return <AccessDenied requirement="admin" />;
+  }
+
+  /* Hold the page only for the church document. Its `setupCompleted` decides
+     whether a full-screen wizard exists and its `status` decides whether a
+     banner sits above everything else, so nothing below can be positioned
+     until it has answered. Every other collection is waited for by its own
+     section instead, so the slowest query cannot hold the whole page.
+
+     `loaded` is true on the error path as well, deliberately: a denied read
+     never produces a snapshot, and gating on success alone would leave the
+     page in a skeleton forever. */
+  /* And for the active service, on the same terms the old gate used
+     (`serviceLoading && !churchData`). Three tiles and the service badge read
+     `activeService`, which is null until that subscription answers, so
+     dropping this makes the page announce "No service running" during a
+     running service and correct itself -- the class of jump this change
+     exists to remove. Paired with `!churchData` so a services query that
+     never answers cannot hold the page: the church document releases it. */
+  if (!churchDoc.loaded || (serviceLoading && !churchData)) {
+    return <AdminDashboardSkeleton />;
   }
 
   return (
     <div className="space-y-12 pb-24">
-      {/* Setup Wizard for new churches */}
-      {!churchData?.setupCompleted && userData?.churchId && (
+      {/* Setup Wizard for new churches.
+          `churchData` starts as null, and `!null?.setupCompleted` is true, so
+          this used to open the full-screen wizard over every admin's dashboard
+          on every mount and close it again when the snapshot arrived. It now
+          requires an actual answer: the document loaded, it exists, and it says
+          setup is not complete. A church document that failed to load is not a
+          church that needs setting up. */}
+      {churchDoc.status === "ready" && churchData && !churchData.setupCompleted && userData?.churchId && (
         <SetupWizard 
           churchId={userData.churchId} 
           onComplete={() => {
@@ -924,18 +958,23 @@ export default function AdminDashboard() {
         />
       )}
 
-      {/* Setup Progress Tracker */}
-      {churchData?.setupCompleted && (
+      {/* Setup Progress Tracker.
+          Two defects lived here. The counts come from four collections that
+          start empty, so the moment the church document said setup was
+          complete this rendered "ACTION REQUIRED -- create your first room" to
+          churches with hundreds of children, then unmounted it a second later
+          when the snapshots arrived: the single biggest jump on the page. It
+          now waits for all four to answer.
+          And the wrapper grid sat *outside* the `.some()` test, so once
+          `setupCompleted` was true it stayed mounted forever as an empty grid
+          -- a childless child of `space-y-12` contributing 48px of margin to
+          nothing. The test now gates the wrapper itself. */}
+      {churchData?.setupCompleted && setupChecklistReady && setupChecklistIncomplete && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[
-            { label: "Rooms", count: rooms.filter(r => !r.deleted).length, icon: Building2, link: "#rooms-section", min: 1 },
-            { label: "Services", count: services.filter(s => !s.deleted).length, icon: Clock, link: "#services-section", min: 1 },
-            { label: "Children", count: children.filter(c => !c.deleted).length, icon: Users, link: "#children-section", min: 1 },
-            { label: "Volunteers", count: users.filter(u => u.role === "volunteer" || u.roles?.includes("volunteer")).length, icon: UserPlus, link: "#users-section", min: 1 }
-          ].some(item => item.count < item.min) && (
+          {(
             <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               className="col-span-full bg-white dark:bg-gray-900 p-6 rounded-3xl border border-primary/20 shadow-sm space-y-4"
             >
               <div className="flex items-center justify-between">
@@ -970,8 +1009,10 @@ export default function AdminDashboard() {
       {/* Subscription Status Banner */}
       {churchData?.status === "trialing" && (
         <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
+          /* Opacity only. A translate on mount inside this `space-y-12` flow
+             displaces every section below it as it settles. */
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           className="bg-gradient-to-r from-orange-500 to-amber-600 p-4 rounded-2xl text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-4"
         >
           <div className="flex items-center space-x-3">
@@ -1016,8 +1057,8 @@ export default function AdminDashboard() {
 
       {churchData?.status === "delinquent" && (
         <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           className="bg-gradient-to-r from-red-600 to-pink-700 p-4 rounded-2xl text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-4"
         >
           <div className="flex items-center space-x-3">
@@ -2280,6 +2321,7 @@ export default function AdminDashboard() {
         children={children}
         guardians={guardians}
         users={users}
+        loading={!childrenQ.loaded || !guardiansQ.loaded || !usersQ.loaded}
         churchId={churchId || ""}
         churchName={churchData?.name}
         currentUserId={user?.uid || ""}
