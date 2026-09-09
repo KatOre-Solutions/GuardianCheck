@@ -27,7 +27,7 @@ import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-ha
 import { hasRecordedAllergies } from "../lib/child-utils";
 import { useActiveService } from "../hooks/useActiveService";
 import { activateService, closeService } from "../lib/firestore";
-import { DashboardSkeleton } from "../components/Skeleton";
+import { PageSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
 import { useTenant } from "../contexts/TenantContext";
 
@@ -481,7 +481,7 @@ export default function VolunteerDashboard() {
 
   // A permission decision may only be rendered once auth has settled.
   if (authLoading) {
-    return <DashboardSkeleton />;
+    return <PageSkeleton />;
   }
 
   if (!isVolunteer) {
@@ -489,7 +489,7 @@ export default function VolunteerDashboard() {
   }
 
   if (serviceLoading) {
-    return <DashboardSkeleton />;
+    return <PageSkeleton />;
   }
 
   return (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { DashboardSkeleton } from "../components/Skeleton";
+import { PageSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -561,7 +561,7 @@ export default function ParentDashboard() {
   // A permission decision may only be rendered once auth has settled, and a
   // signed-out visitor is ProtectedRoute's redirect to make, not a message here.
   if (authLoading) {
-    return <DashboardSkeleton />;
+    return <PageSkeleton />;
   }
 
   if (!user) return <div className="text-center py-12">Please login to view your dashboard.</div>;

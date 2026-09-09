@@ -243,7 +243,23 @@ export async function getInvitationByToken(token: string) {
   }
 }
 
-export function subscribeToCollection(path: string, constraints: QueryConstraint[], callback: (data: any[]) => void) {
+/**
+ * Realtime query.
+ *
+ * `onError` is *additive*: the default reporting still runs, and the callback
+ * runs after it. That differs from `subscribeToDocument` below, whose `onError`
+ * replaces the default handler -- worth knowing before you copy one for the
+ * other. Callers need the signal because a failed subscription never invokes
+ * `callback` at all, so a caller waiting for a first snapshot waits forever.
+ * That is not theoretical: ChildDetailsModal's recent-check-ins query needs a
+ * composite index the database does not have, and the failure has been silent.
+ */
+export function subscribeToCollection(
+  path: string,
+  constraints: QueryConstraint[],
+  callback: (data: any[]) => void,
+  onError?: (error: any) => void,
+) {
   const colRef = collection(db, path);
   const q = query(colRef, ...constraints);
   return onSnapshot(q, (snapshot) => {
@@ -251,6 +267,7 @@ export function subscribeToCollection(path: string, constraints: QueryConstraint
     callback(data);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
+    onError?.(error);
   });
 }
 
