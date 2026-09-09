@@ -30,6 +30,9 @@
 /** Exact top-level paths, each declared by a `<Route path=…>` in `App.tsx`. */
 export const EXACT_ROUTES = [
   "/",
+  // The installed PWA's start_url. It must be a real route at the edge or the
+  // app opens on a 404 from the home screen.
+  "/app",
   "/login",
   "/register-church",
   "/accept-invite",
@@ -53,6 +56,27 @@ export const TENANT_ADMIN_CHILD_ROUTES = ["settings", "events"] as const;
 
 /** Path prefixes owned by something other than the router. */
 export const NON_ROUTE_PREFIXES = ["/api", "/assets"] as const;
+
+/**
+ * Top-level segments that can never be a church slug.
+ *
+ * `TenantProvider` matches `/:churchSlug/*`, which happily binds `churchSlug`
+ * to the first segment of a global route -- `/app` matches with slug "app".
+ * Anything listed here means "this is one of ours, resolve the tenant from the
+ * signed-in user instead".
+ *
+ * Derived rather than hand-listed. The hand-listed copy is what shipped the
+ * /app launch route straight into a "Church Not Found" screen: adding a route
+ * to EXACT_ROUTES did not add it here, and nothing said so.
+ */
+export const RESERVED_SLUGS: readonly string[] = Array.from(
+  new Set<string>([
+    ...EXACT_ROUTES.map((r) => segments(r)[0]).filter((seg): seg is string => !!seg),
+    ...NON_ROUTE_PREFIXES.map((p) => p.slice(1)),
+    // Not a route, but reserved against a church ever claiming it.
+    "static",
+  ]),
+);
 
 function segments(pathname: string): string[] {
   return pathname.split("/").filter(Boolean);

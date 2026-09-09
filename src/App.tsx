@@ -29,49 +29,36 @@ import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
 import { isKnownAppPath } from "./constants/appRoutes";
+import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
 
 function DashboardRedirect() {
-  const { user, userData, roles, loading } = useAuth();
+  const { user, userData, loading } = useAuth();
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (!loading) {
-      if (!userData) {
-        navigate("/login");
-      } else {
-        // 1. Force verification for password users
-        if (!user?.emailVerified && user?.providerData.some(p => p.providerId === "password")) {
-          navigate("/login");
-          return;
-        }
+    if (loading) return;
 
-        // 2. Force profile completion
-        if (userData.status === "incomplete_profile") {
-          navigate("/complete-profile");
-          return;
-        }
+    // Password accounts must verify before a dashboard means anything, and the
+    // resend-verification flow lives on the login page.
+    const unverifiedPassword =
+      !!user && !user.emailVerified && user.providerData.some(p => p.providerId === "password");
 
-        const slug = userData.churchSlug;
-        const search = window.location.search; // Preserve query params like ?payment=success
+    // Query params such as ?payment=success are carried through on every
+    // branch, the login bounce included: the screen this lands on is what
+    // reads them, and dropping them here loses the only copy.
+    const search = window.location.search;
+    const target = unverifiedPassword ? `/login${search}` : resolveLandingPath(userData, search);
 
-        if (roles.includes("master_admin")) {
-          navigate(`/master-admin${search}`);
-        } else if (slug) {
-          if (roles.includes("admin")) navigate(`/${slug}/admin${search}`);
-          else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer${search}`);
-          else if (roles.includes("parent")) navigate(`/${slug}/parent${search}`);
-          else navigate(`/${slug}${search}`);
-        } else {
-          navigate(`/${search}`);
-        }
-      }
-    }
-  }, [userData, roles, loading, navigate, user]);
+    // `replace`, not push. This route only ever forwards, so a pushed entry
+    // would make Back re-enter it and bounce straight forward again -- and an
+    // installed app has no address bar to escape that with.
+    navigate(target, { replace: true });
+  }, [userData, loading, navigate, user]);
 
-  // /admin, /volunteer and /parent are authenticated-app entry points that
-  // never reach ProtectedRoute, so they need their own noindex rather than
-  // inheriting whatever head tags the previous route left behind.
+  // /app, /admin, /volunteer and /parent are authenticated-app entry points
+  // that never reach ProtectedRoute, so they need their own noindex rather
+  // than inheriting whatever head tags the previous route left behind.
   return (
     <div className="min-h-[60vh] flex items-center justify-center">
       <Seo title="Dashboard" noindex />
@@ -247,12 +234,12 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
         const userChurchSlug = userData?.churchSlug || "dashboard";
         navigate(`/${userChurchSlug}`);
       } else if (roles.length > 0 && !allowedRoles.some(r => roles.includes(r as any))) {
-        const churchPrefix = church ? `/${church.slug}` : "";
-        if (roles.includes("master_admin")) navigate("/master-admin");
-        else if (roles.includes("admin")) navigate(`${churchPrefix}/admin`);
-        else if (roles.includes("volunteer")) navigate(`${churchPrefix}/volunteer`);
-        else if (roles.includes("parent")) navigate(`${churchPrefix}/parent`);
-        else navigate("/");
+        // Same resolver the launch route uses, so "the screen this user owns"
+        // has one definition. The tenant in the URL stands in when the account
+        // itself carries no slug.
+        navigate(resolveLandingPath({ ...userData, roles: roles as string[], churchSlug: userData?.churchSlug || church?.slug }), {
+          replace: true,
+        });
       }
     }
   }, [user, role, roles, status, loading, tenantLoading, navigate, allowedRoles, church, userData]);
@@ -366,6 +353,12 @@ export default function App() {
               <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
               <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
               
+              {/* The installed app's start_url. Landing here rather than on the
+                  marketing home page is what sends a parent to the parent
+                  screen, a volunteer to theirs, and an admin to theirs when the
+                  app is opened from the home screen. */}
+              <Route path="/app" element={<DashboardRedirect />} />
+
               {/* Generic Role Redirects */}
               <Route path="/admin" element={<DashboardRedirect />} />
               <Route path="/volunteer" element={<DashboardRedirect />} />

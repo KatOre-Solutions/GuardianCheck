@@ -17,6 +17,7 @@ import { sendCustomVerificationEmail } from "../lib/api";
 import { useTenant } from "../contexts/TenantContext";
 import { ChurchLogo } from "../components/ChurchLogo";
 import { Seo } from "../components/Seo";
+import { resolveLandingPath } from "../lib/landing";
 
 type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
 
@@ -122,14 +123,12 @@ export default function Login() {
         if (updatedUser.emailVerified && mode === "verify") {
           showSuccessToast("Email verified!", "Logging you in...");
         }
-        const churchPrefix = userDoc.churchSlug ? `/${userDoc.churchSlug}` : "";
-        if (userDoc.status === "incomplete_profile") navigate("/complete-profile");
-        else if (userDoc.status === "rejected") navigate("/rejected");
-        else if (userDoc.role === "master_admin") navigate("/master-admin");
-        else if (userDoc.role === "admin") navigate(`${churchPrefix}/admin`);
-        else if (userDoc.role === "volunteer") navigate(`${churchPrefix}/volunteer`);
-        else if (userDoc.role === "parent") navigate(`${churchPrefix}/parent`);
-        else navigate("/");
+        // Shared with the launch route and ProtectedRoute. Reading `role` alone
+        // here used to strand accounts that carry only the newer `roles` array
+        // on the marketing home page instead of their dashboard.
+        // `replace` keeps Back from returning to a login form the user has
+        // already passed.
+        navigate(resolveLandingPath(userDoc), { replace: true });
       }
     } catch (err: any) {
       if (retryCount < 2 && (err.code === "auth/network-request-failed" || err.message?.includes("network"))) {
@@ -351,7 +350,9 @@ export default function Login() {
       await updatePassword(auth.currentUser, newPassword);
       await updateDocument("users", auth.currentUser.uid, { mustChangePassword: false });
       showSuccessToast("Password updated!", "You can now sign in with your new password.");
-      navigate("/");
+      // The launch route, so this ends on the dashboard the account owns
+      // rather than the marketing home page.
+      navigate("/app", { replace: true });
     } catch (err: any) {
       const { message } = getHumanReadableError(err);
       setError(message);

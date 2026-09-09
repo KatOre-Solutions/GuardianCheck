@@ -8,6 +8,7 @@ import { getPublicChurches, updateDocument, createMembershipRequest } from "../l
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
 import { Seo } from "../components/Seo";
+import { resolveLandingPath } from "../lib/landing";
 
 export default function ProfileCompletion() {
   const { user, userData, roles, status, loading: authLoading } = useAuth();
@@ -141,18 +142,16 @@ export default function ProfileCompletion() {
         "Account setup successful."
       );
       
-      // Navigate to the appropriate dashboard based on role
-      const slug = church?.slug;
-      if (roles.includes("master_admin")) {
-        navigate("/master-admin");
-      } else if (slug) {
-        if (roles.includes("admin")) navigate(`/${slug}/admin`);
-        else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer`);
-        else if (roles.includes("parent")) navigate(`/${slug}/parent`);
-        else navigate(`/${slug}`);
-      } else {
-        navigate("/");
-      }
+      // The same resolver the launch route, ProtectedRoute and Login use, so
+      // "the screen this user owns" keeps one definition. Built from the values
+      // just written rather than from `userData`: the users/{uid} snapshot has
+      // not delivered yet, so its `status` is still "incomplete_profile" and
+      // resolving against it would send this straight back to this page.
+      navigate(resolveLandingPath({
+        status: newStatus,
+        roles: roles as string[],
+        churchSlug: church?.slug,
+      }));
     } catch (error) {
       console.error("Failed to complete profile", error);
       showErrorToast(error);

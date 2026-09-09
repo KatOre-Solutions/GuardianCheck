@@ -260,6 +260,57 @@ A 404 still returns the full SPA shell in the body. The client needs it to
 render anything at all; only the status line changes, and that is the part
 crawlers act on.
 
+## Installable app (PWA)
+
+The app installs from Chrome's **Install** button and from Safari's **Add to
+Home Screen** on iPhone. Three pieces make that work, and all three have to stay
+in agreement:
+
+| File | Job |
+|---|---|
+| [public/manifest.webmanifest](public/manifest.webmanifest) | Name, icons, `display: standalone`, and `start_url: /app` |
+| [public/sw.js](public/sw.js) | The service worker Chrome requires before it will offer an install |
+| [index.html](index.html) | `apple-touch-icon` and the `apple-mobile-web-app-*` tags Safari reads instead of the manifest |
+
+**Launching lands on the user's own screen.** `start_url` is `/app`, which
+renders `DashboardRedirect` — a parent reaches `/:churchSlug/parent`, a
+volunteer `/:churchSlug/volunteer`, an admin `/:churchSlug/admin`, a platform
+admin `/master-admin`, and anyone signed out reaches `/login`. The launch path
+is deliberately not `/`: the marketing home page is the wrong first screen for
+someone who installed the app to run a check-in desk.
+
+That role decision lives in one place,
+[src/lib/landing.ts](src/lib/landing.ts), shared by the launch route,
+`ProtectedRoute`'s wrong-role fallback, and post-login navigation. It had been
+three near-copies, and they had drifted — the Login copy read the legacy single
+`role` field, so an account carrying only the newer `roles` array landed on the
+marketing home page instead of a dashboard.
+
+**The service worker caches almost nothing, on purpose.** It precaches
+`offline.html` and answers failed *navigations* with it; every other request —
+`/assets/*`, `/api/*`, Firestore, Firebase Auth — passes straight through
+untouched. Hashed bundles are replaced on each deploy, and a stale roster is
+worse than an error message when a child is being checked out. Offline data
+resilience is the Firestore SDK's own persistence layer, not this worker's.
+
+Registration is production-only ([src/lib/pwa.ts](src/lib/pwa.ts)); in dev the
+Vite middleware serves the modules the worker would sit in front of.
+
+**Changing what is precached** means bumping `CACHE_VERSION` in `public/sw.js`.
+Old caches are dropped on activate, so that bump is the entire invalidation
+story.
+
+**Icons** are generated, not hand-drawn — the same brand mark as the favicons:
+
+```bash
+npx tsx scripts/generate-icons.ts
+```
+
+Edit [scripts/generate-icons.ts](scripts/generate-icons.ts), not the PNGs in
+`public/`; they are committed build output. Android's launcher uses the
+`maskable` entry, iOS ignores the manifest icons entirely and takes
+`apple-touch-icon.png`.
+
 ## Sitemap
 
 `sitemap.xml` is **generated at build time**, not committed. To add a page,
