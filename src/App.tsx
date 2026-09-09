@@ -44,9 +44,11 @@ function DashboardRedirect() {
     const unverifiedPassword =
       !!user && !user.emailVerified && user.providerData.some(p => p.providerId === "password");
 
-    // Query params such as ?payment=success are carried through: the dashboard
-    // this lands on is what reads them.
-    const target = unverifiedPassword ? "/login" : resolveLandingPath(userData, window.location.search);
+    // Query params such as ?payment=success are carried through on every
+    // branch, the login bounce included: the screen this lands on is what
+    // reads them, and dropping them here loses the only copy.
+    const search = window.location.search;
+    const target = unverifiedPassword ? `/login${search}` : resolveLandingPath(userData, search);
 
     // `replace`, not push. This route only ever forwards, so a pushed entry
     // would make Back re-enter it and bounce straight forward again -- and an

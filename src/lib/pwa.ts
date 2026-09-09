@@ -24,9 +24,15 @@ export function registerServiceWorker(): void {
       .catch((error: unknown) => {
         // A failed registration costs the install prompt and the offline page.
         // Everything else keeps working, so this must never throw upward.
+        //
+        // `warn`, not `error`: registration legitimately rejects in Firefox and
+        // Safari private windows and under enterprise policy, and `logger.error`
+        // beacons to /api/log-client-error — that would file a server-side error
+        // for every page load of every such visitor, for a non-failure.
+        //
         // Stringified because logger redacts objects and an Error's own fields
         // are non-enumerable — it would otherwise log an empty `{}`.
-        logger.error("Service worker registration failed", { reason: String(error) });
+        logger.warn("Service worker registration failed", { reason: String(error) });
       });
   });
 }

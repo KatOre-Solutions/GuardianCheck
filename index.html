@@ -35,8 +35,8 @@
     <!--
       iOS. Safari reads none of the manifest for "Add to Home Screen" before iOS 17 and
       still prefers these, so the standalone chrome and the home-screen title have to be
-      declared here as well. `black-translucent` lets the app paint under the status bar;
-      the app's own sticky header supplies the safe-area padding.
+      declared here as well. The status bar stays `default` -- opaque, laid out above the
+      page -- so the app's sticky header needs no safe-area padding of its own.
     -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
