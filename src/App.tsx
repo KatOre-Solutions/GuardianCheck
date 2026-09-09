@@ -6,6 +6,7 @@ import { useAuth } from "./hooks/useAuth";
 import ErrorBoundary from "./components/ErrorBoundary";
 import NetworkStatus from "./components/NetworkStatus";
 import { Toaster } from "sonner";
+import { AuthProvider } from "./contexts/AuthContext";
 import { TenantProvider, useTenant } from "./contexts/TenantContext";
 import { ChurchLogo } from "./components/ChurchLogo";
 
@@ -352,104 +353,110 @@ function TenantLayout() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <Router>
-        <TenantProvider>
-          <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
-            <Routes>
-              {/* Global Routes - These take precedence over dynamic :churchSlug */}
-              <Route path="/" element={<Layout><Home /></Layout>} />
-              <Route path="/login" element={<Layout><Login /></Layout>} />
-              <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
-              <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
-              <Route path="/complete-profile" element={<Layout><ProfileCompletion /></Layout>} />
-              <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
-              <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
-              <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
+      {/* Outside the Router deliberately: the provider needs no router hooks,
+          and keeping it here guarantees nothing routing does can tear down the
+          auth listener. TenantProvider must stay inside both -- it calls
+          useAuth as well as useMatch/useNavigate. */}
+      <AuthProvider>
+        <Router>
+          <TenantProvider>
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
+              <Routes>
+                {/* Global Routes - These take precedence over dynamic :churchSlug */}
+                <Route path="/" element={<Layout><Home /></Layout>} />
+                <Route path="/login" element={<Layout><Login /></Layout>} />
+                <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
+                <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
+                <Route path="/complete-profile" element={<Layout><ProfileCompletion /></Layout>} />
+                <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
+                <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
+                <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
               
-              {/* Generic Role Redirects */}
-              <Route path="/admin" element={<DashboardRedirect />} />
-              <Route path="/volunteer" element={<DashboardRedirect />} />
-              <Route path="/parent" element={<DashboardRedirect />} />
+                {/* Generic Role Redirects */}
+                <Route path="/admin" element={<DashboardRedirect />} />
+                <Route path="/volunteer" element={<DashboardRedirect />} />
+                <Route path="/parent" element={<DashboardRedirect />} />
 
-              <Route path="/profile" element={
-                <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
-                  <PolicyGuard>
-                    <Layout><Profile /></Layout>
-                  </PolicyGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="/master-admin" element={
-                <ProtectedRoute allowedRoles={["master_admin"]}>
-                  <PolicyGuard>
-                    <Layout><MasterAdminDashboard /></Layout>
-                  </PolicyGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="/master-admin/logs" element={
-                <ProtectedRoute allowedRoles={["master_admin"]}>
-                  <PolicyGuard>
-                    <Layout><MasterAdminLogs /></Layout>
-                  </PolicyGuard>
-                </ProtectedRoute>
-              } />
+                <Route path="/profile" element={
+                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer", "parent"]}>
+                    <PolicyGuard>
+                      <Layout><Profile /></Layout>
+                    </PolicyGuard>
+                  </ProtectedRoute>
+                } />
+                <Route path="/master-admin" element={
+                  <ProtectedRoute allowedRoles={["master_admin"]}>
+                    <PolicyGuard>
+                      <Layout><MasterAdminDashboard /></Layout>
+                    </PolicyGuard>
+                  </ProtectedRoute>
+                } />
+                <Route path="/master-admin/logs" element={
+                  <ProtectedRoute allowedRoles={["master_admin"]}>
+                    <PolicyGuard>
+                      <Layout><MasterAdminLogs /></Layout>
+                    </PolicyGuard>
+                  </ProtectedRoute>
+                } />
 
-              {/* Tenant Routes */}
-              <Route path="/:churchSlug" element={<TenantLayout />}>
-                <Route index element={<Home />} />
-                <Route path="login" element={<Login />} />
-                <Route path="parent" element={
-                  <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
-                    <PolicyGuard>
-                      <ParentDashboard />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="volunteer" element={
-                  <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer"]}>
-                    <PolicyGuard>
-                      <VolunteerDashboard />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="admin" element={
-                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
-                    <PolicyGuard>
-                      <AdminDashboard />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="admin/settings" element={
-                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
-                    <PolicyGuard>
-                      <ChurchSettings />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                <Route path="admin/events" element={
-                  <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
-                    <PolicyGuard>
-                      <EventsServices />
-                    </PolicyGuard>
-                  </ProtectedRoute>
-                } />
-                {/* Unmatched child of a real church, e.g. /randmeth/nonsense.
-                    Without this the Outlet renders nothing and the page is
-                    simply blank. */}
-                <Route path="*" element={<NotFound />} />
-              </Route>
+                {/* Tenant Routes */}
+                <Route path="/:churchSlug" element={<TenantLayout />}>
+                  <Route index element={<Home />} />
+                  <Route path="login" element={<Login />} />
+                  <Route path="parent" element={
+                    <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
+                      <PolicyGuard>
+                        <ParentDashboard />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="volunteer" element={
+                    <ProtectedRoute allowedRoles={["master_admin", "admin", "volunteer"]}>
+                      <PolicyGuard>
+                        <VolunteerDashboard />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="admin" element={
+                    <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                      <PolicyGuard>
+                        <AdminDashboard />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="admin/settings" element={
+                    <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                      <PolicyGuard>
+                        <ChurchSettings />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="admin/events" element={
+                    <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
+                      <PolicyGuard>
+                        <EventsServices />
+                      </PolicyGuard>
+                    </ProtectedRoute>
+                  } />
+                  {/* Unmatched child of a real church, e.g. /randmeth/nonsense.
+                      Without this the Outlet renders nothing and the page is
+                      simply blank. */}
+                  <Route path="*" element={<NotFound />} />
+                </Route>
 
-              {/* Backstop. `/:churchSlug/*` above is greedy enough to swallow
-                  every non-root path today, so this rarely fires -- TenantLayout
-                  delegates here instead. It stays as the safety net for if that
-                  route is ever narrowed. */}
-              <Route path="*" element={<Layout><NotFound /></Layout>} />
-            </Routes>
-            <Toaster position="top-right" richColors />
-            <NetworkStatus />
-            <SpeedInsights />
-          </div>
-        </TenantProvider>
-      </Router>
+                {/* Backstop. `/:churchSlug/*` above is greedy enough to swallow
+                    every non-root path today, so this rarely fires -- TenantLayout
+                    delegates here instead. It stays as the safety net for if that
+                    route is ever narrowed. */}
+                <Route path="*" element={<Layout><NotFound /></Layout>} />
+              </Routes>
+              <Toaster position="top-right" richColors />
+              <NetworkStatus />
+              <SpeedInsights />
+            </div>
+          </TenantProvider>
+        </Router>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }
