@@ -145,6 +145,16 @@ export default function Profile() {
       else if (roles.includes("volunteer")) navigate(`/${slug}/volunteer`);
       else if (roles.includes("parent")) navigate(`/${slug}/parent`);
       else navigate(`/${slug}`);
+    } else if (roles.includes("master_admin")) {
+      // A platform admin has no church of their own, so none of the branches
+      // above can match and Back used to land on the marketing home page.
+      //
+      // Deliberately not resolveLandingPath: that ranks master_admin above
+      // every church role, which is right for "where does this account live"
+      // and wrong for a Back button. An account that is both a platform admin
+      // and a church admin should go back to the church it was just looking
+      // at, which is what the slug branch above already does.
+      navigate("/master-admin");
     } else {
       navigate("/");
     }

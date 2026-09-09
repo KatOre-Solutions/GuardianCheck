@@ -3,6 +3,7 @@ import { useNavigate, useLocation, useMatch } from "react-router-dom";
 import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
+import { RESERVED_SLUGS } from "../constants/appRoutes";
 
 interface ChurchBranding {
   logoUrl?: string;
@@ -39,8 +40,11 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const urlChurchSlug = match?.params.churchSlug;
   const { userData, loading: authLoading } = useAuth();
   
-  const reservedKeywords = ["login", "register-church", "accept-invite", "complete-profile", "pending-approval", "rejected", "profile", "master-admin", "admin", "volunteer", "parent", "api", "assets", "static", "policy-acceptance"];
-  const isReserved = !!urlChurchSlug && reservedKeywords.includes(urlChurchSlug);
+  // Derived from the route manifest, not a second hand-maintained copy of it.
+  // The copy had already fallen behind: /app was absent, so launching the
+  // installed app looked up a church called "app", found none, and raised a
+  // not-found error that outlived the redirect that followed.
+  const isReserved = !!urlChurchSlug && RESERVED_SLUGS.includes(urlChurchSlug);
   
   // Use slug from URL if it's not a reserved keyword, otherwise fallback to user's church slug
   const churchSlug = isReserved ? userData?.churchSlug : (urlChurchSlug || userData?.churchSlug);
@@ -48,30 +52,46 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [church, setChurch] = useState<Church | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  /* The slug of the lookup that is in flight or already resolved. The effect
-     also depends on `authLoading`, so on a tenant URL it ran twice -- once
-     while auth was pending and again when it settled -- and the second run's
-     `setLoading(true)` re-showed the placeholder *after* the page had already
-     painted. The slug is the only input to the query, so a re-run for the same
-     one has nothing to do. */
-  const fetchedSlug = useRef<string | null>(null);
+  /* The slug this context has asked for. It answers both questions the effect
+     needs, which is why it is one ref rather than two guards:
+
+     - Should this run start a lookup? Only if the slug differs from the one
+       already asked for. The effect also depends on `authLoading`, so on a
+       tenant URL it runs twice -- once while auth is pending and again when it
+       settles -- and without this the second run repeats the query and its
+       `setLoading(true)` re-shows the placeholder after the page has painted.
+
+     - Should this response be applied? Only if the slug is still the one
+       wanted. A slow answer for a church the user has already navigated away
+       from must not land on top of the current one, or the header renders the
+       church that resolved while the body renders the not-found state left
+       behind by the stale request.
+
+     Judging staleness by slug rather than by which effect run issued the
+     request matters: a re-run for the *same* slug must not cancel the lookup
+     already in flight for it, or nothing ever resolves and the page sits in a
+     placeholder forever. */
+  const requestedSlug = useRef<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
+    /** True once the slug this run asked for is no longer the one wanted. */
+    const stale = () => requestedSlug.current !== churchSlug;
+
     async function fetchChurch() {
       // If we're still loading auth and don't have a valid URL slug, wait
       if (authLoading && (!urlChurchSlug || isReserved)) return;
 
       if (!churchSlug) {
-        fetchedSlug.current = null;
+        requestedSlug.current = null;
         setChurch(null);
         setLoading(false);
         return;
       }
 
-      if (fetchedSlug.current === churchSlug) return;
-      fetchedSlug.current = churchSlug;
+      if (requestedSlug.current === churchSlug) return;
+      requestedSlug.current = churchSlug;
 
       setLoading(true);
       setError(null);
@@ -88,7 +108,8 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           limit(1)
         );
         const querySnapshot = await getDocs(q);
-        
+        if (stale()) return;
+
         if (querySnapshot.empty) {
           setError("Church not found");
           setChurch(null);
@@ -121,17 +142,24 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (err) {
+        if (stale()) return;
         console.error("Error fetching church:", err);
         // Let a later run try again -- the guard above is there to stop
         // duplicate work, not to make a failure permanent.
-        fetchedSlug.current = null;
+        requestedSlug.current = null;
         setError("Failed to load church details");
+        // Dropped alongside the error. Leaving the previous church in place
+        // would render one tenant's branding and pages under another tenant's
+        // URL -- the failure this whole context exists to prevent.
+        setChurch(null);
       } finally {
-        setLoading(false);
+        if (!stale()) setLoading(false);
       }
     }
 
     fetchChurch();
+    // `churchSlug` is the only input to the query, so navigating between two
+    // reserved paths that resolve to the same church must not refetch it.
   }, [churchSlug, authLoading]);
 
   return (
