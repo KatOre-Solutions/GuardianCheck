@@ -16,8 +16,12 @@
  *    means "content is arriving"; a spinner means "your action is running".
  *    They are not interchangeable.
  * 5. **A wait whose outcome is a redirect rather than content**, carrying an
- *    explicit label → a full-screen spinner is right. Two places qualify:
- *    Login's "Authenticating…" and AcceptInvite's "Validating invitation…".
+ *    explicit label → a full-screen spinner is right, but the bar is high and
+ *    only AcceptInvite's "Validating invitation…" clears it: the thing being
+ *    waited on is a verdict on a token, and what follows could be a dashboard
+ *    or a rejection. Signing in is not that case, even though it looked like
+ *    it at first -- it always ends on a dashboard, so it shows a page skeleton
+ *    like any other page load.
  *
  * **Loading, empty and error are three different states and must never share a
  * rendering.** A component that takes its data as props takes a `loading` prop
