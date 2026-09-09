@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { PageSkeleton } from "../components/skeletons";
+import { ParentDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
+import { useLiveCollection } from "../hooks/useLiveData";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
@@ -21,9 +22,39 @@ export default function ParentDashboard() {
   const isParent = roles.includes("parent") || roles.includes("admin") || roles.includes("master_admin");
   const { church } = useTenant();
   const churchId = userData?.churchId || church?.id;
-  const [children, setChildren] = useState<any[]>([]);
-  const [guardians, setGuardians] = useState<any[]>([]);
-  const [checkins, setCheckins] = useState<any[]>([]);
+  /* This page had no loading state at all: three subscriptions writing straight
+     into useState with no flag, so it rendered an empty dashboard and popped
+     when the data landed. The live-data hooks give it something to wait for.
+
+     The builders are memoised on the ids they close over. The effect they
+     replace listed `children.length` in its dependencies, so every child a
+     parent added tore down all three listeners and reopened them. */
+  const parentScope = React.useMemo(
+    () =>
+      user && churchId
+        ? () => [where("parentId", "==", user.uid), where("churchId", "==", churchId)]
+        : null,
+    [user, churchId],
+  );
+  const openCheckinsScope = React.useMemo(
+    () =>
+      user && churchId
+        ? () => [
+            where("churchId", "==", churchId),
+            where("status", "==", "checked-in"),
+            where("parentId", "==", user.uid),
+          ]
+        : null,
+    [user, churchId],
+  );
+
+  const childrenQ = useLiveCollection("children", parentScope);
+  const guardiansQ = useLiveCollection("guardians", parentScope);
+  const checkinsQ = useLiveCollection("checkins", openCheckinsScope);
+
+  const children = childrenQ.data;
+  const guardians = guardiansQ.data;
+  const checkins = checkinsQ.data;
   const [medicalInfo, setMedicalInfo] = useState<Record<string, any>>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -79,34 +110,6 @@ export default function ParentDashboard() {
 
   const RELATIONSHIPS = ["Mother", "Father", "Grandparent", "Aunt", "Uncle", "Sibling", "Nanny", "Other"];
   const GENDERS = ["Male", "Female", "Other"];
-
-  useEffect(() => {
-    if (user && churchId) {
-      const constraints = [
-        where("parentId", "==", user.uid),
-        where("churchId", "==", churchId)
-      ];
-      const unsubscribeChildren = subscribeToCollection("children", constraints, (data) => {
-        setChildren(data);
-      });
-      const unsubscribeGuardians = subscribeToCollection("guardians", constraints, (data) => {
-        setGuardians(data);
-      });
-      const unsubscribeCheckins = subscribeToCollection("checkins", [
-        where("churchId", "==", churchId),
-        where("status", "==", "checked-in"),
-        where("parentId", "==", user.uid)
-      ], (data) => {
-        setCheckins(data);
-      });
-
-      return () => {
-        unsubscribeChildren();
-        unsubscribeGuardians();
-        unsubscribeCheckins();
-      };
-    }
-  }, [user, churchId, children.length]);
 
   // Handle medical info subscriptions individually for each child
   useEffect(() => {
@@ -561,13 +564,22 @@ export default function ParentDashboard() {
   // A permission decision may only be rendered once auth has settled, and a
   // signed-out visitor is ProtectedRoute's redirect to make, not a message here.
   if (authLoading) {
-    return <PageSkeleton />;
+    return <ParentDashboardSkeleton />;
   }
 
   if (!user) return <div className="text-center py-12">Please login to view your dashboard.</div>;
 
   if (!isParent) {
     return <AccessDenied requirement="parent" />;
+  }
+
+  /* The children query is what the whole page is about, so it is worth waiting
+     for -- without this the page rendered its "no children yet" empty state to
+     parents who have children, for as long as the query took. Guardians and
+     check-ins are folded into the child cards, so they settle inside a page
+     that is already the right shape. */
+  if (!childrenQ.loaded) {
+    return <ParentDashboardSkeleton />;
   }
 
   return (

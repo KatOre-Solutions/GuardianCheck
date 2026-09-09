@@ -2311,6 +2311,7 @@ export default function AdminDashboard() {
         children={children}
         guardians={guardians}
         users={users}
+        loading={!childrenQ.loaded || !guardiansQ.loaded || !usersQ.loaded}
         churchId={churchId || ""}
         churchName={churchData?.name}
         currentUserId={user?.uid || ""}

@@ -36,10 +36,12 @@
 import React from "react";
 import { AdminDashboardSkeleton } from "./AdminDashboardSkeleton";
 import { FormPageSkeleton, PageSkeleton } from "./PageSkeleton";
+import { ParentDashboardSkeleton, VolunteerDashboardSkeleton } from "./DashboardSkeletons";
 
 export * from "./primitives";
 export { AdminDashboardSkeleton } from "./AdminDashboardSkeleton";
 export { PageSkeleton, FormPageSkeleton } from "./PageSkeleton";
+export { VolunteerDashboardSkeleton, ParentDashboardSkeleton } from "./DashboardSkeletons";
 
 /**
  * The skeleton a path will resolve into.
@@ -56,6 +58,10 @@ export function getRouteSkeleton(pathname: string): React.ReactElement {
   switch (leaf) {
     case "admin":
       return <AdminDashboardSkeleton />;
+    case "volunteer":
+      return <VolunteerDashboardSkeleton />;
+    case "parent":
+      return <ParentDashboardSkeleton />;
     case "admin/settings":
     case "profile":
     case "complete-profile":

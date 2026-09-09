@@ -27,8 +27,9 @@ import { showErrorToast, showSuccessToast, showInfoToast } from "../lib/error-ha
 import { hasRecordedAllergies } from "../lib/child-utils";
 import { useActiveService } from "../hooks/useActiveService";
 import { activateService, closeService } from "../lib/firestore";
-import { PageSkeleton } from "../components/skeletons";
+import { VolunteerDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
+import { useChurchCollection, useLiveCollection } from "../hooks/useLiveData";
 import { useTenant } from "../contexts/TenantContext";
 
 export default function VolunteerDashboard() {
@@ -41,7 +42,16 @@ export default function VolunteerDashboard() {
   const [activeTab, setActiveTab] = useState<"scan" | "checkout" | "list">("scan");
   const [scannedChildren, setScannedChildren] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
-  const [checkedInChildren, setCheckedInChildren] = useState<any[]>([]);
+  /* The roster: open check-ins for this church. Already status-bounded. */
+  const rosterBuild = React.useMemo(
+    () =>
+      churchId
+        ? () => [where("churchId", "==", churchId), where("status", "==", "checked-in")]
+        : null,
+    [churchId],
+  );
+  const rosterQ = useLiveCollection("checkins", rosterBuild);
+  const checkedInChildren = rosterQ.data;
   const [selectedRoom, setSelectedRoom] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
@@ -57,8 +67,12 @@ export default function VolunteerDashboard() {
   const [churchSecurity, setChurchSecurity] = useState<any>(null);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [attendanceSearch, setAttendanceSearch] = useState("");
-  const [allChildren, setAllChildren] = useState<any[]>([]);
-  const [allGuardians, setAllGuardians] = useState<any[]>([]);
+  /* Warm cache for offline resilience. Converted to the live-data hooks so the
+     page can tell "no children" from "not answered yet". */
+  const allChildrenQ = useChurchCollection("children", churchId, !!churchId);
+  const allGuardiansQ = useChurchCollection("guardians", churchId, !!churchId);
+  const allChildren = allChildrenQ.data;
+  const allGuardians = allGuardiansQ.data;
   const [isOnline, setIsOnline] = useState(typeof window !== "undefined" ? window.navigator.onLine : true);
   const lastScannedRef = useRef<{ text: string, time: number } | null>(null);
 
@@ -132,31 +146,11 @@ export default function VolunteerDashboard() {
   useEffect(() => {
     if (!churchId) return;
 
-    // Pre-fetch/Warm cache for offline resilience
-    const unsubChildren = subscribeToCollection("children", [where("churchId", "==", churchId)], setAllChildren);
-    const unsubGuardians = subscribeToCollection("guardians", [where("churchId", "==", churchId)], setAllGuardians);
-    
-    return () => {
-      unsubChildren();
-      unsubGuardians();
-    };
-  }, [churchId]);
-
-  useEffect(() => {
-    if (!churchId) return;
-
     const fetchRooms = async () => {
       const data = await getCollection("rooms", [where("churchId", "==", churchId)]);
       setRooms(data || []);
     };
     fetchRooms();
-
-    const unsubscribe = subscribeToCollection("checkins", [
-      where("churchId", "==", churchId),
-      where("status", "==", "checked-in")
-    ], (data) => {
-      setCheckedInChildren(data);
-    });
 
     const unsubscribeRecent = subscribeToCollection("checkins", [
       where("churchId", "==", churchId)
@@ -168,7 +162,6 @@ export default function VolunteerDashboard() {
     });
 
     return () => {
-      unsubscribe();
       unsubscribeRecent();
     };
   }, [churchId]);
@@ -481,7 +474,7 @@ export default function VolunteerDashboard() {
 
   // A permission decision may only be rendered once auth has settled.
   if (authLoading) {
-    return <PageSkeleton />;
+    return <VolunteerDashboardSkeleton />;
   }
 
   if (!isVolunteer) {
@@ -489,7 +482,7 @@ export default function VolunteerDashboard() {
   }
 
   if (serviceLoading) {
-    return <PageSkeleton />;
+    return <VolunteerDashboardSkeleton />;
   }
 
   return (
