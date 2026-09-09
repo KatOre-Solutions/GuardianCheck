@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { useNavigate, useLocation, useMatch } from "react-router-dom";
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from "react";
+import { useMatch } from "react-router-dom";
 import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
@@ -72,8 +72,6 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
      already in flight for it, or nothing ever resolves and the page sits in a
      placeholder forever. */
   const requestedSlug = useRef<string | null>(null);
-  const navigate = useNavigate();
-  const location = useLocation();
 
   useEffect(() => {
     /** True once the slug this run asked for is no longer the one wanted. */
@@ -167,11 +165,12 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     // reserved paths that resolve to the same church must not refetch it.
   }, [churchSlug, authLoading]);
 
-  return (
-    <TenantContext.Provider value={{ church, loading, error }}>
-      {children}
-    </TenantContext.Provider>
-  );
+  // Memoised because this provider re-renders whenever auth state changes and
+  // it sits above the whole app; a fresh object would re-render every
+  // `useTenant` consumer for nothing.
+  const value = useMemo(() => ({ church, loading, error }), [church, loading, error]);
+
+  return <TenantContext.Provider value={value}>{children}</TenantContext.Provider>;
 }
 
 export function useTenant() {

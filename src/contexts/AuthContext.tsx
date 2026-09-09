@@ -26,7 +26,7 @@
  * then re-render.
  */
 
-import React, { createContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { subscribeToDocument } from "../lib/firestore";
@@ -62,6 +62,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
+  /* The uid whose document `userData`/`roles`/`status` currently describe.
+     This provider is mounted for the life of the app, so a sign-in that happens
+     *during* a session finds `loading` already false from the signed-out state.
+     Without this, the window between `setUser` and the first users/{uid}
+     snapshot has `user` set, `loading` false and `roles` empty -- and every
+     consumer reads that as a settled answer. ProtectedRoute denies the account
+     and its effect navigates to `/${userData?.churchSlug || "dashboard"}`,
+     landing a just-signed-in admin on "Church Not Found". Before the hook
+     became a provider each gate mounted its own listener and started from
+     `loading: true`, which is what used to make the window unreachable. */
+  const loadedUid = useRef<string | null>(null);
 
   // Derived primary role for backward compatibility
   const role = roles.length > 0 ? roles[0] : null;
@@ -99,10 +110,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(user);
 
       if (user) {
+        // The previous account's document is closed and this one's has not
+        // arrived: until it does, roles/status/userData describe nobody, so
+        // consumers have to see `loading` rather than an empty role set.
+        if (loadedUid.current !== user.uid) {
+          loadedUid.current = null;
+          setUserData(null);
+          setRoles([]);
+          setStatus(null);
+          setLoading(true);
+        }
+
         // Fetch ID token
         user.getIdToken().then(setToken).catch(err => console.error("Error getting token", err));
 
         unsubscribeDoc = subscribeToDocument("users", user.uid, (userDoc) => {
+          loadedUid.current = user.uid;
           if (userDoc) {
             setUserData(userDoc);
 
@@ -141,6 +164,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setLoading(false); // Ensure loading is false even on error
         });
       } else {
+        loadedUid.current = null;
         setToken(null);
         setRoles([]);
         setStatus(null);

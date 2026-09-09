@@ -285,7 +285,13 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   // `roles.length > 0`, and the cross-tenant branch only fires under a church,
   // so on /profile or /master-admin nothing navigates. A placeholder here
   // would be a skeleton that never resolves, so say what is actually true.
-  if (user && isEmailVerified && roles.length === 0) {
+  //
+  // Onboarding statuses are excluded: those *do* redirect, and a role-less
+  // account mid-signup would otherwise be told it lacks permission for one
+  // frame on its way to /complete-profile -- the flash this change removes
+  // everywhere else.
+  const onboarding = status === "incomplete_profile" || status === "rejected";
+  if (user && isEmailVerified && roles.length === 0 && !onboarding) {
     return <AccessDenied requirement={allowedRoles.join(" or ")} />;
   }
 

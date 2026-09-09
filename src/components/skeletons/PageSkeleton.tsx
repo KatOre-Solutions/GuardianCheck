@@ -66,4 +66,35 @@ export function FormPageSkeleton() {
   );
 }
 
+/**
+ * A church's public landing page, and any other single-segment marketing route.
+ *
+ * Deliberately not the dashboard shape: this is what an anonymous visitor sees
+ * while `TenantProvider` resolves the slug in the URL, and four metric tiles in
+ * front of a hero is a placeholder that shares nothing with the page replacing
+ * it.
+ */
+export function LandingSkeleton() {
+  return (
+    <SkeletonRoot className="space-y-12">
+      <div className="max-w-2xl mx-auto text-center space-y-4 pt-8">
+        <div className="h-16 w-16 bg-gray-200 dark:bg-gray-800 rounded-3xl mx-auto" />
+        <Skeleton className="h-10 w-3/4 mx-auto" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-2/3 mx-auto" />
+        <div className="flex justify-center gap-3 pt-2">
+          <SkeletonPill className="h-11 w-36" />
+          <SkeletonPill className="h-11 w-36" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-48 rounded-3xl" />
+        ))}
+      </div>
+    </SkeletonRoot>
+  );
+}
+
 export default PageSkeleton;

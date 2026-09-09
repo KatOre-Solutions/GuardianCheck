@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 
 /**
@@ -18,6 +18,12 @@ import { ShieldAlert } from "lucide-react";
  * pattern for a whole-page dead end.
  */
 export function AccessDenied({ requirement }: { requirement: string }) {
+  /* /profile is itself behind ProtectedRoute, so an account holding no roles
+     is denied there too -- and a "Go to your profile" link on that page is a
+     dead end pointing at itself. Offer the way out that still works. */
+  const location = useLocation();
+  const onProfile = location.pathname === "/profile";
+
   return (
     <div className="p-12 text-center space-y-4">
       <div className="h-20 w-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto">
@@ -28,8 +34,8 @@ export function AccessDenied({ requirement }: { requirement: string }) {
         This page needs {requirement} permissions, which your account doesn't have. If you
         think that's wrong, your church administrator can check your role.
       </p>
-      <Link to="/profile" className="inline-block text-primary font-bold hover:underline">
-        Go to your profile
+      <Link to={onProfile ? "/" : "/profile"} className="inline-block text-primary font-bold hover:underline">
+        {onProfile ? "Go to GuardianCheck Home" : "Go to your profile"}
       </Link>
     </div>
   );

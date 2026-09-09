@@ -35,12 +35,12 @@
 
 import React from "react";
 import { AdminDashboardSkeleton } from "./AdminDashboardSkeleton";
-import { FormPageSkeleton, PageSkeleton } from "./PageSkeleton";
+import { FormPageSkeleton, LandingSkeleton, PageSkeleton } from "./PageSkeleton";
 import { ParentDashboardSkeleton, VolunteerDashboardSkeleton } from "./DashboardSkeletons";
 
 export * from "./primitives";
 export { AdminDashboardSkeleton } from "./AdminDashboardSkeleton";
-export { PageSkeleton, FormPageSkeleton } from "./PageSkeleton";
+export { PageSkeleton, FormPageSkeleton, LandingSkeleton } from "./PageSkeleton";
 export { VolunteerDashboardSkeleton, ParentDashboardSkeleton } from "./DashboardSkeletons";
 
 /**
@@ -58,6 +58,8 @@ export function getRouteSkeleton(pathname: string): React.ReactElement {
   switch (leaf) {
     case "admin":
       return <AdminDashboardSkeleton />;
+    case "master-admin":
+      return <PageSkeleton />;
     case "volunteer":
       return <VolunteerDashboardSkeleton />;
     case "parent":
@@ -65,8 +67,17 @@ export function getRouteSkeleton(pathname: string): React.ReactElement {
     case "admin/settings":
     case "profile":
     case "complete-profile":
+    case "register-church":
+    // A sign-in form, not a dashboard. `/:churchSlug/login` is the busiest
+    // authenticated entry point there is.
+    case "login":
       return <FormPageSkeleton />;
     default:
-      return <PageSkeleton />;
+      // A bare `/:churchSlug` is the church's public landing page, which every
+      // anonymous visitor sees while TenantProvider resolves the slug. The
+      // dashboard-shaped default put four metric tiles and a data panel in
+      // front of a marketing page -- a placeholder of the wrong shape, which
+      // is the layout shift this system exists to remove.
+      return parts.length <= 1 ? <LandingSkeleton /> : <PageSkeleton />;
   }
 }

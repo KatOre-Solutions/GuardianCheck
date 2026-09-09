@@ -415,7 +415,12 @@ export default function ChildrenDirectory({
           </div>
         )}
 
-        {!loading && visibleRows.length === 0 && (
+        {/* Not `!loading`: once rows have arrived, a search that matches
+            nothing has a real answer to give even while a slower prop (the
+            guardian or user list) is still in flight. Gating on `!loading`
+            left that case rendering neither the skeleton above nor a message.
+            `rows.length === 0` here therefore implies the data has answered. */}
+        {visibleRows.length === 0 && !(loading && rows.length === 0) && (
           <div className="p-10 text-center">
             <p className="text-sm text-gray-400 italic">
               {rows.length === 0
