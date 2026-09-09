@@ -30,10 +30,11 @@ import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
-import { isKnownAppPath } from "./constants/appRoutes";
+import { isKnownAppPath, RESERVED_SLUGS } from "./constants/appRoutes";
 import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
 import { PageLoading } from "./components/PageLoading";
+import { AccessDenied } from "./components/AccessDenied";
 
 function DashboardRedirect() {
   const { user, userData, loading } = useAuth();
@@ -76,6 +77,11 @@ function Navigation() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  /* Whether this URL names a church at all. `/:churchSlug` is any single
+     segment that is not one of the app's own paths -- the same test
+     TenantProvider applies before it looks a slug up. */
+  const firstSegment = location.pathname.split("/").filter(Boolean)[0];
+  const expectingChurch = !!firstSegment && !RESERVED_SLUGS.includes(firstSegment);
 
   const handleLogout = async () => {
     await auth.signOut();
@@ -135,8 +141,13 @@ function Navigation() {
               <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0">
                 {/* On a tenant URL the church's name is coming; showing
                     "GuardianCheck" first and replacing it is a visible swap in
-                    the header. Hold the space until we know. */}
-                {tenantLoading && !church ? (
+                    the header, so hold the space until we know.
+                    Only on a tenant URL, though: everywhere else no church is
+                    coming and the wordmark is the final answer. Holding space
+                    there put a grey bar where "GuardianCheck" belongs on the
+                    marketing home page, for the whole of auth initialisation,
+                    for every first-time anonymous visitor. */}
+                {expectingChurch && tenantLoading && !church ? (
                   <span className="inline-block h-5 w-40 align-middle rounded bg-gray-100 dark:bg-gray-800" aria-hidden="true" />
                 ) : (
                   church?.name || "GuardianCheck"
@@ -268,6 +279,15 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
 
   const hasAccess = roles.some(r => allowedRoles.includes(r as any));
   const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
+
+  // The one case the effect above does not redirect: a signed-in, verified
+  // account holding no roles at all. Its role-mismatch branch is guarded on
+  // `roles.length > 0`, and the cross-tenant branch only fires under a church,
+  // so on /profile or /master-admin nothing navigates. A placeholder here
+  // would be a skeleton that never resolves, so say what is actually true.
+  if (user && isEmailVerified && roles.length === 0) {
+    return <AccessDenied requirement={allowedRoles.join(" or ")} />;
+  }
 
   // Every route behind auth is noindex by definition, so it is set here once
   // rather than in each dashboard. Pages rendered as `children` must not

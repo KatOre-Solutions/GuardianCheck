@@ -56,6 +56,9 @@ import { useActiveService } from "../hooks/useActiveService";
 import SetupWizard from "../components/SetupWizard";
 import { AdminDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
+// The card surface the skeleton draws too, so the two cannot drift apart --
+// which is the whole reason surfaces.ts exists.
+import { STAT_CARD } from "../components/ui/surfaces";
 import { useChurchCollection, useLiveDocument } from "../hooks/useLiveData";
 import { useTenant } from "../contexts/TenantContext";
 import ChildDetailsModal from "../components/ChildDetailsModal";
@@ -122,7 +125,7 @@ const StatCard = ({
   trend?: { absolute: number; percent: number | null; direction: "up" | "down" | "flat" };
   trendLabel?: string;
 }) => (
-  <div className="bg-white dark:bg-gray-900 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800 space-y-3">
+  <div className={STAT_CARD}>
     <div className="flex items-start justify-between gap-3">
       <div className="flex items-center space-x-3 min-w-0">
         {icon && (
@@ -925,7 +928,14 @@ export default function AdminDashboard() {
      `loaded` is true on the error path as well, deliberately: a denied read
      never produces a snapshot, and gating on success alone would leave the
      page in a skeleton forever. */
-  if (!churchDoc.loaded) {
+  /* And for the active service, on the same terms the old gate used
+     (`serviceLoading && !churchData`). Three tiles and the service badge read
+     `activeService`, which is null until that subscription answers, so
+     dropping this makes the page announce "No service running" during a
+     running service and correct itself -- the class of jump this change
+     exists to remove. Paired with `!churchData` so a services query that
+     never answers cannot hold the page: the church document releases it. */
+  if (!churchDoc.loaded || (serviceLoading && !churchData)) {
     return <AdminDashboardSkeleton />;
   }
 

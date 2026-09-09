@@ -144,14 +144,19 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (stale()) return;
         console.error("Error fetching church:", err);
-        // Let a later run try again -- the guard above is there to stop
-        // duplicate work, not to make a failure permanent.
-        requestedSlug.current = null;
         setError("Failed to load church details");
         // Dropped alongside the error. Leaving the previous church in place
         // would render one tenant's branding and pages under another tenant's
         // URL -- the failure this whole context exists to prevent.
         setChurch(null);
+        // Cleared *after* `loading`, and `loading` cleared here rather than in
+        // `finally`: `stale()` reads this ref, so resetting it first makes the
+        // `finally` below skip `setLoading(false)` and the page sits in its
+        // placeholder forever instead of showing the error.
+        setLoading(false);
+        // Let a later run try again -- the guard above is there to stop
+        // duplicate work, not to make a failure permanent.
+        requestedSlug.current = null;
       } finally {
         if (!stale()) setLoading(false);
       }

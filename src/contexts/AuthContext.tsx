@@ -85,6 +85,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     mediaQuery.addEventListener('change', handleSystemThemeChange);
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      // A new auth state supersedes the previous account's document listener.
+      // This provider is mounted for the life of the app, so nothing else ever
+      // closes it: without this a sign-out leaves a listener open on a user
+      // that is no longer signed in, it fails permission-denied and calls back
+      // into this state, and signing in as someone else stacks another one on
+      // top.
+      if (unsubscribeDoc) {
+        unsubscribeDoc();
+        unsubscribeDoc = null;
+      }
+
       setUser(user);
 
       if (user) {
