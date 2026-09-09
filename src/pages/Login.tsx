@@ -9,7 +9,7 @@ import {
   updatePassword,
   updateProfile
 } from "firebase/auth";
-import { Shield, Mail, Lock, ArrowRight, User, CheckCircle2, AlertCircle, Key, Loader2, Eye, EyeOff } from "lucide-react";
+import { Shield, Mail, Lock, ArrowRight, User, CheckCircle2, AlertCircle, Key, Eye, EyeOff } from "lucide-react";
 import { auth } from "../lib/firebase";
 import { getDocument, setDocument, updateDocument, logAudit } from "../lib/firestore";
 import { showErrorToast, showSuccessToast, getHumanReadableError } from "../lib/error-handler";
@@ -17,6 +17,7 @@ import { sendCustomVerificationEmail } from "../lib/api";
 import { useTenant } from "../contexts/TenantContext";
 import { ChurchLogo } from "../components/ChurchLogo";
 import { Seo } from "../components/Seo";
+import { PageSkeleton } from "../components/skeletons";
 import { resolveLandingPath } from "../lib/landing";
 
 type AuthMode = "signin" | "signup" | "forgot" | "verify" | "must-change";
@@ -57,6 +58,14 @@ export default function Login() {
   }, [searchParams]);
 
   const performAuthCheck = React.useCallback(async (user: any, manual = false, retryCount = 0): Promise<void> => {
+    /* Set once this function has issued the redirect. React Router unmounts
+       this page a beat after `navigate`, and clearing `loading` in the
+       meantime re-renders the sign-in form over the destination URL for that
+       beat -- measured at ~90ms of the form reappearing at /:slug/admin. The
+       exits that do *not* redirect still clear it, so the form always comes
+       back when it is the right answer. */
+    let redirected = false;
+
     try {
       setLoading(true);
       setError(null);
@@ -129,6 +138,7 @@ export default function Login() {
         // `replace` keeps Back from returning to a login form the user has
         // already passed.
         navigate(resolveLandingPath(userDoc), { replace: true });
+        redirected = true;
       }
     } catch (err: any) {
       if (retryCount < 2 && (err.code === "auth/network-request-failed" || err.message?.includes("network"))) {
@@ -141,7 +151,7 @@ export default function Login() {
       setError(message);
       showErrorToast(err);
     } finally {
-      setLoading(false);
+      if (!redirected) setLoading(false);
     }
   }, [church, navigate]);
 
@@ -157,9 +167,15 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError(null);
+    /* Same hand-off as the email path below: this function never navigates. It
+       writes the user document and lets performAuthCheck redirect, so clearing
+       `loading` here while that listener is still reading would flash the
+       sign-in form back at someone who has already signed in. */
+    let handedOff = false;
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
+      handedOff = true;
       const user = result.user;
 
       const userDoc = await getDocument("users", user.uid) as any;
@@ -226,8 +242,10 @@ export default function Login() {
       const { message } = getHumanReadableError(err);
       setError(message);
       showErrorToast(err);
+      // Popup dismissed, or the sign-in failed: the form owns the screen again.
+      handedOff = false;
     } finally {
-      setLoading(false);
+      if (!handedOff) setLoading(false);
     }
   };
 
@@ -246,6 +264,19 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+
+    /* Signing in hands the screen over to the auth listener below, which does
+       its own reload + user-document read before redirecting. Both this
+       handler and that listener drive the same `loading` flag, and this one
+       used to clear it in `finally` the moment Firebase resolved -- while the
+       listener was still working. The overlay dropped, the sign-in form
+       rendered again for the length of those round trips, and only then did
+       the redirect fire. That flash of the form the user has just submitted is
+       what reads as "it sent me back to the login page".
+
+       So on the branch that hands off, this handler stops owning `loading`;
+       performAuthCheck clears it on every one of its own exits. */
+    let handedOff = false;
 
     if (mode === "signup") {
       if (!validatePassword(password)) {
@@ -303,6 +334,9 @@ export default function Login() {
         showSuccessToast("Account created!", "Please check your email for verification.");
       } else if (mode === "signin") {
         await signInWithEmailAndPassword(auth, email, password);
+        // onAuthStateChanged has already fired; performAuthCheck owns the
+        // screen from here until it redirects or shows a reason not to.
+        handedOff = true;
       }
     } catch (err: any) {
       console.error(err);
@@ -310,7 +344,9 @@ export default function Login() {
       setError(message);
       showErrorToast(err);
     } finally {
-      setLoading(false);
+      // A failed sign-in never handed off, so the form comes back with its
+      // error. A successful one leaves the overlay up for the listener.
+      if (!handedOff) setLoading(false);
     }
   };
 
@@ -362,13 +398,17 @@ export default function Login() {
     }
   };
 
+  /* Authenticating. This used to be a full-screen spinner, on the reasoning
+     that a wait whose outcome is a redirect rather than content is a spinner
+     case. In practice it is the one wait in the app that is *always* followed
+     by a dashboard, so a placeholder shaped like one is the more honest
+     promise -- and it makes the sign-in handover continuous with the route
+     gate that takes over a moment later, which draws the same thing. */
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
-        <div className="flex flex-col items-center space-y-4">
-          <Loader2 className="h-12 w-12 text-primary animate-spin" />
-          <p className="text-gray-500 dark:text-gray-400 font-medium">Authenticating...</p>
-        </div>
+      <div className="max-w-7xl mx-auto">
+        <p className="sr-only" role="status" aria-live="polite">Signing you in</p>
+        <PageSkeleton />
       </div>
     );
   }
