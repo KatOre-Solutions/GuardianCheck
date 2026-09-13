@@ -7,6 +7,17 @@
 
 @variant dark (&:where(.dark, .dark *));
 
+/* Keep the vertical scrollbar's gutter even when the page doesn't scroll. The
+   layouts here are centred (`max-w-7xl mx-auto`), so whenever a short loading
+   placeholder replaced a long page -- a tenant lookup, a route guard -- the
+   scrollbar vanished and everything jumped sideways by its width, then jumped
+   back when the content arrived. Measured as two layout shifts of ~0.005 each
+   on an in-app navigation to a church page. No effect where scrollbars overlay
+   the content (macOS defaults, phones). */
+html {
+  scrollbar-gutter: stable;
+}
+
 /* html5-qrcode injects a <video> with an inline pixel width and no height, so the
    element sizes itself from the camera stream's intrinsic aspect ratio. On iOS that
    yields a small landscape strip inside the square frame. Force it to fill the
