@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from "react";
 import { useMatch } from "react-router-dom";
-import { where, limit, query, collection, getDocs } from "firebase/firestore";
+import { where, limit, query, collection, getDocs, getDocsFromCache } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { RESERVED_SLUGS } from "../constants/appRoutes";
@@ -34,6 +34,31 @@ interface TenantContextType {
 }
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
+
+/** Where the last successfully resolved church for a slug is mirrored, so a
+ * previously-visited church still resolves on a cold offline launch. This is
+ * a fallback for exactly this one document, not a general persistence layer
+ * -- app data (children, guardians, checkins) stays Firestore's own
+ * `persistentLocalCache` responsibility. */
+const churchCacheKey = (slug: string) => `gc.church.${slug}`;
+
+function readCachedChurch(slug: string): Church | null {
+  try {
+    const raw = localStorage.getItem(churchCacheKey(slug));
+    return raw ? (JSON.parse(raw) as Church) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedChurch(slug: string, churchData: Church) {
+  try {
+    localStorage.setItem(churchCacheKey(slug), JSON.stringify(churchData));
+  } catch {
+    // Best-effort -- a full/unavailable localStorage just means no offline
+    // fallback for this slug, not a reason to fail the (successful) fetch.
+  }
+}
 
 export function TenantProvider({ children }: { children: React.ReactNode }) {
   const match = useMatch("/:churchSlug/*");
@@ -125,7 +150,8 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
             branding: data.branding ?? undefined,
           };
           setChurch(churchData);
-          
+          writeCachedChurch(churchSlug, churchData);
+
           // Apply branding if available
           if (churchData.branding?.primaryColor) {
             document.documentElement.style.setProperty('--primary-color', churchData.branding.primaryColor);
@@ -142,6 +168,37 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (stale()) return;
         console.error("Error fetching church:", err);
+
+        // A network failure (offline, or a live request that just didn't make
+        // it) isn't the same answer as "this slug doesn't exist" -- the empty
+        // `querySnapshot` branch above already owns that case. Try to resolve
+        // this same slug from what's already on the device before giving up:
+        // Firestore's own cache first (in case this exact query was served
+        // from a listener elsewhere and is sitting in `persistentLocalCache`),
+        // then the small mirror this context keeps for itself.
+        const cached = await (async () => {
+          try {
+            const q = query(collection(db, "church_public"), where("slug", "==", churchSlug), limit(1));
+            const snapshot = await getDocsFromCache(q);
+            if (!snapshot.empty) {
+              const data = snapshot.docs[0].data();
+              return { id: data.churchId || snapshot.docs[0].id, name: data.name, slug: data.slug, branding: data.branding ?? undefined } as Church;
+            }
+          } catch {
+            // No cached query result -- fall through to the localStorage mirror.
+          }
+          return readCachedChurch(churchSlug);
+        })();
+
+        if (stale()) return;
+
+        if (cached) {
+          setChurch(cached);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+
         setError("Failed to load church details");
         // Dropped alongside the error. Leaving the previous church in place
         // would render one tenant's branding and pages under another tenant's
