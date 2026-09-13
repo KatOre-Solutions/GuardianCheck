@@ -5,7 +5,7 @@ import { AccessDenied } from "../components/AccessDenied";
 import { useLiveCollection } from "../hooks/useLiveData";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../lib/firebase";
+import { storage } from "../lib/storage";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
