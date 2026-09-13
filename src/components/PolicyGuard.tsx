@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, getDocFromCache } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { CURRENT_POLICY_VERSION } from "../constants/legalContent";
@@ -20,6 +20,10 @@ export function PolicyGuard({ children }: PolicyGuardProps) {
   const location = useLocation();
 
   useEffect(() => {
+    // Two reads now resolve at different times; a run superseded by a newer
+    // path or account must not act on either of them.
+    let cancelled = false;
+
     async function checkPolicy() {
       if (authLoading) return;
       
@@ -36,40 +40,71 @@ export function PolicyGuard({ children }: PolicyGuardProps) {
 
       setFailed(false);
 
+      const acceptanceRef = doc(db, "policy_acceptance", user.uid);
+      const isCompliant = (snapshot: Awaited<ReturnType<typeof getDoc>>) => {
+        const data = snapshot.exists() ? (snapshot.data() as { lastAcceptedVersion?: string; status?: string }) : null;
+        return !!data && data.lastAcceptedVersion === CURRENT_POLICY_VERSION && data.status === "compliant";
+      };
+
+      // Cache first. `getDoc` waits for a Firestore server round trip, which
+      // measured ~3-4s on a warm dashboard load, and every protected page sat
+      // behind it. An acceptance this device already holds for the *current*
+      // policy version releases the page now; the server read below still
+      // runs and still redirects if the answer has changed. The version
+      // constant ships in the bundle, so a policy bump invalidates a cached
+      // acceptance on the next deploy without waiting for the server.
+      let acceptedFromCache = false;
       try {
-        const acceptanceDoc = await getDoc(doc(db, "policy_acceptance", user.uid));
-        markOnce("policy-server-resolved", {
-          compliant:
-            acceptanceDoc.exists() &&
-            acceptanceDoc.data().lastAcceptedVersion === CURRENT_POLICY_VERSION &&
-            acceptanceDoc.data().status === "compliant",
-          fromCache: acceptanceDoc.metadata.fromCache,
-        });
-        
-        if (acceptanceDoc.exists()) {
-          const data = acceptanceDoc.data();
-          if (data.lastAcceptedVersion === CURRENT_POLICY_VERSION && data.status === "compliant") {
-            setAccepted(true);
-          } else {
-            // Include the full path to preserve church context
-            navigate("/policy-acceptance", { state: { from: location.pathname + location.search } });
-          }
+        acceptedFromCache = isCompliant(await getDocFromCache(acceptanceRef));
+        markOnce("policy-cache-resolved", { hit: true, compliant: acceptedFromCache });
+      } catch {
+        // Not in the local cache -- first visit on this device, or evicted.
+        markOnce("policy-cache-resolved", { hit: false });
+      }
+      if (cancelled) return;
+      if (acceptedFromCache) {
+        setAccepted(true);
+        setLoading(false);
+      }
+
+      try {
+        const acceptanceDoc = await getDoc(acceptanceRef);
+        const compliant = isCompliant(acceptanceDoc);
+        markOnce("policy-server-resolved", { compliant, fromCache: acceptanceDoc.metadata.fromCache });
+        if (cancelled) return;
+
+        if (compliant) {
+          setAccepted(true);
         } else {
+          setAccepted(false);
+          // Include the full path to preserve church context
           navigate("/policy-acceptance", { state: { from: location.pathname + location.search } });
         }
       } catch (error) {
         markOnce("policy-server-resolved", { error: true });
+        if (cancelled) return;
+        if (acceptedFromCache) {
+          // Already released on this device's acceptance of the current
+          // version. `getDoc` itself answers from that same cache when the
+          // client is offline, so failing closed here would be stricter than
+          // the offline path -- keep the page and say why in the console.
+          console.warn("Policy acceptance revalidation failed; using cached acceptance:", error);
+          return;
+        }
         console.error("Error checking policy acceptance:", error);
         // For security we still block. But the block has to *say* so: a read
         // that failed will never answer and nothing navigates away from it, so
         // rendering the loading placeholder here left the page pulsing forever.
         setFailed(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     checkPolicy();
+    return () => {
+      cancelled = true;
+    };
   }, [user, authLoading, navigate, location.pathname]);
 
   if (authLoading || loading) {

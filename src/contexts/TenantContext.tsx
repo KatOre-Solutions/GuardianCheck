@@ -36,10 +36,13 @@ interface TenantContextType {
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
-/** Where the last successfully resolved church for a slug is mirrored, so a
- * previously-visited church still resolves on a cold offline launch. This is
- * a fallback for exactly this one document, not a general persistence layer
- * -- app data (children, guardians, checkins) stays Firestore's own
+/** Where the last successfully resolved church for a slug is mirrored. It does
+ * two jobs: a previously-visited church renders immediately while the live
+ * lookup revalidates it (that lookup waits on a Firestore server round trip,
+ * which measured ~3-4s on a warm dashboard load and held every route behind
+ * `ProtectedRoute`), and it still resolves on a cold offline launch. This is
+ * exactly this one public document, not a general persistence layer -- app
+ * data (children, guardians, checkins) stays Firestore's own
  * `persistentLocalCache` responsibility. */
 const churchCacheKey = (slug: string) => `gc.church.${slug}`;
 
@@ -58,6 +61,28 @@ function writeCachedChurch(slug: string, churchData: Church) {
   } catch {
     // Best-effort -- a full/unavailable localStorage just means no offline
     // fallback for this slug, not a reason to fail the (successful) fetch.
+  }
+}
+
+function removeCachedChurch(slug: string) {
+  try {
+    localStorage.removeItem(churchCacheKey(slug));
+  } catch {
+    // Nothing to clean up if storage is unavailable.
+  }
+}
+
+function applyBranding(branding: ChurchBranding | undefined) {
+  if (branding?.primaryColor) {
+    document.documentElement.style.setProperty("--primary-color", branding.primaryColor);
+  } else {
+    document.documentElement.style.removeProperty("--primary-color");
+  }
+
+  if (branding?.secondaryColor) {
+    document.documentElement.style.setProperty("--secondary-color", branding.secondaryColor);
+  } else {
+    document.documentElement.style.removeProperty("--secondary-color");
   }
 }
 
@@ -117,8 +142,22 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       if (requestedSlug.current === churchSlug) return;
       requestedSlug.current = churchSlug;
 
-      setLoading(true);
+      // Stale-while-revalidate. A church this device has resolved before is
+      // rendered now, and the lookup below still runs and corrects it. Only
+      // the public fields are mirrored, keyed by slug, so this can show a
+      // stale name or colour for a moment but never another tenant's church;
+      // data access is still decided by Firestore rules, not by this value.
+      const mirrored = readCachedChurch(churchSlug);
+      markOnce("tenant-cache-resolved", { hit: !!mirrored });
       setError(null);
+      if (mirrored) {
+        setChurch(mirrored);
+        applyBranding(mirrored.branding);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
       try {
         // Reads `church_public`, never `churches`. This lookup runs before
         // anyone has logged in, and the `churches` document carries
@@ -136,54 +175,48 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         markOnce("tenant-server-resolved", { empty: querySnapshot.empty, fromCache: querySnapshot.metadata.fromCache });
         if (stale()) return;
 
-        // Offline, `getDocs` does not throw -- it resolves from Firestore's
-        // local cache, and a slug that cache doesn't hold comes back as an
-        // empty snapshot marked `fromCache`. That means "not on this device",
-        // not "no such church", so consult the mirror before saying not found.
-        const mirrored =
-          querySnapshot.empty && querySnapshot.metadata.fromCache ? readCachedChurch(churchSlug) : null;
-
-        if (querySnapshot.empty && !mirrored) {
+        if (!querySnapshot.empty) {
+          const doc = querySnapshot.docs[0];
+          const data = doc.data();
+          // Named fields rather than a spread. The spread is what put the
+          // PayFast token into browser state in the first place: the Church
+          // type only declares five fields, but a spread carries every field
+          // the document happens to have, and TypeScript never sees it.
+          const churchData: Church = {
+            id: data.churchId || doc.id,
+            name: data.name,
+            slug: data.slug,
+            branding: data.branding ?? undefined,
+          };
+          setChurch(churchData);
+          writeCachedChurch(churchSlug, churchData);
+          applyBranding(churchData.branding);
+        } else if (querySnapshot.metadata.fromCache && mirrored) {
+          // Offline, `getDocs` does not throw -- it resolves from Firestore's
+          // local cache, and a slug that cache doesn't hold comes back as an
+          // empty snapshot marked `fromCache`. That means "not on this
+          // device", not "no such church": keep the mirrored church showing.
+        } else {
+          // Only a server answer is authoritative enough to forget the
+          // mirror. An empty cache answer with no mirror is still not found
+          // for this device, but says nothing about the church itself.
+          if (!querySnapshot.metadata.fromCache) removeCachedChurch(churchSlug);
           setError("Church not found");
           setChurch(null);
-        } else {
-          let churchData: Church;
-          if (mirrored) {
-            churchData = mirrored;
-          } else {
-            const doc = querySnapshot.docs[0];
-            const data = doc.data();
-            // Named fields rather than a spread. The spread is what put the
-            // PayFast token into browser state in the first place: the Church
-            // type only declares five fields, but a spread carries every field
-            // the document happens to have, and TypeScript never sees it.
-            churchData = {
-              id: data.churchId || doc.id,
-              name: data.name,
-              slug: data.slug,
-              branding: data.branding ?? undefined,
-            };
-            writeCachedChurch(churchSlug, churchData);
-          }
-          setChurch(churchData);
-
-          // Apply branding if available
-          if (churchData.branding?.primaryColor) {
-            document.documentElement.style.setProperty('--primary-color', churchData.branding.primaryColor);
-          } else {
-            document.documentElement.style.removeProperty('--primary-color');
-          }
-          
-          if (churchData.branding?.secondaryColor) {
-            document.documentElement.style.setProperty('--secondary-color', churchData.branding.secondaryColor);
-          } else {
-            document.documentElement.style.removeProperty('--secondary-color');
-          }
         }
       } catch (err) {
         if (stale()) return;
         markOnce("tenant-server-resolved", { error: true });
         console.error("Error fetching church:", err);
+
+        if (mirrored) {
+          // Already rendering this slug's own mirrored church. A failed
+          // revalidation is not evidence the church is gone, so don't tear the
+          // page down over it; clearing the ref lets a later run retry.
+          requestedSlug.current = null;
+          return;
+        }
+
         setError("Failed to load church details");
         // Dropped alongside the error. Leaving the previous church in place
         // would render one tenant's branding and pages under another tenant's
