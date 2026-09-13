@@ -4,6 +4,7 @@ import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { RESERVED_SLUGS } from "../constants/appRoutes";
+import { markOnce } from "../lib/perfMarks";
 
 interface ChurchBranding {
   logoUrl?: string;
@@ -130,7 +131,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           where("slug", "==", churchSlug),
           limit(1)
         );
+        markOnce("tenant-server-start");
         const querySnapshot = await getDocs(q);
+        markOnce("tenant-server-resolved", { empty: querySnapshot.empty, fromCache: querySnapshot.metadata.fromCache });
         if (stale()) return;
 
         // Offline, `getDocs` does not throw -- it resolves from Firestore's
@@ -179,6 +182,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         if (stale()) return;
+        markOnce("tenant-server-resolved", { error: true });
         console.error("Error fetching church:", err);
         setError("Failed to load church details");
         // Dropped alongside the error. Leaving the previous church in place

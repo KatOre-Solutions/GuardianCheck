@@ -35,6 +35,7 @@ import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
 import { PageLoading } from "./components/PageLoading";
 import { AccessDenied } from "./components/AccessDenied";
+import { useMarkWhen } from "./lib/perfMarks";
 
 function DashboardRedirect() {
   const { user, userData, loading } = useAuth();
@@ -273,12 +274,17 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
     }
   }, [user, role, roles, status, loading, tenantLoading, navigate, allowedRoles, church, userData]);
 
+  const hasAccess = roles.some(r => allowedRoles.includes(r as any));
+  const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
+
+  // Declared above the early return below: it is a hook.
+  useMarkWhen("protected-route-released", !loading && !tenantLoading && !!user && !!isEmailVerified && hasAccess, {
+    route: window.location.pathname,
+  });
+
   if (loading || tenantLoading) {
     return <PageLoading />;
   }
-
-  const hasAccess = roles.some(r => allowedRoles.includes(r as any));
-  const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
 
   // The one case the effect above does not redirect: a signed-in, verified
   // account holding no roles at all. Its role-mismatch branch is guarded on

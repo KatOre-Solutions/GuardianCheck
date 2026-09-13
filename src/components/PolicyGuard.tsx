@@ -5,6 +5,7 @@ import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { CURRENT_POLICY_VERSION } from "../constants/legalContent";
 import { PageLoading } from "./PageLoading";
+import { markOnce } from "../lib/perfMarks";
 
 interface PolicyGuardProps {
   children: React.ReactNode;
@@ -37,6 +38,13 @@ export function PolicyGuard({ children }: PolicyGuardProps) {
 
       try {
         const acceptanceDoc = await getDoc(doc(db, "policy_acceptance", user.uid));
+        markOnce("policy-server-resolved", {
+          compliant:
+            acceptanceDoc.exists() &&
+            acceptanceDoc.data().lastAcceptedVersion === CURRENT_POLICY_VERSION &&
+            acceptanceDoc.data().status === "compliant",
+          fromCache: acceptanceDoc.metadata.fromCache,
+        });
         
         if (acceptanceDoc.exists()) {
           const data = acceptanceDoc.data();
@@ -50,6 +58,7 @@ export function PolicyGuard({ children }: PolicyGuardProps) {
           navigate("/policy-acceptance", { state: { from: location.pathname + location.search } });
         }
       } catch (error) {
+        markOnce("policy-server-resolved", { error: true });
         console.error("Error checking policy acceptance:", error);
         // For security we still block. But the block has to *say* so: a read
         // that failed will never answer and nothing navigates away from it, so
