@@ -30,7 +30,7 @@ import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
-import { isKnownAppPath, RESERVED_SLUGS } from "./constants/appRoutes";
+import { isKnownAppPath, RESERVED_SLUGS, routePatternFor } from "./constants/appRoutes";
 import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
 import { PageLoading } from "./components/PageLoading";
@@ -317,6 +317,12 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
   );
 }
 
+/** Speed Insights with the route pattern attached -- see `routePatternFor`. */
+function RoutedSpeedInsights() {
+  const { pathname } = useLocation();
+  return <SpeedInsights route={routePatternFor(pathname)} />;
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   return (
     <>
@@ -510,7 +516,7 @@ export default function App() {
                 </Routes>
                 <Toaster position="top-right" richColors />
                 <NetworkStatus />
-                <SpeedInsights />
+                <RoutedSpeedInsights />
               </div>
             </TenantProvider>
           </Router>
