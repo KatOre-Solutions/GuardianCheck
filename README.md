@@ -286,19 +286,37 @@ three near-copies, and they had drifted — the Login copy read the legacy singl
 `role` field, so an account carrying only the newer `roles` array landed on the
 marketing home page instead of a dashboard.
 
-**The service worker caches almost nothing, on purpose.** It precaches
-`offline.html` and answers failed *navigations* with it; every other request —
-`/assets/*`, `/api/*`, Firestore, Firebase Auth — passes straight through
-untouched. Hashed bundles are replaced on each deploy, and a stale roster is
-worse than an error message when a child is being checked out. Offline data
-resilience is the Firestore SDK's own persistence layer, not this worker's.
+**The service worker precaches the app shell, atomically per deploy.** At
+install it caches `index.html` and the exact hashed JS/CSS bundle(s) that
+build produced, alongside `offline.html`. `CACHE_VERSION` is not hand-set —
+[scripts/generate-sw-precache.ts](scripts/generate-sw-precache.ts) derives it
+from a hash of the built `index.html` plus its asset list as a postbuild step,
+so a deploy that changes either always gets a fresh cache name, and old caches
+are dropped on activate. Shell and assets move together or not at all:
+`/api/*` is never cached, and Firestore/Firebase Auth are untouched — check-in
+state is safety-critical, and the Firestore SDK already runs its own offline
+persistence underneath.
+
+**What that buys offline is deliberately narrow.** `navigator.onLine` (via
+[src/hooks/useOnlineStatus.ts](src/hooks/useOnlineStatus.ts)) decides which UI
+renders; whether there's anything useful to show is a separate question,
+answered entirely by what Firestore's `persistentLocalCache` already synced
+before the device went offline — this worker doesn't fetch or guess at data.
+A **parent** who previously synced online and then cold-launches the installed
+app offline sees a dedicated read-only view
+([src/pages/OfflineParentQR.tsx](src/pages/OfflineParentQR.tsx)) of their
+children's check-in QR codes and each guardian's checkout QR code — not the
+full interactive dashboard. **Volunteers and admins have no dedicated offline
+view**; they get the cached shell if there is one, same as any other role, but
+no offline-specific UI. A device that never successfully synced anything gets
+`offline.html`, since neither the shell nor any application data exists for it
+to show. [`TenantContext`](src/contexts/TenantContext.tsx) resolves a
+previously-visited church from Firestore's cache or a small `localStorage`
+mirror when the live lookup fails offline, rather than reporting "Church Not
+Found" for a connectivity problem.
 
 Registration is production-only ([src/lib/pwa.ts](src/lib/pwa.ts)); in dev the
 Vite middleware serves the modules the worker would sit in front of.
-
-**Changing what is precached** means bumping `CACHE_VERSION` in `public/sw.js`.
-Old caches are dropped on activate, so that bump is the entire invalidation
-story.
 
 **Icons** are generated, not hand-drawn — the same brand mark as the favicons:
 

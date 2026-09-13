@@ -30,6 +30,7 @@ import { activateService, closeService } from "../lib/firestore";
 import { VolunteerDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
 import { useChurchCollection, useLiveCollection } from "../hooks/useLiveData";
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
 import { useTenant } from "../contexts/TenantContext";
 
 export default function VolunteerDashboard() {
@@ -73,7 +74,7 @@ export default function VolunteerDashboard() {
   const allGuardiansQ = useChurchCollection("guardians", churchId, !!churchId);
   const allChildren = allChildrenQ.data;
   const allGuardians = allGuardiansQ.data;
-  const [isOnline, setIsOnline] = useState(typeof window !== "undefined" ? window.navigator.onLine : true);
+  const isOnline = useOnlineStatus();
   const lastScannedRef = useRef<{ text: string, time: number } | null>(null);
 
   // Helper component to display volunteer name with lookup
@@ -120,16 +121,6 @@ export default function VolunteerDashboard() {
       childAge <= (room.maxAge || 99)
     );
   };
-
-  useEffect(() => {
-    const handleStatusChange = () => setIsOnline(window.navigator.onLine);
-    window.addEventListener('online', handleStatusChange);
-    window.addEventListener('offline', handleStatusChange);
-    return () => {
-      window.removeEventListener('online', handleStatusChange);
-      window.removeEventListener('offline', handleStatusChange);
-    };
-  }, []);
 
   // Scanning is the volunteer's whole interaction on this tab, and on a phone
   // the match card renders below the fold. Bring it into view so a successful

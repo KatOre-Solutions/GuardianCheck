@@ -35,6 +35,31 @@ interface TenantContextType {
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
+/** Where the last successfully resolved church for a slug is mirrored, so a
+ * previously-visited church still resolves on a cold offline launch. This is
+ * a fallback for exactly this one document, not a general persistence layer
+ * -- app data (children, guardians, checkins) stays Firestore's own
+ * `persistentLocalCache` responsibility. */
+const churchCacheKey = (slug: string) => `gc.church.${slug}`;
+
+function readCachedChurch(slug: string): Church | null {
+  try {
+    const raw = localStorage.getItem(churchCacheKey(slug));
+    return raw ? (JSON.parse(raw) as Church) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedChurch(slug: string, churchData: Church) {
+  try {
+    localStorage.setItem(churchCacheKey(slug), JSON.stringify(churchData));
+  } catch {
+    // Best-effort -- a full/unavailable localStorage just means no offline
+    // fallback for this slug, not a reason to fail the (successful) fetch.
+  }
+}
+
 export function TenantProvider({ children }: { children: React.ReactNode }) {
   const match = useMatch("/:churchSlug/*");
   const urlChurchSlug = match?.params.churchSlug;
@@ -108,24 +133,37 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         const querySnapshot = await getDocs(q);
         if (stale()) return;
 
-        if (querySnapshot.empty) {
+        // Offline, `getDocs` does not throw -- it resolves from Firestore's
+        // local cache, and a slug that cache doesn't hold comes back as an
+        // empty snapshot marked `fromCache`. That means "not on this device",
+        // not "no such church", so consult the mirror before saying not found.
+        const mirrored =
+          querySnapshot.empty && querySnapshot.metadata.fromCache ? readCachedChurch(churchSlug) : null;
+
+        if (querySnapshot.empty && !mirrored) {
           setError("Church not found");
           setChurch(null);
         } else {
-          const doc = querySnapshot.docs[0];
-          const data = doc.data();
-          // Named fields rather than a spread. The spread is what put the
-          // PayFast token into browser state in the first place: the Church
-          // type only declares five fields, but a spread carries every field
-          // the document happens to have, and TypeScript never sees it.
-          const churchData: Church = {
-            id: data.churchId || doc.id,
-            name: data.name,
-            slug: data.slug,
-            branding: data.branding ?? undefined,
-          };
+          let churchData: Church;
+          if (mirrored) {
+            churchData = mirrored;
+          } else {
+            const doc = querySnapshot.docs[0];
+            const data = doc.data();
+            // Named fields rather than a spread. The spread is what put the
+            // PayFast token into browser state in the first place: the Church
+            // type only declares five fields, but a spread carries every field
+            // the document happens to have, and TypeScript never sees it.
+            churchData = {
+              id: data.churchId || doc.id,
+              name: data.name,
+              slug: data.slug,
+              branding: data.branding ?? undefined,
+            };
+            writeCachedChurch(churchSlug, churchData);
+          }
           setChurch(churchData);
-          
+
           // Apply branding if available
           if (churchData.branding?.primaryColor) {
             document.documentElement.style.setProperty('--primary-color', churchData.branding.primaryColor);

@@ -9,6 +9,8 @@ import { storage } from "../lib/firebase";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
+import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import OfflineParentQR from "./OfflineParentQR";
 import { Plus, User, UserPlus, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Link } from "react-router-dom";
@@ -17,6 +19,7 @@ import { registerChild } from "../lib/api";
 
 export default function ParentDashboard() {
   const { user, userData, role, roles, loading: authLoading } = useAuth();
+  const isOnline = useOnlineStatus();
   // Membership, not `role`. A parent whose roles are ["volunteer","parent"]
   // could not open their own dashboard.
   const isParent = roles.includes("parent") || roles.includes("admin") || roles.includes("master_admin");
@@ -580,6 +583,15 @@ export default function ParentDashboard() {
      that is already the right shape. */
   if (!childrenQ.loaded) {
     return <ParentDashboardSkeleton />;
+  }
+
+  // Offline: none of the add/edit/delete/photo-upload affordances below can do
+  // anything useful with no network, so swap in the dedicated read-only view
+  // instead of a dashboard that would render fully interactive but fail every
+  // action. Whatever `children`/`guardians` already hold here came from
+  // Firestore's own persistent cache, not a new fetch.
+  if (!isOnline) {
+    return <OfflineParentQR children={children} guardians={guardians} downloadQR={downloadQR} />;
   }
 
   return (
