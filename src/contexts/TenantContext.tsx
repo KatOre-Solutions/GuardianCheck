@@ -49,7 +49,23 @@ const churchCacheKey = (slug: string) => `gc.church.${slug}`;
 function readCachedChurch(slug: string): Church | null {
   try {
     const raw = localStorage.getItem(churchCacheKey(slug));
-    return raw ? (JSON.parse(raw) as Church) : null;
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    // Checked rather than cast. This value now renders on every load and feeds
+    // ProtectedRoute's cross-tenant comparison before the server answers, so a
+    // malformed or hand-edited entry must read as "no mirror", not as a church
+    // with an undefined id or someone else's slug.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Church).id !== "string" ||
+      typeof (parsed as Church).name !== "string" ||
+      (parsed as Church).slug !== slug
+    ) {
+      return null;
+    }
+    const { id, name, branding } = parsed as Church;
+    return { id, name, slug, branding: branding && typeof branding === "object" ? branding : undefined };
   } catch {
     return null;
   }

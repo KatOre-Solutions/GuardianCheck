@@ -122,12 +122,17 @@ export function startPerfReport(): void {
 
   // LCP keeps updating until the page settles, so print a few seconds after
   // the dashboard appears -- or when the tab is hidden, whichever comes first.
-  new PerformanceObserver((list, observer) => {
-    if (list.getEntries().some((entry) => entry.name === `${PREFIX}dashboard-rendered`)) {
-      observer.disconnect();
-      setTimeout(print, 3000);
-    }
-  }).observe({ type: "mark", buffered: true });
+  try {
+    new PerformanceObserver((list, observer) => {
+      if (list.getEntries().some((entry) => entry.name === `${PREFIX}dashboard-rendered`)) {
+        observer.disconnect();
+        setTimeout(print, 3000);
+      }
+    }).observe({ type: "mark", buffered: true });
+  } catch {
+    // An engine without typed observers still gets the table on tab hide and
+    // from __gcPerf(); this runs after first render, so it must never throw.
+  }
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") print();
   });
