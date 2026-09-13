@@ -130,8 +130,16 @@ export default function Home() {
             className="relative"
           >
             <div className="aspect-square rounded-3xl bg-primary/5 dark:bg-primary/10 overflow-hidden shadow-2xl border-8 border-white dark:border-gray-800">
+              {/* The page's LCP element. `fetchPriority` because it is
+                  discovered only after the bundle runs, and a srcSet because
+                  the box is ~600px wide on desktop and narrower on a phone. */}
               <img
                 src="https://images.unsplash.com/photo-1510511233900-1982d92bd835?auto=format&fit=crop&q=80&w=1200&h=1200"
+                srcSet="https://images.unsplash.com/photo-1510511233900-1982d92bd835?auto=format&fit=crop&q=80&w=600&h=600 600w, https://images.unsplash.com/photo-1510511233900-1982d92bd835?auto=format&fit=crop&q=80&w=1200&h=1200 1200w"
+                sizes="(min-width: 1024px) 600px, 100vw"
+                width={1200}
+                height={1200}
+                fetchPriority="high"
                 alt="Secure Check-In Process"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
@@ -183,8 +191,14 @@ export default function Home() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
           <div className="order-2 lg:order-1 relative">
             <div className="aspect-[16/9] rounded-3xl bg-gray-100 dark:bg-gray-800 overflow-hidden shadow-2xl">
-              <img 
-                src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=1200&h=675" 
+              <img
+                src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=1200&h=675"
+                srcSet="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=600&h=338 600w, https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=1200&h=675 1200w"
+                sizes="(min-width: 1024px) 600px, 100vw"
+                width={1200}
+                height={675}
+                loading="lazy"
+                decoding="async"
                 alt="Real-time Mobile Notifications"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
@@ -316,9 +330,15 @@ export default function Home() {
           </div>
           <div className="relative">
              <div className="aspect-video rounded-2xl bg-gray-200 dark:bg-gray-800 overflow-hidden shadow-xl">
-                <img 
-                  src="https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&q=80&w=1200&h=675" 
-                  alt="Classroom Management" 
+                <img
+                  src="https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&q=80&w=1200&h=675"
+                  srcSet="https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&q=80&w=600&h=338 600w, https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&q=80&w=1200&h=675 1200w"
+                  sizes="(min-width: 1024px) 600px, 100vw"
+                  width={1200}
+                  height={675}
+                  loading="lazy"
+                  decoding="async"
+                  alt="Classroom Management"
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
                 />
@@ -350,10 +370,18 @@ export default function Home() {
             </div>
           </div>
           <div className="relative">
-            <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/10">
-              <img 
-                src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=1200&h=675" 
-                alt="Admin Dashboard Integration" 
+            {/* aspect-video: the only image box here that wasn't sized before its
+                image arrived, so it grew from zero height on load. */}
+            <div className="aspect-video rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+              <img
+                src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=1200&h=675"
+                srcSet="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=600&h=338 600w, https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=1200&h=675 1200w"
+                sizes="(min-width: 1024px) 600px, 100vw"
+                width={1200}
+                height={675}
+                loading="lazy"
+                decoding="async"
+                alt="Admin Dashboard Integration"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />

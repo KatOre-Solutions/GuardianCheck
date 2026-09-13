@@ -30,6 +30,9 @@
       each signed-in user to the dashboard their role owns.
     -->
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- The home page hero is served from Unsplash and is the page's LCP
+         element; open that connection while the bundle is still downloading. -->
+    <link rel="preconnect" href="https://images.unsplash.com" />
     <meta name="theme-color" content="#2563eb" />
 
     <!--
