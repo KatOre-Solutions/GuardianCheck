@@ -30,6 +30,7 @@ import React, { createContext, useEffect, useMemo, useRef, useState } from "reac
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { subscribeToDocument } from "../lib/firestore";
+import { markOnce } from "../lib/perfMarks";
 
 export type UserRole = "master_admin" | "admin" | "volunteer" | "parent" | null;
 export type UserStatus = "incomplete_profile" | "pending" | "approved" | "rejected" | null;
@@ -159,9 +160,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           }
           setLoading(false);
+          markOnce("auth-resolved", { signedIn: true, hasUserDoc: !!userDoc });
         }, (error) => {
           console.error("User document subscription error:", error);
           setLoading(false); // Ensure loading is false even on error
+          markOnce("auth-resolved", { signedIn: true, error: true });
         });
       } else {
         loadedUid.current = null;
@@ -178,6 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           document.documentElement.classList.remove('dark');
         }
         setLoading(false);
+        markOnce("auth-resolved", { signedIn: false });
       }
     });
 

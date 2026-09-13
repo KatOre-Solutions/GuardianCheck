@@ -11,6 +11,7 @@ import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
 import OfflineParentQR from "./OfflineParentQR";
+import { useMarkWhen } from "../lib/perfMarks";
 import { Plus, User, UserPlus, Phone, Mail, AlertCircle, Info, QrCode as QrIcon, Edit, ChevronRight, X, Trash2, Download, ShieldCheck, CheckCircle2, Lock, Home, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Link } from "react-router-dom";
@@ -563,6 +564,10 @@ export default function ParentDashboard() {
     };
     img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
   };
+
+  // The same conditions as the skeleton gates below, so the mark lands on the
+  // first commit that shows the real page. Declared first: it is a hook.
+  useMarkWhen("dashboard-rendered", !authLoading && !!user && isParent && childrenQ.loaded, { page: "parent" });
 
   // A permission decision may only be rendered once auth has settled, and a
   // signed-out visitor is ProtectedRoute's redirect to make, not a message here.

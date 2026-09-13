@@ -31,6 +31,7 @@ import { VolunteerDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
 import { useChurchCollection, useLiveCollection } from "../hooks/useLiveData";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
+import { useMarkWhen } from "../lib/perfMarks";
 import { useTenant } from "../contexts/TenantContext";
 
 export default function VolunteerDashboard() {
@@ -462,6 +463,9 @@ export default function VolunteerDashboard() {
       setLoading(false);
     }
   };
+
+  // The same conditions as the skeleton gates below. Declared first: it is a hook.
+  useMarkWhen("dashboard-rendered", !authLoading && isVolunteer && !serviceLoading, { page: "volunteer" });
 
   // A permission decision may only be rendered once auth has settled.
   if (authLoading) {

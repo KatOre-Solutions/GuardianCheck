@@ -116,6 +116,29 @@ export function isKnownAppPath(pathname: string): boolean {
 }
 
 /**
+ * The route a pathname renders under, for grouping metrics: `/grace/volunteer`
+ * becomes `/[churchSlug]/volunteer`.
+ *
+ * Vercel Speed Insights groups vitals by `route`. Without one, every page in
+ * this SPA reported as "Unknown", so a slow dashboard and the marketing page
+ * were averaged into a single number nobody could act on. The slug is replaced
+ * rather than kept: a per-church route would split the data by tenant and put
+ * church names into analytics.
+ *
+ * Never null. `<SpeedInsights route={null}>` means "don't load", and the
+ * component only pushes a route change when it is truthy -- so an unknown path
+ * gets a label of its own instead of silently keeping the previous page's.
+ */
+export function routePatternFor(pathname: string): string {
+  if (!isKnownAppPath(pathname)) return "/[notFound]";
+
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if ((EXACT_ROUTES as readonly string[]).includes(path)) return path;
+
+  return ["/[churchSlug]", ...segments(path).slice(1)].join("/");
+}
+
+/**
  * The same knowledge as regex sources for `vercel.json`'s `routes`, ordered
  * most-specific first. Everything not matched here falls through to the
  * catch-all the generator appends, which serves the shell with a 404 status.

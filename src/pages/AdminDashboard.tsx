@@ -55,6 +55,7 @@ import { motion } from "motion/react";
 import { useActiveService } from "../hooks/useActiveService";
 import SetupWizard from "../components/SetupWizard";
 import { AdminDashboardSkeleton } from "../components/skeletons";
+import { useMarkWhen } from "../lib/perfMarks";
 import { AccessDenied } from "../components/AccessDenied";
 // The card surface the skeleton draws too, so the two cannot drift apart --
 // which is the whole reason surfaces.ts exists.
@@ -906,6 +907,13 @@ export default function AdminDashboard() {
   const [serviceChartView, setServiceChartView] = useState<"day" | "totals">("day");
   const Building2 = (props: any) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>
+  );
+
+  // The same conditions as the skeleton gates below. Declared first: it is a hook.
+  useMarkWhen(
+    "dashboard-rendered",
+    !authLoading && isAdmin && churchDoc.loaded && !(serviceLoading && !churchData),
+    { page: "admin" },
   );
 
   // Order matters: a permission decision may only be rendered once auth has

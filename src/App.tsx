@@ -30,11 +30,12 @@ import ChurchSettings from "./pages/ChurchSettings";
 import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
-import { isKnownAppPath, RESERVED_SLUGS } from "./constants/appRoutes";
+import { isKnownAppPath, RESERVED_SLUGS, routePatternFor } from "./constants/appRoutes";
 import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
 import { PageLoading } from "./components/PageLoading";
 import { AccessDenied } from "./components/AccessDenied";
+import { useMarkWhen } from "./lib/perfMarks";
 
 function DashboardRedirect() {
   const { user, userData, loading } = useAuth();
@@ -135,7 +136,11 @@ function Navigation() {
         <div className="flex justify-between items-center h-16 gap-2">
           <div className="flex items-center min-w-0">
             <Link to={churchPrefix || "/"} className="flex items-center space-x-2 min-w-0">
-              <span className="shrink-0 flex items-center">
+              {/* A fixed slot. The fallback shield is 32px, the church logo a
+                  padded box of ~45px, and the swap happens when the tenant
+                  resolves -- a measured layout shift on every church page.
+                  Sized for the larger of the two so neither moves the name. */}
+              <span className="shrink-0 flex items-center justify-center h-12 w-10">
                 <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
               </span>
               <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0">
@@ -273,12 +278,17 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
     }
   }, [user, role, roles, status, loading, tenantLoading, navigate, allowedRoles, church, userData]);
 
+  const hasAccess = roles.some(r => allowedRoles.includes(r as any));
+  const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
+
+  // Declared above the early return below: it is a hook.
+  useMarkWhen("protected-route-released", !loading && !tenantLoading && !!user && !!isEmailVerified && hasAccess, {
+    route: window.location.pathname,
+  });
+
   if (loading || tenantLoading) {
     return <PageLoading />;
   }
-
-  const hasAccess = roles.some(r => allowedRoles.includes(r as any));
-  const isEmailVerified = user?.emailVerified || user?.providerData.some(p => p.providerId === "google.com");
 
   // The one case the effect above does not redirect: a signed-in, verified
   // account holding no roles at all. Its role-mismatch branch is guarded on
@@ -309,6 +319,12 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode,
     // frame at the start of the load.
     <PageLoading />
   );
+}
+
+/** Speed Insights with the route pattern attached -- see `routePatternFor`. */
+function RoutedSpeedInsights() {
+  const { pathname } = useLocation();
+  return <SpeedInsights route={routePatternFor(pathname)} />;
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
@@ -504,7 +520,7 @@ export default function App() {
                 </Routes>
                 <Toaster position="top-right" richColors />
                 <NetworkStatus />
-                <SpeedInsights />
+                <RoutedSpeedInsights />
               </div>
             </TenantProvider>
           </Router>
