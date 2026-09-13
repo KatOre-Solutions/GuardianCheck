@@ -203,6 +203,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
           if (!querySnapshot.metadata.fromCache) removeCachedChurch(churchSlug);
           setError("Church not found");
           setChurch(null);
+          // The mirrored church's colours may already be applied; a not-found
+          // page must not keep wearing them.
+          applyBranding(undefined);
         }
       } catch (err) {
         if (stale()) return;
@@ -222,6 +225,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         // would render one tenant's branding and pages under another tenant's
         // URL -- the failure this whole context exists to prevent.
         setChurch(null);
+        applyBranding(undefined);
         // Cleared *after* `loading`, and `loading` cleared here rather than in
         // `finally`: `stale()` reads this ref, so resetting it first makes the
         // `finally` below skip `setLoading(false)` and the page sits in its
