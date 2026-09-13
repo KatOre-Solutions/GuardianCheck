@@ -4,7 +4,7 @@
  * Registered only in production builds. In dev the Vite middleware serves
  * modules the worker would sit in front of, and a stale worker there is a
  * confusing failure to debug — see public/sw.js for what it actually does
- * (offline navigations, and nothing else).
+ * (precaches this build's app shell so an installed app can boot offline).
  */
 
 import { logger } from "./logger";
@@ -22,7 +22,7 @@ export function registerServiceWorker(): void {
         logger.info("Service worker registered", { scope: registration.scope });
       })
       .catch((error: unknown) => {
-        // A failed registration costs the install prompt and the offline page.
+        // A failed registration costs the install prompt and offline launch.
         // Everything else keeps working, so this must never throw upward.
         //
         // `warn`, not `error`: registration legitimately rejects in Firefox and

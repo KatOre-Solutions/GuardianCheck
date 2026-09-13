@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from "react";
 import { useMatch } from "react-router-dom";
-import { where, limit, query, collection, getDocs, getDocsFromCache } from "firebase/firestore";
+import { where, limit, query, collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { RESERVED_SLUGS } from "../constants/appRoutes";
@@ -133,24 +133,36 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         const querySnapshot = await getDocs(q);
         if (stale()) return;
 
-        if (querySnapshot.empty) {
+        // Offline, `getDocs` does not throw -- it resolves from Firestore's
+        // local cache, and a slug that cache doesn't hold comes back as an
+        // empty snapshot marked `fromCache`. That means "not on this device",
+        // not "no such church", so consult the mirror before saying not found.
+        const mirrored =
+          querySnapshot.empty && querySnapshot.metadata.fromCache ? readCachedChurch(churchSlug) : null;
+
+        if (querySnapshot.empty && !mirrored) {
           setError("Church not found");
           setChurch(null);
         } else {
-          const doc = querySnapshot.docs[0];
-          const data = doc.data();
-          // Named fields rather than a spread. The spread is what put the
-          // PayFast token into browser state in the first place: the Church
-          // type only declares five fields, but a spread carries every field
-          // the document happens to have, and TypeScript never sees it.
-          const churchData: Church = {
-            id: data.churchId || doc.id,
-            name: data.name,
-            slug: data.slug,
-            branding: data.branding ?? undefined,
-          };
+          let churchData: Church;
+          if (mirrored) {
+            churchData = mirrored;
+          } else {
+            const doc = querySnapshot.docs[0];
+            const data = doc.data();
+            // Named fields rather than a spread. The spread is what put the
+            // PayFast token into browser state in the first place: the Church
+            // type only declares five fields, but a spread carries every field
+            // the document happens to have, and TypeScript never sees it.
+            churchData = {
+              id: data.churchId || doc.id,
+              name: data.name,
+              slug: data.slug,
+              branding: data.branding ?? undefined,
+            };
+            writeCachedChurch(churchSlug, churchData);
+          }
           setChurch(churchData);
-          writeCachedChurch(churchSlug, churchData);
 
           // Apply branding if available
           if (churchData.branding?.primaryColor) {
@@ -168,37 +180,6 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (stale()) return;
         console.error("Error fetching church:", err);
-
-        // A network failure (offline, or a live request that just didn't make
-        // it) isn't the same answer as "this slug doesn't exist" -- the empty
-        // `querySnapshot` branch above already owns that case. Try to resolve
-        // this same slug from what's already on the device before giving up:
-        // Firestore's own cache first (in case this exact query was served
-        // from a listener elsewhere and is sitting in `persistentLocalCache`),
-        // then the small mirror this context keeps for itself.
-        const cached = await (async () => {
-          try {
-            const q = query(collection(db, "church_public"), where("slug", "==", churchSlug), limit(1));
-            const snapshot = await getDocsFromCache(q);
-            if (!snapshot.empty) {
-              const data = snapshot.docs[0].data();
-              return { id: data.churchId || snapshot.docs[0].id, name: data.name, slug: data.slug, branding: data.branding ?? undefined } as Church;
-            }
-          } catch {
-            // No cached query result -- fall through to the localStorage mirror.
-          }
-          return readCachedChurch(churchSlug);
-        })();
-
-        if (stale()) return;
-
-        if (cached) {
-          setChurch(cached);
-          setError(null);
-          setLoading(false);
-          return;
-        }
-
         setError("Failed to load church details");
         // Dropped alongside the error. Leaving the previous church in place
         // would render one tenant's branding and pages under another tenant's
