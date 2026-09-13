@@ -136,7 +136,11 @@ function Navigation() {
         <div className="flex justify-between items-center h-16 gap-2">
           <div className="flex items-center min-w-0">
             <Link to={churchPrefix || "/"} className="flex items-center space-x-2 min-w-0">
-              <span className="shrink-0 flex items-center">
+              {/* A fixed slot. The fallback shield is 32px, the church logo a
+                  padded box of ~45px, and the swap happens when the tenant
+                  resolves -- a measured layout shift on every church page.
+                  Sized for the larger of the two so neither moves the name. */}
+              <span className="shrink-0 flex items-center justify-center h-12 w-10">
                 <ChurchLogo logoUrl={church?.branding?.logoUrl} name={church?.name} />
               </span>
               <span className="text-xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0">
