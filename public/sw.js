@@ -1,9 +1,10 @@
 /**
  * GuardianCheck service worker.
  *
- * Precaches the app shell -- index.html and the exact hashed JS/CSS bundle(s)
- * Vite produced for this deploy -- so an installed app can boot with no
- * network at all, not just answer a failed navigation with a static page.
+ * Precaches the app shell -- index.html and every hashed JS/CSS file Vite
+ * produced for this deploy, lazy route chunks included -- so an installed app
+ * can boot with no network at all and still load the route it opens on, not
+ * just answer a failed navigation with a static page.
  *
  * Why this changed from an earlier, deliberately minimal worker that only
  * cached offline.html: `/assets/*` filenames are content-hashed and a new
@@ -11,8 +12,8 @@
  * pinned to one build's asset hashes against a server that had already moved
  * on -- a worse failure (white screen) than the honest offline page. That
  * risk is closed here, not ignored: CACHE_VERSION is derived at build time
- * (scripts/generate-sw-precache.ts) from a hash of index.html and its asset
- * list, so *every* deploy that changes either gets an automatically fresh
+ * (scripts/generate-sw-precache.ts) from a hash of index.html and the build's
+ * asset list, so *every* deploy that changes either gets an automatically fresh
  * cache name, and the activate handler below drops every other cache name on
  * activation. Shell and assets always move together, as one cache, or not at
  * all -- `cache.addAll` during install fails atomically if any one of them
@@ -37,7 +38,7 @@ const CACHE_VERSION = "__CACHE_VERSION__";
 const CACHE_NAME = `guardiancheck-shell-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline.html";
 
-// The offline page, the app shell, and the shell's own hashed assets -- every
+// The offline page, the app shell, and all of this build's hashed assets -- every
 // URL here must be servable with zero network, because together they're what
 // "the app boots offline" actually means.
 const PRECACHE_URLS = [OFFLINE_URL, "/icon.svg", __PRECACHE_SHELL_URLS__];
