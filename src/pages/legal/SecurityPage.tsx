@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Seo } from "../../components/Seo";
 import { COMPANY } from "../../constants/company";
 
@@ -49,9 +50,9 @@ export default function SecurityPage() {
           <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
             GuardianCheck acts as an Operator under South Africa's Protection of Personal Information Act
             (POPIA), processing data on behalf of each church, which is the Responsible Party. See our{" "}
-            <a href="/popia" className="text-primary font-medium hover:underline">
+            <Link to="/popia" className="text-primary font-medium hover:underline">
               POPIA notice
-            </a>{" "}
+            </Link>{" "}
             for details.
           </p>
         </section>

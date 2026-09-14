@@ -12,17 +12,22 @@ import { LEGAL_CONTENT } from "../../constants/legalContent";
  * which it links to for the full picture.
  */
 
-const sections: LegalSection[] = [
+// The reused sections carry the Privacy Policy's own numbering ("2. ...",
+// "4. ...", "6. ..."), which would print gaps if kept as-is here. Strip it and
+// let the combined list below number itself sequentially for this page.
+const unnumbered: LegalSection[] = [
   {
     id: "what-is-popia",
-    title: "1. What is POPIA?",
+    title: "What is POPIA?",
     content:
       "The Protection of Personal Information Act (POPIA) is South Africa's data protection law. It governs how organisations may collect, use, store and share personal information, and gives individuals enforceable rights over their own data.",
   },
-  ...LEGAL_CONTENT.privacyPolicy.sections.filter((s) =>
-    ["responsible-party", "children-data", "user-rights"].includes(s.id),
-  ),
+  ...LEGAL_CONTENT.privacyPolicy.sections
+    .filter((s) => ["responsible-party", "children-data", "user-rights"].includes(s.id))
+    .map((s) => ({ ...s, title: s.title.replace(/^\d+\.\s*/, "") })),
 ];
+
+const sections: LegalSection[] = unnumbered.map((s, i) => ({ ...s, title: `${i + 1}. ${s.title}` }));
 
 export default function PopiaPage() {
   return (

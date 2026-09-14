@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 import { Seo } from "../components/Seo";
 import { useTenant } from "../contexts/TenantContext";
+import { COMPANY } from "../constants/company";
 
 export default function Home() {
   // This page serves both the marketing root and a church's landing page at
@@ -405,7 +406,7 @@ export default function Home() {
       </section>
 
       <WhatsAppSupport 
-        phoneNumber="+27796251393" 
+        phoneNumber={COMPANY.whatsapp} 
         message="Hello, I'd like more information about GuardianCheck." 
         label="Chat with us"
       />
