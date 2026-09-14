@@ -1,5 +1,7 @@
-import { Shield } from "lucide-react";
+import { Building2, Shield, ShieldCheck, Users } from "lucide-react";
+import { motion } from "motion/react";
 import { Seo } from "../components/Seo";
+import { IconCard } from "../components/IconCard";
 import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
 
@@ -8,49 +10,77 @@ import { SITE_NAME } from "../constants/site";
  * facts here (legal name, registration number) come from `company.ts`, not
  * restated inline. Deliberately no physical address: the business is
  * online-only.
+ *
+ * Styled to match Home.tsx's visual language (badge pill, icon-badged cards,
+ * scroll-in motion) rather than the plain text block this page shipped with,
+ * so it does not read as an afterthought next to the marketing home page.
  */
+
+const facts = [
+  {
+    icon: <Users className="h-6 w-6 text-primary" />,
+    title: "Built for every church size",
+    description:
+      "From a single Sunday-morning kids' room to a multi-site congregation running several services and rooms in parallel.",
+  },
+  {
+    icon: <ShieldCheck className="h-6 w-6 text-green-600" />,
+    title: "Role-based by design",
+    description:
+      "Admins manage rooms, events and staff. Volunteers run check-in and check-out at the door. Parents track their own children and manage guardian permissions.",
+  },
+  {
+    icon: <Building2 className="h-6 w-6 text-purple-600" />,
+    title: "A registered South African company",
+    description: `${COMPANY.legalName} (registration number ${COMPANY.registrationNumber}). Online-only, with no physical office.`,
+  },
+];
+
 export default function AboutPage() {
   return (
-    <div className="max-w-3xl mx-auto px-4 py-12">
+    <div className="max-w-4xl mx-auto px-4 py-12 space-y-16">
       <Seo
         title="About"
         description={`${SITE_NAME} is a secure child check-in and pickup platform for churches, built by ${COMPANY.legalName}.`}
         canonicalPath="/about"
       />
 
-      <div className="flex items-center space-x-3 mb-8">
-        <div className="h-12 w-12 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center">
-          <Shield className="h-6 w-6 text-primary" />
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6 }}
+        className="space-y-6"
+      >
+        <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-primary/10 dark:bg-primary/20 border border-primary/20 dark:border-primary/30">
+          <Shield className="h-4 w-4 text-primary" />
+          <span className="text-xs font-bold text-primary uppercase tracking-wider">About {SITE_NAME}</span>
         </div>
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">About {SITE_NAME}</h1>
-      </div>
 
-      <div className="space-y-8 text-gray-600 dark:text-gray-400 leading-relaxed">
-        <p className="text-lg">
+        <h1 className="text-4xl lg:text-5xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight">
+          Secure check-in software, built by people who volunteer too.
+        </h1>
+
+        <p className="text-xl text-gray-600 dark:text-gray-400 max-w-2xl leading-relaxed">
           {SITE_NAME} is a secure, real-time child check-in and pickup system built for churches. It gives
           volunteers a fast QR-code workflow at the door, gives admins a live view of attendance and
           capacity, and gives parents the reassurance that only an authorised guardian can collect their
           child.
         </p>
+      </motion.div>
 
-        <section>
-          <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Who it's for</h2>
-          <p>
-            {SITE_NAME} is built for churches of every size — from a single Sunday-morning kids' room to a
-            multi-site congregation running several services and rooms in parallel. Admins manage rooms,
-            events and staff; volunteers run check-in and check-out at the door; parents track their own
-            children and manage guardian permissions.
-          </p>
-        </section>
-
-        <section>
-          <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">The company</h2>
-          <p>
-            {SITE_NAME} is operated by <strong>{COMPANY.legalName}</strong>, a South African private
-            company (registration number {COMPANY.registrationNumber}). {COMPANY.legalName} is an
-            online-only business with no physical office.
-          </p>
-        </section>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {facts.map((fact, idx) => (
+          <IconCard
+            key={fact.title}
+            index={idx}
+            icon={fact.icon}
+            headingLevel="h2"
+            titleClassName="text-lg font-bold text-gray-900 dark:text-white mb-2"
+            title={fact.title}
+            description={fact.description}
+            descriptionClassName="text-sm text-gray-600 dark:text-gray-400 leading-relaxed"
+          />
+        ))}
       </div>
     </div>
   );
