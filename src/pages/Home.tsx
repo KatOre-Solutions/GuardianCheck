@@ -4,8 +4,11 @@ import { Shield, QrCode, ClipboardCheck, Users, ArrowRight, CheckCircle2, Star, 
 import { motion } from "motion/react";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 import { Seo } from "../components/Seo";
+import { JsonLd } from "../components/JsonLd";
 import { useTenant } from "../contexts/TenantContext";
 import { COMPANY } from "../constants/company";
+import { PLAN_LIMITS } from "../constants/plans";
+import { SITE_NAME, SITE_URL } from "../constants/site";
 
 export default function Home() {
   // This page serves both the marketing root and a church's landing page at
@@ -70,6 +73,27 @@ export default function Home() {
     }
   ];
 
+  // #34: single-sourced from plans.ts, not the `pricing` array above — that
+  // array is display copy (feature bullets, CTA text) that has already drifted
+  // from plans.ts once (see the comment on PLAN_LIMITS); the structured data
+  // should not inherit that drift risk a second time.
+  const softwareApplicationJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: SITE_NAME,
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    url: SITE_URL,
+    description: "Secure QR-code child check-in and pickup management for churches.",
+    offers: Object.values(PLAN_LIMITS).map((plan) => ({
+      "@type": "Offer",
+      name: plan.label,
+      price: plan.priceZar,
+      priceCurrency: "ZAR",
+      url: SITE_URL,
+    })),
+  };
+
   return (
     <div className="space-y-32 pb-24 dark:bg-gray-950 transition-colors">
       {churchSlug && church ? (
@@ -85,7 +109,10 @@ export default function Home() {
           noindex
         />
       ) : (
-        <Seo description="Secure QR-code child check-in and pickup for churches. Track attendance in real time, verify authorised guardians, and give parents peace of mind." />
+        <>
+          <Seo description="Secure QR-code child check-in and pickup for churches. Track attendance in real time, verify authorised guardians, and give parents peace of mind." />
+          <JsonLd id="software-application-jsonld" data={softwareApplicationJsonLd} />
+        </>
       )}
       {/* Hero Section */}
       <section className="relative overflow-hidden pt-12 pb-24 lg:pt-24">
