@@ -1,12 +1,13 @@
 import { Shield } from "lucide-react";
 import { Seo } from "../components/Seo";
-import { COMPANY, formatCompanyAddress } from "../constants/company";
+import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
 
 /**
  * #29: entity-defining About page. Feeds Organization JSON-LD (#33), so the
- * facts here (legal name, registration number, address) come from
- * `company.ts`, not restated inline.
+ * facts here (legal name, registration number) come from `company.ts`, not
+ * restated inline. Deliberately no physical address: the business is
+ * online-only.
  */
 export default function AboutPage() {
   return (
@@ -46,7 +47,8 @@ export default function AboutPage() {
           <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">The company</h2>
           <p>
             {SITE_NAME} is operated by <strong>{COMPANY.legalName}</strong>, a South African private
-            company (registration number {COMPANY.registrationNumber}), registered at {formatCompanyAddress()}.
+            company (registration number {COMPANY.registrationNumber}). {COMPANY.legalName} is an
+            online-only business with no physical office.
           </p>
         </section>
       </div>

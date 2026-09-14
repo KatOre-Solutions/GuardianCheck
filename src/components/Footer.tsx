@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { COMPANY, formatCompanyAddress } from "../constants/company";
+import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
 
 /**
@@ -89,8 +89,6 @@ export default function Footer() {
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-500 leading-relaxed">
               Reg. {COMPANY.registrationNumber}
-              <br />
-              {formatCompanyAddress()}
             </p>
           </div>
         </div>

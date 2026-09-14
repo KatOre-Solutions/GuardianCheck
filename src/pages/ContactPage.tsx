@@ -1,20 +1,21 @@
-import { Mail, MapPin, MessageCircle } from "lucide-react";
+import { Mail, MessageCircle } from "lucide-react";
 import { Seo } from "../components/Seo";
 import WhatsAppSupport from "../components/WhatsAppSupport";
-import { COMPANY, formatCompanyAddress } from "../constants/company";
+import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
 
 /**
  * #30: replaces the hard-coded WhatsApp-only contact in Home.tsx with a real
  * page carrying two channels plus registered company details, so it can also
- * feed Organization.contactPoint (#33).
+ * feed Organization.contactPoint (#33). No physical address: the business is
+ * online-only.
  */
 export default function ContactPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-12">
       <Seo
         title="Contact"
-        description={`Get in touch with ${SITE_NAME} by WhatsApp or email, or find our registered company details.`}
+        description={`Get in touch with ${SITE_NAME} by WhatsApp or email.`}
         canonicalPath="/contact"
       />
 
@@ -46,20 +47,6 @@ export default function ContactPage() {
             <a href={`mailto:${COMPANY.email}`} className="text-sm text-primary font-medium hover:underline">
               {COMPANY.email}
             </a>
-          </div>
-        </div>
-
-        <div className="flex items-start space-x-4 p-5 rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
-          <div className="h-10 w-10 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
-            <MapPin className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-          </div>
-          <div>
-            <h2 className="font-bold text-gray-900 dark:text-white">Registered office</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {COMPANY.legalName}
-              <br />
-              {formatCompanyAddress()}
-            </p>
           </div>
         </div>
       </div>

@@ -1,14 +1,16 @@
 /**
  * Registered-entity facts behind the GuardianCheck brand.
  *
- * Single-sourced so About, Contact, the footer, and the Organization JSON-LD
- * (#33) all quote the same legal name, registration number and address rather
- * than four hand-typed copies drifting apart. Taken from the CIPC Disclosure
- * Certificate (registration 2023/913243/07) — update this file, not its
- * callers, if any of these facts change.
+ * Single-sourced so About, Contact, and the footer all quote the same legal
+ * name and registration number rather than three hand-typed copies drifting
+ * apart. Taken from the CIPC Disclosure Certificate (registration
+ * 2023/913243/07) — update this file, not its callers, if any of these
+ * facts change.
  *
- * Deliberately excludes director names/ID numbers and the tax number: the
- * certificate carries them, but none belong on a public page.
+ * Deliberately excludes director names/ID numbers, the tax number, and the
+ * registered address: the certificate carries them, but the business is
+ * online-only with no separate physical office, and the address on file is
+ * a director's home address, not something to publish.
  */
 
 export const COMPANY = {
@@ -16,14 +18,6 @@ export const COMPANY = {
   legalName: "Katore Solutions (Pty) Ltd",
   /** CIPC enterprise registration number. */
   registrationNumber: "2023/913243/07",
-  registeredAddress: {
-    line1: "57 Erasmus Rd",
-    suburb: "Edenvale",
-    city: "Edenvale",
-    province: "Gauteng",
-    postalCode: "1609",
-    country: "South Africa",
-  },
   /** Also used by `WhatsAppSupport` on the home page. */
   whatsapp: "+27796251393",
   /**
@@ -34,9 +28,3 @@ export const COMPANY = {
    */
   email: "notifications@guardiancheck.co.za",
 } as const;
-
-/** `registeredAddress` as one display line, e.g. for the footer and About page. */
-export function formatCompanyAddress(): string {
-  const a = COMPANY.registeredAddress;
-  return `${a.line1}, ${a.suburb}, ${a.province}, ${a.postalCode}, ${a.country}`;
-}
