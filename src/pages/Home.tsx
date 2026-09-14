@@ -1,9 +1,8 @@
 import { Seo } from "../components/Seo";
 import { JsonLd } from "../components/JsonLd";
-import { COMPANY } from "../constants/company";
 import { PLAN_LIMITS } from "../constants/plans";
 import { MARKETING } from "../constants/marketing";
-import { SITE_NAME, SITE_URL, absoluteUrl } from "../constants/site";
+import { SITE_NAME, SITE_URL } from "../constants/site";
 import { Hero } from "../components/marketing/Hero";
 import { WhyGuardianCheck } from "../components/marketing/WhyGuardianCheck";
 import { HowItWorks } from "../components/marketing/HowItWorks";
@@ -25,22 +24,6 @@ import { WhatsAppFloat } from "../components/marketing/WhatsAppFloat";
  * constraints every claim on this page was written against.
  */
 export default function Home() {
-  const organizationJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    name: SITE_NAME,
-    legalName: COMPANY.legalName,
-    url: SITE_URL,
-    logo: absoluteUrl("/icon.svg"),
-    contactPoint: {
-      "@type": "ContactPoint",
-      contactType: "customer support",
-      email: COMPANY.email,
-      telephone: COMPANY.whatsapp,
-      areaServed: "ZA",
-    },
-  };
-
   // #34: single-sourced from plans.ts so this cannot drift the way the old
   // page's separate display-copy pricing array did.
   const softwareApplicationJsonLd = {
@@ -81,7 +64,6 @@ export default function Home() {
         documentTitle={`${SITE_NAME} | Child check-in and pickup for churches`}
         description="QR-code child check-in and authorised-guardian pickup for churches. See how it works, how safety is enforced, and simple rand pricing."
       />
-      <JsonLd id="organization-jsonld" data={organizationJsonLd} />
       <JsonLd id="software-application-jsonld" data={softwareApplicationJsonLd} />
       <JsonLd id="faq-jsonld" data={faqJsonLd} />
 

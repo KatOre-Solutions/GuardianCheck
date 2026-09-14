@@ -19,6 +19,9 @@ import NotFound from "./pages/NotFound";
 import { isKnownAppPath, RESERVED_SLUGS, routePatternFor } from "./constants/appRoutes";
 import { resolveLandingPath } from "./lib/landing";
 import { Seo } from "./components/Seo";
+import { JsonLd } from "./components/JsonLd";
+import { COMPANY } from "./constants/company";
+import { SITE_NAME, SITE_URL, absoluteUrl } from "./constants/site";
 import { PageLoading } from "./components/PageLoading";
 import { AccessDenied } from "./components/AccessDenied";
 import { useMarkWhen } from "./lib/perfMarks";
@@ -449,9 +452,49 @@ function ScrollToTop() {
  * need that (About, Contact, the legal pages) already carry their own
  * max-width wrapper, so they render correctly inside either.
  */
+/**
+ * Organization + WebSite JSON-LD, site-wide (#33): every route describes the
+ * same entity, single-sourced from company.ts/site.ts so it can never drift
+ * from what About/Contact say about themselves. Rendered once from Layout
+ * rather than per-page, so a page must not also render its own Organization
+ * block under the same id -- see Home.tsx, which used to.
+ */
+function GlobalJsonLd() {
+  const organizationJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: SITE_NAME,
+    legalName: COMPANY.legalName,
+    url: SITE_URL,
+    logo: absoluteUrl("/icon.svg"),
+    contactPoint: {
+      "@type": "ContactPoint",
+      contactType: "customer support",
+      email: COMPANY.email,
+      telephone: COMPANY.whatsapp,
+      areaServed: "ZA",
+    },
+  };
+
+  const websiteJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: SITE_NAME,
+    url: SITE_URL,
+  };
+
+  return (
+    <>
+      <JsonLd id="organization-jsonld" data={organizationJsonLd} />
+      <JsonLd id="website-jsonld" data={websiteJsonLd} />
+    </>
+  );
+}
+
 function Layout({ children, variant = "app" }: { children: React.ReactNode; variant?: "app" | "marketing" }) {
   return (
     <>
+      <GlobalJsonLd />
       {variant === "marketing" ? <MarketingHeader /> : <Navigation />}
       <main id="main" className={variant === "marketing" ? "" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"}>
         {/* Inside <main>, so the header stays put while a route chunk loads,

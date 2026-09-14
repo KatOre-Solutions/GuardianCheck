@@ -32,8 +32,8 @@ export function WhyGuardianCheck() {
         <div className="relative order-2 lg:order-1">
           <div className="aspect-[16/9] rounded-3xl overflow-hidden shadow-xl border border-gray-100 dark:border-gray-800">
             <img
-              src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=1200&h=675"
-              srcSet="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=600&h=338 600w, https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&q=80&w=1200&h=675 1200w"
+              src="/marketing/why-guardiancheck.jpg"
+              srcSet="/marketing/why-guardiancheck-600.jpg 600w, /marketing/why-guardiancheck.jpg 1200w"
               sizes="(min-width: 1024px) 600px, 100vw"
               width={1200}
               height={675}
@@ -41,7 +41,6 @@ export function WhyGuardianCheck() {
               decoding="async"
               alt="A children's ministry volunteer helping a family"
               className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
             />
           </div>
         </div>
