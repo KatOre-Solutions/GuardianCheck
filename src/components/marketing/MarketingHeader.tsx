@@ -10,7 +10,7 @@ import { setMarketingMobileMenuOpen } from "../../lib/marketingMobileMenu";
 /**
  * Header for the marketing tree (`/`, `/about`, `/contact`, the legal pages).
  * Distinct from `Navigation` in App.tsx, which is written for signed-in
- * dashboard users — this speaks to a visitor deciding whether to sign up.
+ * dashboard users. This speaks to a visitor deciding whether to sign up.
  *
  * Must not import anything from `pages/` or read Firestore beyond what
  * `useAuth` already exposes: see the marketing/app code boundary in
@@ -118,45 +118,49 @@ export function MarketingHeader() {
         </div>
       </nav>
 
-      {menuOpen && (
-        <div
-          id="marketing-mobile-nav"
-          className="lg:hidden border-t border-gray-200/70 dark:border-gray-800 px-4 py-4 space-y-1 bg-canvas dark:bg-gray-950"
-        >
-          {NAV_ANCHORS.map((item) => (
-            <a
-              key={item.href}
-              href={item.href}
-              onClick={() => setMenuOpen(false)}
-              className="block px-3 py-3 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            >
-              {item.label}
-            </a>
-          ))}
-          <div className="pt-2 space-y-2">
-            {!signedIn && (
-              <>
-                <Link
-                  to="/login"
-                  onClick={() => setMenuOpen(false)}
-                  className="block px-3 py-3 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                >
-                  Log in
-                </Link>
-                <a
-                  href={demoHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMenuOpen(false)}
-                  className="block text-center border border-gray-200 dark:border-gray-700 px-3 py-3 rounded-lg text-sm font-semibold text-gray-800 dark:text-gray-200"
-                >
-                  Book a demo
-                </a>
-              </>
-            )}
-          </div>
+      {/* Always in the DOM, not conditionally mounted: the toggle button's
+          aria-controls names this id whether the menu is open or closed,
+          and an aria-controls pointing at nothing is a broken reference for
+          assistive tech from the very first render. Toggled with `hidden`
+          instead. */}
+      <div
+        id="marketing-mobile-nav"
+        hidden={!menuOpen}
+        className="lg:hidden border-t border-gray-200/70 dark:border-gray-800 px-4 py-4 space-y-1 bg-canvas dark:bg-gray-950"
+      >
+        {NAV_ANCHORS.map((item) => (
+          <a
+            key={item.href}
+            href={item.href}
+            onClick={() => setMenuOpen(false)}
+            className="block px-3 py-3 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            {item.label}
+          </a>
+        ))}
+        <div className="pt-2 space-y-2">
+          {!signedIn && (
+            <>
+              <Link
+                to="/login"
+                onClick={() => setMenuOpen(false)}
+                className="block px-3 py-3 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                Log in
+              </Link>
+              <a
+                href={demoHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMenuOpen(false)}
+                className="block text-center border border-gray-200 dark:border-gray-700 px-3 py-3 rounded-lg text-sm font-semibold text-gray-800 dark:text-gray-200"
+              >
+                Book a demo
+              </a>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </header>
   );
 }

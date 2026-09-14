@@ -83,7 +83,7 @@ authorised guardians, and see whether their child is currently checked in).
 
 ${planLines()}
 
-Every tier includes every feature — QR check-in, guardian verification,
+Every tier includes every feature: QR check-in, guardian verification,
 attendance tracking, reporting and branding included. Higher tiers only raise
 the user and child limits. Billing is monthly in ZAR via PayFast.
 

@@ -6,11 +6,11 @@ import { useTenant } from "../contexts/TenantContext";
 import { SITE_NAME } from "../constants/site";
 
 /**
- * A church's own landing page at `/:churchSlug` -- rendered by TenantLayout
+ * A church's own landing page at `/:churchSlug`, rendered by TenantLayout
  * inside the ordinary app Layout/Navigation, which already carries the
  * church's own branding and Sign Up/Login links for an anonymous visitor.
  *
- * Speaks only to parents. No pricing, demo invites or sales copy -- that is
+ * Speaks only to parents. No pricing, demo invites or sales copy: that is
  * Home's job at `/`, for church decision makers. See the audience split and
  * code boundary in docs/marketing-redesign-plan.md §2: this file must not
  * import anything from components/marketing/.

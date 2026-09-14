@@ -9,12 +9,12 @@ const MESSAGE = "Hello, I'd like more information about GuardianCheck.";
  * Distinct from DemoInvite: that one is gated (25s + scroll) and offers a
  * booked walkthrough; this is an immediate "just ask" channel, visible from
  * the moment the page loads. The pulse ring is what makes it read as
- * clickable rather than decorative -- CSS only, so it costs nothing beyond
+ * clickable rather than decorative. CSS only, so it costs nothing beyond
  * the rule in index.css, and it stops under prefers-reduced-motion.
  *
  * Bottom-right, opposite DemoInvite's bottom-left, so the two never
  * overlap. Sits above where DemoInvite's mobile bar would be, on a fixed
- * offset rather than coordinating with it -- simpler than a shared signal,
+ * offset rather than coordinating with it. Simpler than a shared signal,
  * and the cost is only ever a little extra gap above the bar.
  */
 export function WhatsAppFloat() {

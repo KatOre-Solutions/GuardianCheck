@@ -4,10 +4,10 @@ import { SAMPLE } from "../../../constants/marketing";
 
 /**
  * The moment a volunteer's camera is reading a child's QR code, for "How it
- * works" step 2. Shows who the code belongs to, not just the code itself --
+ * works" step 2. Shows who the code belongs to, not just the code itself:
  * a bare QR reads as an abstract graphic, not a specific child being
  * checked in. The scan line is the one animation on the page that depicts
- * its own step rather than decorating it -- see the note in index.css.
+ * its own step rather than decorating it. See the note in index.css.
  */
 export function ScanningQr() {
   const child = SAMPLE.children[0];

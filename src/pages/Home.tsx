@@ -15,7 +15,7 @@ import { DemoInvite } from "../components/marketing/DemoInvite";
 import { WhatsAppFloat } from "../components/marketing/WhatsAppFloat";
 
 /**
- * The marketing home page at `/` — church decision makers only. A church's
+ * The marketing home page at `/`, for church decision makers only. A church's
  * own landing page at `/:churchSlug` is ChurchLanding, not this component;
  * splitting them (#122/#124 follow-up) is what let this page drop the
  * tenant branch it used to carry.

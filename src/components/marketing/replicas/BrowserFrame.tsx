@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** A thin browser-chrome frame — three dots, a URL pill — around a desktop replica screen. */
+/** A thin browser-chrome frame (three dots, a URL pill) around a desktop replica screen. */
 export function BrowserFrame({
   url = "guardiancheck.co.za",
   children,

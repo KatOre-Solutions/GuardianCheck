@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { Shield } from "lucide-react";
 
 /**
- * A thin neutral device frame around a phone-shaped replica screen. Pure CSS
- * — no image asset — so it costs nothing to render and never needs an
+ * A thin neutral device frame around a phone-shaped replica screen. Pure CSS,
+ * no image asset, so it costs nothing to render and never needs an
  * intrinsic-size placeholder.
  *
  * Carries its own small "GuardianCheck" status bar: every phone replica on

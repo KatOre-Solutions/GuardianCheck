@@ -15,7 +15,7 @@ const STEPS = [
   {
     icon: QrCode,
     title: "A volunteer scans the QR code",
-    description: "The child's own code, or the family's — a room is suggested by age.",
+    description: "The child's own code, or the family's, and a room is suggested by age.",
   },
   {
     icon: Eye,
@@ -29,7 +29,7 @@ const STEPS = [
   },
 ] as const;
 
-/** A child's registered profile, for step 1 — deliberately not a new replica component, since nothing else in the plan reuses this exact layout. */
+/** A child's registered profile, for step 1. Deliberately not a new replica component, since nothing else in the plan reuses this exact layout. */
 function ChildProfileScreen() {
   const child = SAMPLE.children[0];
   return (
@@ -169,7 +169,7 @@ export function HowItWorks() {
       </div>
 
       {/* Mobile/tablet: the phone pins near the top and slides between
-          screens as the step text underneath it scrolls past -- one
+          screens as the step text underneath it scrolls past. One
           continuous downward swipe, no separate horizontal gesture. */}
       <div className="lg:hidden relative">
         <div className="sticky top-20 z-10 flex flex-col items-center gap-4 bg-canvas dark:bg-gray-950 pt-2 pb-6">

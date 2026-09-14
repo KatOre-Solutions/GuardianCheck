@@ -83,7 +83,7 @@ interface SeoProps {
    * Full `document.title`, verbatim, for the one page that wants the brand to
    * lead rather than trail: "GuardianCheck | Child check-in and pickup for
    * churches" reads better in a search result than the reverse. Takes
-   * precedence over `title` for the document title only — `og:title` and
+   * precedence over `title` for the document title only. `og:title` and
    * `twitter:title` are unaffected, since `og:site_name` already carries the
    * brand there.
    */

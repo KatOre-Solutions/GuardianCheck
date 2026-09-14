@@ -2,7 +2,7 @@ import { Users, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { SAMPLE } from "../../../constants/marketing";
 
 /**
- * Volunteer's check-in screen, after scanning a child's QR code — mirrors the
+ * Volunteer's check-in screen, after scanning a child's QR code. Mirrors the
  * real scanned-child card in VolunteerDashboard.tsx (around lines 655-735).
  * Fictional data only, from `SAMPLE`.
  */

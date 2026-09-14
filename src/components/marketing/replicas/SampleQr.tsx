@@ -1,5 +1,5 @@
 /**
- * A static, decorative QR-code-shaped SVG for the replica screens — never a
+ * A static, decorative QR-code-shaped SVG for the replica screens. Never a
  * real, scannable code. No `qrcode` dependency: the module grid is a fixed
  * pattern computed once at module load with a deterministic PRNG, not from
  * any real child or guardian data.

@@ -79,7 +79,7 @@ export function Hero() {
                 />
               </BrowserFrame>
               {/* In normal flow, pulled up to overlap the card's own bottom
-                  padding -- not its stat tiles -- then hangs down over the
+                  padding, not its stat tiles, then hangs down over the
                   page background, which is where most of the phone sits. */}
               <div className="relative z-10 w-fit ml-10 -mt-10 marketing-hero-chip">
                 <PhoneFrame className="scale-[0.6] origin-top-left">

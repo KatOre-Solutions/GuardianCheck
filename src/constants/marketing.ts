@@ -60,14 +60,14 @@ export const MARKETING = {
     {
       question: "I'm a parent, where do I log in?",
       answer:
-        "At your own church's GuardianCheck link, not here — this page is for the people deciding whether to bring GuardianCheck to their church. Ask your church office for the link.",
+        "At your own church's GuardianCheck link, not here. This page is for the people deciding whether to bring GuardianCheck to their church, so ask your church office for the link.",
     },
   ],
 } as const;
 
 /**
  * Fictional sample data for the UI replicas in components/marketing/replicas.
- * Never real church, child or guardian data — see the plan's truth
+ * Never real church, child or guardian data. See the plan's truth
  * constraints on why: a real screenshot would expose Bryanston Methodist
  * Church's actual children.
  */

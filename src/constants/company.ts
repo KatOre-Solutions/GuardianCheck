@@ -18,7 +18,7 @@ export const COMPANY = {
   legalName: "Katore Solutions (Pty) Ltd",
   /** CIPC enterprise registration number. */
   registrationNumber: "2023/913243/07",
-  /** Also used by `WhatsAppSupport` on the home page. */
+  /** Read directly by every marketing WhatsApp entry point (`WhatsAppFloat`, `DemoInvite`, `Hero`, `FinalCta`, `MarketingHeader`) and by `WhatsAppSupport` elsewhere in the app. */
   whatsapp: "+27796251393",
   /**
    * Forwards via ImprovMX to a real inbox (MX records on guardiancheck.co.za

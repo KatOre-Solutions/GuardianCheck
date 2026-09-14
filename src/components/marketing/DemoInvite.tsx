@@ -30,7 +30,7 @@ function readSnoozedUntil(): number {
 /**
  * Delayed, dismissible invite to book a human demo. Appears only once a
  * visitor has both spent real time on the page and shown interest by
- * scrolling to pricing -- see docs/marketing-redesign-plan.md §7 for the
+ * scrolling to pricing. See docs/marketing-redesign-plan.md §7 for the
  * full spec this implements, including why each guard exists.
  *
  * Rendered once, at the end of Home. Not a dialog: it never steals focus,
@@ -75,7 +75,7 @@ export function DemoInvite() {
     return () => observer.disconnect();
   }, []);
 
-  // `eligible` only ever turns on once per page view -- it never flickers
+  // `eligible` only ever turns on once per page view. It never flickers
   // back off, so the card mounts exactly once. `shown` layers the transient
   // reasons to step aside (the mobile sheet, the final CTA/footer) on top,
   // as a CSS transition rather than a mount/unmount.
@@ -95,9 +95,21 @@ export function DemoInvite() {
   }, [shown]);
 
   React.useEffect(() => {
-    const isMobile = () => window.matchMedia("(max-width: 639px)").matches;
-    document.body.style.paddingBottom = shown && isMobile() ? "56px" : "";
+    if (!shown) {
+      document.body.style.paddingBottom = "";
+      return;
+    }
+    const mql = window.matchMedia("(max-width: 639px)");
+    // Recomputed on resize/rotation, not just when `shown` changes: a device
+    // rotated (or a desktop window resized) while the card is already open
+    // crosses the mobile breakpoint without `shown` itself changing.
+    const apply = () => {
+      document.body.style.paddingBottom = mql.matches ? "56px" : "";
+    };
+    apply();
+    mql.addEventListener("change", apply);
     return () => {
+      mql.removeEventListener("change", apply);
       document.body.style.paddingBottom = "";
     };
   }, [shown]);

@@ -28,8 +28,8 @@ import { useMarkWhen } from "./lib/perfMarks";
 import { lazyWithReload } from "./lib/lazyWithReload";
 
 /* Route-level code splitting (#43). This used to download and parse every
-   dashboard -- the charting library, the QR scanner, the whole authenticated
-   app -- before an anonymous visitor's landing page could paint. NotFound
+   dashboard, the charting library, the QR scanner, the whole authenticated
+   app, before an anonymous visitor's landing page could paint. NotFound
    stays in the entry chunk because TenantLayout renders it as a fallback.
    Everything else, Home and ChurchLanding included, loads when its route is
    first rendered, behind the Suspense boundary in Layout: an /app user
@@ -37,7 +37,7 @@ import { lazyWithReload } from "./lib/lazyWithReload";
    their bundle to include the marketing chunk any more than it includes
    AdminDashboard's (docs/marketing-redesign-plan.md §8). Home and
    ChurchLanding are still preloaded at startup, in parallel with auth, via
-   ROUTE_CHUNKS below -- they are simply no longer bundled in.
+   ROUTE_CHUNKS below. They are simply no longer bundled in.
 
    The offline shell still works: scripts/generate-sw-precache.ts precaches
    every chunk in dist/assets, not only the ones index.html references, so a
@@ -424,21 +424,52 @@ function RoutedSpeedInsights() {
 
 /**
  * A client-side route change keeps whatever scroll position the previous
- * page was at -- unlike a full page load, the browser has no reason to reset
+ * page was at. Unlike a full page load, the browser has no reason to reset
  * it. That reads as a bug on, say, a footer legal link clicked from partway
  * down the home page: Terms of Service opens already scrolled to wherever
  * Home happened to be.
  *
- * Skipped when the URL carries a hash: that is a same-page anchor jump (the
- * marketing header's nav links, the footer's "How it works" etc.), and
- * forcing the top here would fight the browser's own scroll-to-anchor.
+ * When the URL carries a hash instead, the browser's own scroll-to-anchor
+ * does not apply here: that only fires for a full page load or a plain
+ * `<a href="#id">` click, never for a react-router `<Link>` navigation
+ * (pushState doesn't trigger it), which is exactly what the marketing
+ * header's nav links and the footer's section links are. So this scrolls
+ * to the target itself instead of assuming the browser will. It polls
+ * rather than trying once, because the target can be inside a route that
+ * is still loading its lazy chunk (footer link from /about to /#pricing,
+ * say), the element genuinely doesn't exist in the DOM yet on the first
+ * few frames after navigation.
  */
 function ScrollToTop() {
   const { pathname, hash } = useLocation();
 
   React.useEffect(() => {
-    if (hash) return;
-    window.scrollTo(0, 0);
+    if (!hash) {
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    const id = hash.slice(1);
+    let cancelled = false;
+    let attempts = 0;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ block: "start" });
+        return;
+      }
+      attempts += 1;
+      // ~2s at 50ms apart. Generous for a lazy chunk fetch, short enough
+      // that a genuinely missing id just gives up quietly.
+      if (attempts < 40) window.setTimeout(tryScroll, 50);
+    };
+
+    tryScroll();
+    return () => {
+      cancelled = true;
+    };
   }, [pathname, hash]);
 
   return null;
@@ -448,7 +479,7 @@ function ScrollToTop() {
  * "app" (default) is every authenticated and utility page: `Navigation`, and
  * a padded, width-capped `<main>`. "marketing" is `/`, `/about`, `/contact`
  * and the legal pages: `MarketingHeader`, and a full-bleed `<main>` so Home's
- * dark bands and sticky columns can run edge to edge -- the pages that don't
+ * dark bands and sticky columns can run edge to edge. The pages that don't
  * need that (About, Contact, the legal pages) already carry their own
  * max-width wrapper, so they render correctly inside either.
  */
@@ -457,7 +488,7 @@ function ScrollToTop() {
  * same entity, single-sourced from company.ts/site.ts so it can never drift
  * from what About/Contact say about themselves. Rendered once from Layout
  * rather than per-page, so a page must not also render its own Organization
- * block under the same id -- see Home.tsx, which used to.
+ * block under the same id. See Home.tsx, which used to.
  */
 function GlobalJsonLd() {
   const organizationJsonLd = {
