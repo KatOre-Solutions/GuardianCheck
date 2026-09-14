@@ -6,6 +6,7 @@ import WhatsAppSupport from "../components/WhatsAppSupport";
 import { Seo } from "../components/Seo";
 import { JsonLd } from "../components/JsonLd";
 import { useTenant } from "../contexts/TenantContext";
+import { COMPANY } from "../constants/company";
 import { PLAN_LIMITS } from "../constants/plans";
 import { SITE_NAME, SITE_URL } from "../constants/site";
 
@@ -432,7 +433,7 @@ export default function Home() {
       </section>
 
       <WhatsAppSupport 
-        phoneNumber="+27796251393" 
+        phoneNumber={COMPANY.whatsapp} 
         message="Hello, I'd like more information about GuardianCheck." 
         label="Chat with us"
       />

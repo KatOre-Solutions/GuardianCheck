@@ -26,7 +26,7 @@
       "dest": "/index.html"
     },
     {
-      "src": "^/(?:app|login|register-church|accept-invite|complete-profile|pending-approval|rejected|policy-acceptance|admin|volunteer|parent|profile|master-admin|master-admin/logs)/?$",
+      "src": "^/(?:app|login|register-church|accept-invite|complete-profile|pending-approval|rejected|policy-acceptance|about|contact|privacy|terms|popia|cookies|security|admin|volunteer|parent|profile|master-admin|master-admin/logs)/?$",
       "dest": "/index.html"
     },
     {
