@@ -10,6 +10,7 @@ import { MotionConfig } from "motion/react";
 import { AuthProvider } from "./contexts/AuthContext";
 import { TenantProvider, useTenant } from "./contexts/TenantContext";
 import { ChurchLogo } from "./components/ChurchLogo";
+import Footer from "./components/Footer";
 
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import Home from "./pages/Home";
@@ -48,6 +49,13 @@ const MasterAdminDashboard = lazyWithReload(() => import("./pages/MasterAdminDas
 const MasterAdminLogs = lazyWithReload(() => import("./pages/MasterAdminLogs"));
 const ChurchSettings = lazyWithReload(() => import("./pages/ChurchSettings"));
 const PolicyAcceptancePage = lazyWithReload(() => import("./pages/PolicyAcceptancePage"));
+const AboutPage = lazyWithReload(() => import("./pages/AboutPage"));
+const ContactPage = lazyWithReload(() => import("./pages/ContactPage"));
+const PrivacyPolicyPage = lazyWithReload(() => import("./pages/legal/PrivacyPolicyPage"));
+const TermsOfServicePage = lazyWithReload(() => import("./pages/legal/TermsOfServicePage"));
+const PopiaPage = lazyWithReload(() => import("./pages/legal/PopiaPage"));
+const CookiePolicyPage = lazyWithReload(() => import("./pages/legal/CookiePolicyPage"));
+const SecurityPage = lazyWithReload(() => import("./pages/legal/SecurityPage"));
 
 /* A lazy route renders only once its gates open -- ProtectedRoute waits on auth,
    PolicyGuard on the acceptance check -- so left alone its chunk request would
@@ -206,8 +214,8 @@ function Navigation() {
   const linkClass = "text-gray-600 dark:text-gray-300 hover:text-primary dark:hover:text-primary/80 flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors";
 
   return (
-    <nav className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <header className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 sticky top-0 z-50 transition-colors">
+      <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 gap-2">
           <div className="flex items-center min-w-0">
             <Link to={churchPrefix || "/"} className="flex items-center space-x-2 min-w-0">
@@ -293,7 +301,7 @@ function Navigation() {
             </div>
           )}
         </div>
-      </div>
+      </nav>
 
       {user && mobileMenuOpen && (
         <div id="mobile-nav" className="lg:hidden border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-1 bg-white dark:bg-gray-900 shadow-lg">
@@ -317,7 +325,7 @@ function Navigation() {
           </button>
         </div>
       )}
-    </nav>
+    </header>
   );
 }
 
@@ -413,6 +421,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             placeholder, not a second one. */}
         <React.Suspense fallback={<PageLoading />}>{children}</React.Suspense>
       </main>
+      <Footer />
     </>
   );
 }
@@ -504,7 +513,14 @@ export default function App() {
                   <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
                   <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
                   <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
-              
+                  <Route path="/about" element={<Layout><AboutPage /></Layout>} />
+                  <Route path="/contact" element={<Layout><ContactPage /></Layout>} />
+                  <Route path="/privacy" element={<Layout><PrivacyPolicyPage /></Layout>} />
+                  <Route path="/terms" element={<Layout><TermsOfServicePage /></Layout>} />
+                  <Route path="/popia" element={<Layout><PopiaPage /></Layout>} />
+                  <Route path="/cookies" element={<Layout><CookiePolicyPage /></Layout>} />
+                  <Route path="/security" element={<Layout><SecurityPage /></Layout>} />
+
                   {/* The installed app's start_url. Landing here rather than on the
                       marketing home page is what sends a parent to the parent
                       screen, a volunteer to theirs, and an admin to theirs when the

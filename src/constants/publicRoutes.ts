@@ -29,4 +29,11 @@ export interface PublicRoute {
 export const PUBLIC_ROUTES: PublicRoute[] = [
   { path: "/", description: "Marketing home page" },
   { path: "/register-church", description: "Church signup" },
+  { path: "/about", description: "Company and product information" },
+  { path: "/contact", description: "Contact channels and registered office" },
+  { path: "/privacy", description: "Privacy Policy (POPIA compliant)" },
+  { path: "/terms", description: "Terms of Service" },
+  { path: "/popia", description: "POPIA notice" },
+  { path: "/cookies", description: "Cookie Policy" },
+  { path: "/security", description: "Security posture and vulnerability disclosure" },
 ];
