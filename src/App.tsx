@@ -72,8 +72,39 @@ const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
   "/[churchSlug]/admin/settings": ChurchSettings,
   "/[churchSlug]/admin/events": EventsServices,
 };
+function preloadRouteChunk(pathname: string) {
+  ROUTE_CHUNKS[routePatternFor(pathname)]?.preload();
+}
+
+/* /app (the installed app's start_url) and the bare role paths render
+   DashboardRedirect, which names no page: where it goes depends on the account,
+   known only once auth resolves. The page's gates then release within tens of
+   ms, too soon for its chunk and the shared chunks it imports, so it suspends --
+   measured at 450ms-1s from release to render, against ~100-240ms on the
+   dashboard's own URL. The screen an account lands on rarely changes, so
+   remember it and start that chunk at startup instead. A stale guess costs one
+   unused download; DashboardRedirect still preloads the real target. */
+const REDIRECT_PATHS = new Set(["/app", "/admin", "/volunteer", "/parent"]);
+const LAST_LANDING_KEY = "gc.lastLandingPath";
+
+function rememberLanding(pathname: string) {
+  try {
+    localStorage.setItem(LAST_LANDING_KEY, pathname);
+  } catch {
+    // Best-effort: without storage the redirect preloads the target late.
+  }
+}
+
 if (typeof window !== "undefined") {
-  ROUTE_CHUNKS[routePatternFor(window.location.pathname)]?.preload();
+  let startPath = window.location.pathname;
+  if (REDIRECT_PATHS.has(routePatternFor(startPath))) {
+    try {
+      startPath = localStorage.getItem(LAST_LANDING_KEY) ?? startPath;
+    } catch {
+      // Unavailable storage: nothing remembered, nothing to preload.
+    }
+  }
+  preloadRouteChunk(startPath);
 }
 
 function DashboardRedirect() {
@@ -93,6 +124,11 @@ function DashboardRedirect() {
     // reads them, and dropping them here loses the only copy.
     const search = window.location.search;
     const target = unverifiedPassword ? `/login${search}` : resolveLandingPath(userData, search);
+
+    // See REDIRECT_PATHS: covers a first launch, or a landing that changed.
+    const targetPath = target.split("?")[0];
+    preloadRouteChunk(targetPath);
+    if (user && !unverifiedPassword) rememberLanding(targetPath);
 
     // `replace`, not push. This route only ever forwards, so a pushed entry
     // would make Back re-enter it and bounce straight forward again -- and an
