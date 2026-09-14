@@ -4,7 +4,7 @@
  * Single-sourced so About, Contact, and the footer all quote the same legal
  * name and registration number rather than three hand-typed copies drifting
  * apart. Taken from the CIPC Disclosure Certificate (registration
- * 2023/913243/07) — update this file, not its callers, if any of these
+ * 2023/913243/07). Update this file, not its callers, if any of these
  * facts change.
  *
  * Deliberately excludes director names/ID numbers, the tax number, and the
@@ -21,10 +21,9 @@ export const COMPANY = {
   /** Also used by `WhatsAppSupport` on the home page. */
   whatsapp: "+27796251393",
   /**
-   * The only email address configured anywhere in this codebase (see
-   * `RESEND_FROM_EMAIL` in `.env.example`) — currently used as a transactional
-   * sender, not confirmed as a monitored inbox. Flagged for the business to
-   * verify or replace with a real support address; see Contact page.
+   * Forwards via ImprovMX to a real inbox (MX records on guardiancheck.co.za
+   * point to ImprovMX). Distinct from `RESEND_FROM_EMAIL` in `.env.example`,
+   * which is the transactional sender and has no inbox behind it.
    */
-  email: "notifications@guardiancheck.co.za",
+  email: "info@guardiancheck.co.za",
 } as const;

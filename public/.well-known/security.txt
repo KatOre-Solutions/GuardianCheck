@@ -1,5 +1,5 @@
-# GuardianCheck security disclosure policy — https://guardiancheck.co.za/security
-Contact: mailto:notifications@guardiancheck.co.za
+# GuardianCheck security disclosure policy: https://guardiancheck.co.za/security
+Contact: mailto:info@guardiancheck.co.za
 Expires: 2027-09-14T00:00:00.000Z
 Preferred-Languages: en
 Canonical: https://guardiancheck.co.za/.well-known/security.txt
