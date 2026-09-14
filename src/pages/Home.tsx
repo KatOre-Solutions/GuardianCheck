@@ -140,7 +140,7 @@ export default function Home() {
                 to="/register-church"
                 className="bg-primary text-white px-8 py-4 rounded-xl font-semibold hover:bg-primary/90 transition-all shadow-lg shadow-primary/10 dark:shadow-none flex items-center justify-center space-x-2"
               >
-                <span>Start 14-Day Free Trial</span>
+                <span>Start 30-Day Free Trial</span>
                 <ArrowRight className="h-5 w-5" />
               </Link>
               <Link
@@ -251,7 +251,7 @@ export default function Home() {
         <div className="text-center space-y-4">
           <h2 className="text-4xl font-bold text-gray-900 dark:text-white">Simple, Transparent Pricing</h2>
           <p className="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-            Choose the plan that fits your church size. All plans include a 14-day free trial.
+            Choose the plan that fits your church size. All plans include a 30-day free trial.
           </p>
         </div>
 

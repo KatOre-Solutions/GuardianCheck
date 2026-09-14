@@ -107,7 +107,7 @@ export default function RegisterChurch() {
         <div className="hidden lg:block space-y-8">
           <div className="space-y-4">
             <h2 className="text-4xl font-bold text-gray-900 dark:text-white leading-tight">
-              Start Your <span className="text-primary">14-Day Free Trial</span> Today
+              Start Your <span className="text-primary">30-Day Free Trial</span> Today
             </h2>
             <p className="text-lg text-gray-600 dark:text-gray-400">
               Join the community of churches prioritizing safety and simplicity. No credit card required to start.
