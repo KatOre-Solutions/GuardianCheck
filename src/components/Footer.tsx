@@ -8,31 +8,32 @@ import { SITE_NAME } from "../constants/site";
  * component so those pages (2.2-2.8) only need to exist, not also remember
  * to link themselves in from somewhere.
  *
- * Styled as a dark full-bleed section, the same treatment Home.tsx uses for
- * its "Admin Section" (bg-gray-900, a soft blurred glow, white/5 accents), so
- * the page ends on a deliberate visual anchor rather than fading out into a
- * plain link list.
+ * `Layout` renders this on nearly every route, not just marketing pages, so
+ * it has to respect light/dark mode like everything else -- an early version
+ * made it permanently dark to match Home.tsx's "Admin Section" accent, which
+ * looked fine on the marketing page but clashed with the light theme on
+ * every authenticated dashboard screen.
  */
 export default function Footer() {
   const year = new Date().getFullYear();
 
-  const linkClass = "text-gray-400 hover:text-white transition-colors";
+  const linkClass = "text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-primary/80 transition-colors";
 
   return (
-    <footer className="relative overflow-hidden bg-gray-900 mt-24">
-      <div className="absolute top-0 left-0 w-96 h-96 bg-primary/20 blur-[140px] rounded-full -ml-48 -mt-48" />
-
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+    <footer className="border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 mt-24">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="flex items-center space-x-2 mb-12">
-          <div className="h-10 w-10 rounded-xl bg-primary/20 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center">
             <Shield className="h-5 w-5 text-primary" />
           </div>
-          <span className="text-lg font-bold text-white tracking-tight">{SITE_NAME}</span>
+          <span className="text-lg font-bold text-gray-900 dark:text-white tracking-tight">{SITE_NAME}</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-8">
           <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-4">Product</h3>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-4">
+              Product
+            </h3>
             <ul className="space-y-3 text-sm">
               <li>
                 <Link to="/" className={linkClass}>
@@ -48,7 +49,9 @@ export default function Footer() {
           </div>
 
           <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-4">Company</h3>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-4">
+              Company
+            </h3>
             <ul className="space-y-3 text-sm">
               <li>
                 <Link to="/about" className={linkClass}>
@@ -69,7 +72,9 @@ export default function Footer() {
           </div>
 
           <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-4">Legal</h3>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-4">
+              Legal
+            </h3>
             <ul className="space-y-3 text-sm">
               <li>
                 <Link to="/privacy" className={linkClass}>
@@ -95,14 +100,16 @@ export default function Footer() {
           </div>
 
           <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-4">
               {COMPANY.legalName}
             </h3>
-            <p className="text-sm text-gray-400 leading-relaxed">Reg. {COMPANY.registrationNumber}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+              Reg. {COMPANY.registrationNumber}
+            </p>
           </div>
         </div>
 
-        <div className="mt-12 pt-8 border-t border-white/10 text-xs text-gray-500">
+        <div className="mt-12 pt-8 border-t border-gray-100 dark:border-gray-800 text-xs text-gray-400 dark:text-gray-500">
           © {year} {COMPANY.legalName}. {SITE_NAME} is a product of {COMPANY.legalName}.
         </div>
       </div>

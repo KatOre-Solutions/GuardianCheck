@@ -1,6 +1,7 @@
 import { Mail, MessageCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { Seo } from "../components/Seo";
+import { IconCard } from "../components/IconCard";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
@@ -68,21 +69,19 @@ export default function ContactPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
         {channels.map((channel, idx) => (
-          <motion.div
+          <IconCard
             key={channel.title}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ delay: idx * 0.1 }}
-            viewport={{ once: true }}
-            className="p-8 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-primary/30 dark:hover:border-primary/30 hover:shadow-xl transition-all"
+            index={idx}
+            icon={channel.icon}
+            iconBg={channel.iconBg}
+            headingLevel="h2"
+            titleClassName="text-lg font-bold text-gray-900 dark:text-white mb-1"
+            title={channel.title}
+            description={channel.description}
+            descriptionClassName="text-sm text-gray-500 dark:text-gray-400 mb-4"
           >
-            <div className={`h-12 w-12 rounded-xl ${channel.iconBg} flex items-center justify-center mb-6`}>
-              {channel.icon}
-            </div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-1">{channel.title}</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{channel.description}</p>
             {channel.content}
-          </motion.div>
+          </IconCard>
         ))}
       </div>
     </div>

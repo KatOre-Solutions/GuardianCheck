@@ -1,6 +1,7 @@
 import { Building2, Shield, ShieldCheck, Users } from "lucide-react";
 import { motion } from "motion/react";
 import { Seo } from "../components/Seo";
+import { IconCard } from "../components/IconCard";
 import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
 
@@ -69,20 +70,16 @@ export default function AboutPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         {facts.map((fact, idx) => (
-          <motion.div
+          <IconCard
             key={fact.title}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ delay: idx * 0.1 }}
-            viewport={{ once: true }}
-            className="p-8 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-primary/30 dark:hover:border-primary/30 hover:shadow-xl transition-all"
-          >
-            <div className="h-12 w-12 rounded-xl bg-gray-50 dark:bg-gray-800 flex items-center justify-center mb-6">
-              {fact.icon}
-            </div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">{fact.title}</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{fact.description}</p>
-          </motion.div>
+            index={idx}
+            icon={fact.icon}
+            headingLevel="h2"
+            titleClassName="text-lg font-bold text-gray-900 dark:text-white mb-2"
+            title={fact.title}
+            description={fact.description}
+            descriptionClassName="text-sm text-gray-600 dark:text-gray-400 leading-relaxed"
+          />
         ))}
       </div>
     </div>
