@@ -30,7 +30,7 @@ export const SITE_URL = "https://guardiancheck.co.za";
 export const OG_IMAGE_PATH = "/og-image.png";
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
-export const OG_IMAGE_ALT = "GuardianCheck — secure child check-in for churches";
+export const OG_IMAGE_ALT = "GuardianCheck, QR-code child check-in for churches";
 
 /** Locale for `og:locale` and `<html lang>`. */
 export const SITE_LOCALE = "en_ZA";

@@ -41,7 +41,7 @@ export default function AboutPage() {
     <div className="max-w-4xl mx-auto px-4 py-12 space-y-16">
       <Seo
         title="About"
-        description={`${SITE_NAME} is a secure child check-in and pickup platform for churches, built by ${COMPANY.legalName}.`}
+        description={`${SITE_NAME} is a QR-code child check-in and pickup platform for churches, built by ${COMPANY.legalName}.`}
         canonicalPath="/about"
       />
 
@@ -57,14 +57,13 @@ export default function AboutPage() {
         </div>
 
         <h1 className="text-4xl lg:text-5xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight">
-          Secure check-in software, built by people who volunteer too.
+          Check-in software, built by people who volunteer too.
         </h1>
 
         <p className="text-xl text-gray-600 dark:text-gray-400 max-w-2xl leading-relaxed">
-          {SITE_NAME} is a secure, real-time child check-in and pickup system built for churches. It gives
-          volunteers a fast QR-code workflow at the door, gives admins a live view of attendance and
-          capacity, and gives parents the reassurance that only an authorised guardian can collect their
-          child.
+          {SITE_NAME} is a QR-code child check-in and pickup system built for churches. It gives volunteers a
+          fast QR-code workflow at the door, gives admins a live view of attendance and room occupancy, and
+          gives parents the reassurance that a child is released only to a guardian they've authorised.
         </p>
       </motion.div>
 
