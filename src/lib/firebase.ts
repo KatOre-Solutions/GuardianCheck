@@ -7,11 +7,10 @@ import {
   terminate,
   clearIndexedDbPersistence
 } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import firebaseConfig from "../../firebase-applet-config.json";
 
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 
 // Initialize App Check immediately after app init
 if (typeof window !== "undefined") {
@@ -33,7 +32,6 @@ export const db = initializeFirestore(app, {
   })
 }, firebaseConfig.firestoreDatabaseId);
 
-export const storage = getStorage(app);
 
 // A connectivity probe used to read `test/connection` on every page load. The
 // `test` collection was world-readable -- `allow read: if true` -- which is the

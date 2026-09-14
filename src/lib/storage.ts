@@ -1,10 +1,18 @@
 import { 
+  getStorage,
   ref, 
   uploadBytes, 
   getDownloadURL, 
   deleteObject 
 } from "firebase/storage";
-import { storage } from "./firebase";
+import { app } from "./firebase";
+
+/* Created here rather than in lib/firebase.ts. That module is in the entry
+   chunk -- every page needs Auth and Firestore -- and exporting Storage from
+   it pulled the Storage SDK into the marketing home page's download. Only the
+   pages that upload (parent dashboard, profile, church settings) import this
+   module, and all of them are lazy route chunks. */
+export const storage = getStorage(app);
 
 /**
  * Uploads a file to Firebase Storage

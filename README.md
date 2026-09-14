@@ -287,10 +287,13 @@ three near-copies, and they had drifted — the Login copy read the legacy singl
 marketing home page instead of a dashboard.
 
 **The service worker precaches the app shell, atomically per deploy.** At
-install it caches `index.html` and the exact hashed JS/CSS bundle(s) that
-build produced, alongside `offline.html`. `CACHE_VERSION` is not hand-set —
+install it caches `index.html` and every hashed JS/CSS file that build
+produced — the entry chunk and all lazy route chunks — alongside
+`offline.html`. Routes are code-split, so `index.html` names only the entry
+chunk; precaching just that would boot the shell offline and then fail to load
+the route. `CACHE_VERSION` is not hand-set —
 [scripts/generate-sw-precache.ts](scripts/generate-sw-precache.ts) derives it
-from a hash of the built `index.html` plus its asset list as a postbuild step,
+from a hash of the built `index.html` plus the asset list as a postbuild step,
 so a deploy that changes either always gets a fresh cache name, and old caches
 are dropped on activate. Shell and assets move together or not at all:
 `/api/*` is never cached, and Firestore/Firebase Auth are untouched — check-in

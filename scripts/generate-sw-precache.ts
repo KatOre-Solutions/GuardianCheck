@@ -4,12 +4,15 @@
  * Runs as part of `npm run build`, after `vite build` has populated dist/.
  * public/sw.js ships as a checked-in template carrying two literal
  * placeholders -- __CACHE_VERSION__ and __PRECACHE_SHELL_URLS__ -- because the
- * worker has to precache index.html and its exact hashed asset bundle(s)
- * atomically per deploy, and Vite only assigns those hashes at build time.
- * There is no dist/.vite/manifest.json (build.manifest isn't enabled), so the
- * asset list is read straight out of the built index.html's own <script>/
- * <link> tags -- whatever Vite actually referenced for this build, not an
- * assumed fixed count of files.
+ * worker has to precache index.html and its exact hashed assets atomically per
+ * deploy, and Vite only assigns those hashes at build time.
+ *
+ * The asset list is every JS and CSS file in dist/assets, not only the ones
+ * index.html references. Routes are lazy chunks (#43): index.html names just
+ * the entry chunk, and a precache built from its tags alone would leave, say,
+ * ParentDashboard's chunk uncached -- so a parent's cold offline launch would
+ * boot the shell and then fail to load the one screen it exists to show. The
+ * whole build is the unit that has to move together.
  *
  * CACHE_VERSION is a hash of index.html plus that asset list, so every deploy
  * that changes either automatically gets a new cache name -- the existing
@@ -17,22 +20,29 @@
  * previously hand-maintained "v1" string nothing enforced.
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
 const ROOT = process.cwd();
 const INDEX_HTML_PATH = path.join(ROOT, "dist", "index.html");
 const SW_PATH = path.join(ROOT, "dist", "sw.js");
+const ASSETS_DIR = path.join(ROOT, "dist", "assets");
 
 const ASSET_TAG_PATTERN = /<(?:script[^>]*\ssrc|link[^>]*\shref)="(\/assets\/[^"]+\.(?:js|css))"/g;
 
-function readBuiltAssetUrls(indexHtml: string): string[] {
-  const urls: string[] = [];
-  for (const match of indexHtml.matchAll(ASSET_TAG_PATTERN)) {
-    urls.push(match[1]);
-  }
-  return urls;
+/** The assets index.html itself loads -- used only to check the full list covers them. */
+function readReferencedAssetUrls(indexHtml: string): string[] {
+  return Array.from(indexHtml.matchAll(ASSET_TAG_PATTERN), (match) => match[1]);
+}
+
+/** Every built JS/CSS file, sorted so the list (and so the hash) is stable. */
+function readAllAssetUrls(): string[] {
+  if (!existsSync(ASSETS_DIR)) return [];
+  return readdirSync(ASSETS_DIR)
+    .filter((name) => /\.(?:js|css)$/.test(name))
+    .sort()
+    .map((name) => `/assets/${name}`);
 }
 
 function main(): void {
@@ -44,12 +54,19 @@ function main(): void {
   }
 
   const indexHtml = readFileSync(INDEX_HTML_PATH, "utf8");
-  const assetUrls = readBuiltAssetUrls(indexHtml);
+  const assetUrls = readAllAssetUrls();
 
   if (assetUrls.length === 0) {
     throw new Error(
-      `No hashed /assets/*.js or /assets/*.css references found in ${path.relative(ROOT, INDEX_HTML_PATH)}. ` +
+      `No /assets/*.js or /assets/*.css files found in ${path.relative(ROOT, ASSETS_DIR)}. ` +
         `The service worker has nothing to precache alongside the shell — refusing to ship a broken offline path.`,
+    );
+  }
+
+  const missing = readReferencedAssetUrls(indexHtml).filter((url) => !assetUrls.includes(url));
+  if (missing.length > 0) {
+    throw new Error(
+      `${path.relative(ROOT, INDEX_HTML_PATH)} references assets that are not in ${path.relative(ROOT, ASSETS_DIR)}: ${missing.join(", ")}`,
     );
   }
 

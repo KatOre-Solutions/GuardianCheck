@@ -13,21 +13,6 @@ import { ChurchLogo } from "./components/ChurchLogo";
 
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import Home from "./pages/Home";
-import Login from "./pages/Login";
-import RegisterChurch from "./pages/RegisterChurch";
-import AcceptInvite from "./pages/AcceptInvite";
-import ProfileCompletion from "./pages/ProfileCompletion";
-import PendingApproval from "./pages/PendingApproval";
-import Rejected from "./pages/Rejected";
-import Profile from "./pages/Profile";
-import ParentDashboard from "./pages/ParentDashboard";
-import VolunteerDashboard from "./pages/VolunteerDashboard";
-import AdminDashboard from "./pages/AdminDashboard";
-import EventsServices from "./pages/EventsServices";
-import MasterAdminDashboard from "./pages/MasterAdminDashboard";
-import MasterAdminLogs from "./pages/MasterAdminLogs";
-import ChurchSettings from "./pages/ChurchSettings";
-import PolicyAcceptancePage from "./pages/PolicyAcceptancePage";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
 import { isKnownAppPath, RESERVED_SLUGS, routePatternFor } from "./constants/appRoutes";
@@ -36,6 +21,91 @@ import { Seo } from "./components/Seo";
 import { PageLoading } from "./components/PageLoading";
 import { AccessDenied } from "./components/AccessDenied";
 import { useMarkWhen } from "./lib/perfMarks";
+import { lazyWithReload } from "./lib/lazyWithReload";
+
+/* Route-level code splitting (#43). The marketing home page is what anonymous
+   visitors land on, and it used to download and parse every dashboard -- the
+   charting library, the QR scanner, the whole authenticated app -- before
+   painting. Home stays in the entry chunk because it is that page; NotFound
+   stays because TenantLayout renders it as a fallback. Everything else loads
+   when its route is first rendered, behind the Suspense boundary in Layout.
+
+   The offline shell still works: scripts/generate-sw-precache.ts precaches
+   every chunk in dist/assets, not only the ones index.html references, so a
+   parent's cold offline launch can still load ParentDashboard's chunk. */
+const Login = lazyWithReload(() => import("./pages/Login"));
+const RegisterChurch = lazyWithReload(() => import("./pages/RegisterChurch"));
+const AcceptInvite = lazyWithReload(() => import("./pages/AcceptInvite"));
+const ProfileCompletion = lazyWithReload(() => import("./pages/ProfileCompletion"));
+const PendingApproval = lazyWithReload(() => import("./pages/PendingApproval"));
+const Rejected = lazyWithReload(() => import("./pages/Rejected"));
+const Profile = lazyWithReload(() => import("./pages/Profile"));
+const ParentDashboard = lazyWithReload(() => import("./pages/ParentDashboard"));
+const VolunteerDashboard = lazyWithReload(() => import("./pages/VolunteerDashboard"));
+const AdminDashboard = lazyWithReload(() => import("./pages/AdminDashboard"));
+const EventsServices = lazyWithReload(() => import("./pages/EventsServices"));
+const MasterAdminDashboard = lazyWithReload(() => import("./pages/MasterAdminDashboard"));
+const MasterAdminLogs = lazyWithReload(() => import("./pages/MasterAdminLogs"));
+const ChurchSettings = lazyWithReload(() => import("./pages/ChurchSettings"));
+const PolicyAcceptancePage = lazyWithReload(() => import("./pages/PolicyAcceptancePage"));
+
+/* A lazy route renders only once its gates open -- ProtectedRoute waits on auth,
+   PolicyGuard on the acceptance check -- so left alone its chunk request would
+   start after them, adding the download to the end of a waterfall #124 just
+   shortened. The route being opened is known from the URL before anything
+   renders, so start that one chunk now, in parallel with auth. */
+const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
+  "/login": Login,
+  "/register-church": RegisterChurch,
+  "/accept-invite": AcceptInvite,
+  "/complete-profile": ProfileCompletion,
+  "/pending-approval": PendingApproval,
+  "/rejected": Rejected,
+  "/policy-acceptance": PolicyAcceptancePage,
+  "/profile": Profile,
+  "/master-admin": MasterAdminDashboard,
+  "/master-admin/logs": MasterAdminLogs,
+  "/[churchSlug]/login": Login,
+  "/[churchSlug]/parent": ParentDashboard,
+  "/[churchSlug]/volunteer": VolunteerDashboard,
+  "/[churchSlug]/admin": AdminDashboard,
+  "/[churchSlug]/admin/settings": ChurchSettings,
+  "/[churchSlug]/admin/events": EventsServices,
+};
+function preloadRouteChunk(pathname: string) {
+  ROUTE_CHUNKS[routePatternFor(pathname)]?.preload();
+}
+
+/* /app (the installed app's start_url) and the bare role paths render
+   DashboardRedirect, which names no page: where it goes depends on the account,
+   known only once auth resolves. The page's gates then release within tens of
+   ms, too soon for its chunk and the shared chunks it imports, so it suspends --
+   measured at 450ms-1s from release to render, against ~100-240ms on the
+   dashboard's own URL. The screen an account lands on rarely changes, so
+   remember it and start that chunk at startup instead. A stale guess costs one
+   unused download; DashboardRedirect still preloads the real target. */
+const REDIRECT_PATHS = new Set(["/app", "/admin", "/volunteer", "/parent"]);
+const LAST_LANDING_KEY = "gc.lastLandingPath";
+
+function rememberLanding(pathname: string) {
+  try {
+    localStorage.setItem(LAST_LANDING_KEY, pathname);
+  } catch {
+    // Best-effort: without storage the redirect preloads the target late.
+  }
+}
+
+if (typeof window !== "undefined") {
+  let startPath = window.location.pathname;
+  if (REDIRECT_PATHS.has(routePatternFor(startPath))) {
+    try {
+      startPath = localStorage.getItem(LAST_LANDING_KEY) ?? startPath;
+    } catch {
+      // Unavailable storage: nothing remembered, nothing to preload.
+    }
+  }
+  preloadRouteChunk(startPath);
+}
 
 function DashboardRedirect() {
   const { user, userData, loading } = useAuth();
@@ -54,6 +124,11 @@ function DashboardRedirect() {
     // reads them, and dropping them here loses the only copy.
     const search = window.location.search;
     const target = unverifiedPassword ? `/login${search}` : resolveLandingPath(userData, search);
+
+    // See REDIRECT_PATHS: covers a first launch, or a landing that changed.
+    const targetPath = target.split("?")[0];
+    preloadRouteChunk(targetPath);
+    if (user && !unverifiedPassword) rememberLanding(targetPath);
 
     // `replace`, not push. This route only ever forwards, so a pushed entry
     // would make Back re-enter it and bounce straight forward again -- and an
@@ -332,7 +407,11 @@ function Layout({ children }: { children: React.ReactNode }) {
     <>
       <Navigation />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {children}
+        {/* Inside <main>, so the header stays put while a route chunk loads,
+            and the fallback is the same route-shaped skeleton the auth and
+            tenant gates already show -- a chunk load reads as one continuous
+            placeholder, not a second one. */}
+        <React.Suspense fallback={<PageLoading />}>{children}</React.Suspense>
       </main>
     </>
   );
