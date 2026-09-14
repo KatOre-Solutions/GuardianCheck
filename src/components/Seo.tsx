@@ -79,6 +79,15 @@ interface SeoProps {
    * brand should lead rather than trail.
    */
   title?: string;
+  /**
+   * Full `document.title`, verbatim, for the one page that wants the brand to
+   * lead rather than trail: "GuardianCheck | Child check-in and pickup for
+   * churches" reads better in a search result than the reverse. Takes
+   * precedence over `title` for the document title only — `og:title` and
+   * `twitter:title` are unaffected, since `og:site_name` already carries the
+   * brand there.
+   */
+  documentTitle?: string;
   /** Meta description. Aim for 120-160 characters. */
   description?: string;
   /**
@@ -159,6 +168,7 @@ function removeCanonical() {
 
 export function Seo({
   title,
+  documentTitle,
   description,
   noindex = false,
   canonicalPath,
@@ -168,7 +178,7 @@ export function Seo({
   const { pathname } = useLocation();
 
   useEffect(() => {
-    document.title = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
+    document.title = documentTitle || (title ? `${title} | ${SITE_NAME}` : SITE_NAME);
 
     if (description) {
       upsertMeta("description", description);
@@ -216,7 +226,7 @@ export function Seo({
       removeMeta("robots");
       upsertCanonical(pageUrl);
     }
-  }, [title, description, noindex, canonicalPath, pathname, image, imageAlt]);
+  }, [title, documentTitle, description, noindex, canonicalPath, pathname, image, imageAlt]);
 
   return null;
 }

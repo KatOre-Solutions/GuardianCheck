@@ -13,7 +13,7 @@ import { ChurchLogo } from "./components/ChurchLogo";
 import Footer from "./components/Footer";
 
 import { SpeedInsights } from "@vercel/speed-insights/react";
-import Home from "./pages/Home";
+import { MarketingHeader } from "./components/marketing/MarketingHeader";
 import { PolicyGuard } from "./components/PolicyGuard";
 import NotFound from "./pages/NotFound";
 import { isKnownAppPath, RESERVED_SLUGS, routePatternFor } from "./constants/appRoutes";
@@ -24,17 +24,24 @@ import { AccessDenied } from "./components/AccessDenied";
 import { useMarkWhen } from "./lib/perfMarks";
 import { lazyWithReload } from "./lib/lazyWithReload";
 
-/* Route-level code splitting (#43). The marketing home page is what anonymous
-   visitors land on, and it used to download and parse every dashboard -- the
-   charting library, the QR scanner, the whole authenticated app -- before
-   painting. Home stays in the entry chunk because it is that page; NotFound
-   stays because TenantLayout renders it as a fallback. Everything else loads
-   when its route is first rendered, behind the Suspense boundary in Layout.
+/* Route-level code splitting (#43). This used to download and parse every
+   dashboard -- the charting library, the QR scanner, the whole authenticated
+   app -- before an anonymous visitor's landing page could paint. NotFound
+   stays in the entry chunk because TenantLayout renders it as a fallback.
+   Everything else, Home and ChurchLanding included, loads when its route is
+   first rendered, behind the Suspense boundary in Layout: an /app user
+   (parent, volunteer, admin) never renders either, so there is no reason for
+   their bundle to include the marketing chunk any more than it includes
+   AdminDashboard's (docs/marketing-redesign-plan.md §8). Home and
+   ChurchLanding are still preloaded at startup, in parallel with auth, via
+   ROUTE_CHUNKS below -- they are simply no longer bundled in.
 
    The offline shell still works: scripts/generate-sw-precache.ts precaches
    every chunk in dist/assets, not only the ones index.html references, so a
    parent's cold offline launch can still load ParentDashboard's chunk. */
 const Login = lazyWithReload(() => import("./pages/Login"));
+const Home = lazyWithReload(() => import("./pages/Home"));
+const ChurchLanding = lazyWithReload(() => import("./pages/ChurchLanding"));
 const RegisterChurch = lazyWithReload(() => import("./pages/RegisterChurch"));
 const AcceptInvite = lazyWithReload(() => import("./pages/AcceptInvite"));
 const ProfileCompletion = lazyWithReload(() => import("./pages/ProfileCompletion"));
@@ -63,6 +70,7 @@ const SecurityPage = lazyWithReload(() => import("./pages/legal/SecurityPage"));
    shortened. The route being opened is known from the URL before anything
    renders, so start that one chunk now, in parallel with auth. */
 const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
+  "/": Home,
   "/login": Login,
   "/register-church": RegisterChurch,
   "/accept-invite": AcceptInvite,
@@ -73,6 +81,7 @@ const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
   "/profile": Profile,
   "/master-admin": MasterAdminDashboard,
   "/master-admin/logs": MasterAdminLogs,
+  "/[churchSlug]": ChurchLanding,
   "/[churchSlug]/login": Login,
   "/[churchSlug]/parent": ParentDashboard,
   "/[churchSlug]/volunteer": VolunteerDashboard,
@@ -410,11 +419,41 @@ function RoutedSpeedInsights() {
   return <SpeedInsights route={routePatternFor(pathname)} />;
 }
 
-function Layout({ children }: { children: React.ReactNode }) {
+/**
+ * A client-side route change keeps whatever scroll position the previous
+ * page was at -- unlike a full page load, the browser has no reason to reset
+ * it. That reads as a bug on, say, a footer legal link clicked from partway
+ * down the home page: Terms of Service opens already scrolled to wherever
+ * Home happened to be.
+ *
+ * Skipped when the URL carries a hash: that is a same-page anchor jump (the
+ * marketing header's nav links, the footer's "How it works" etc.), and
+ * forcing the top here would fight the browser's own scroll-to-anchor.
+ */
+function ScrollToTop() {
+  const { pathname, hash } = useLocation();
+
+  React.useEffect(() => {
+    if (hash) return;
+    window.scrollTo(0, 0);
+  }, [pathname, hash]);
+
+  return null;
+}
+
+/**
+ * "app" (default) is every authenticated and utility page: `Navigation`, and
+ * a padded, width-capped `<main>`. "marketing" is `/`, `/about`, `/contact`
+ * and the legal pages: `MarketingHeader`, and a full-bleed `<main>` so Home's
+ * dark bands and sticky columns can run edge to edge -- the pages that don't
+ * need that (About, Contact, the legal pages) already carry their own
+ * max-width wrapper, so they render correctly inside either.
+ */
+function Layout({ children, variant = "app" }: { children: React.ReactNode; variant?: "app" | "marketing" }) {
   return (
     <>
-      <Navigation />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {variant === "marketing" ? <MarketingHeader /> : <Navigation />}
+      <main id="main" className={variant === "marketing" ? "" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"}>
         {/* Inside <main>, so the header stays put while a route chunk loads,
             and the fallback is the same route-shaped skeleton the auth and
             tenant gates already show -- a chunk load reads as one continuous
@@ -505,7 +544,7 @@ export default function App() {
               <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
                 <Routes>
                   {/* Global Routes - These take precedence over dynamic :churchSlug */}
-                  <Route path="/" element={<Layout><Home /></Layout>} />
+                  <Route path="/" element={<Layout variant="marketing"><Home /></Layout>} />
                   <Route path="/login" element={<Layout><Login /></Layout>} />
                   <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
                   <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
@@ -513,13 +552,13 @@ export default function App() {
                   <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
                   <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
                   <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
-                  <Route path="/about" element={<Layout><AboutPage /></Layout>} />
-                  <Route path="/contact" element={<Layout><ContactPage /></Layout>} />
-                  <Route path="/privacy" element={<Layout><PrivacyPolicyPage /></Layout>} />
-                  <Route path="/terms" element={<Layout><TermsOfServicePage /></Layout>} />
-                  <Route path="/popia" element={<Layout><PopiaPage /></Layout>} />
-                  <Route path="/cookies" element={<Layout><CookiePolicyPage /></Layout>} />
-                  <Route path="/security" element={<Layout><SecurityPage /></Layout>} />
+                  <Route path="/about" element={<Layout variant="marketing"><AboutPage /></Layout>} />
+                  <Route path="/contact" element={<Layout variant="marketing"><ContactPage /></Layout>} />
+                  <Route path="/privacy" element={<Layout variant="marketing"><PrivacyPolicyPage /></Layout>} />
+                  <Route path="/terms" element={<Layout variant="marketing"><TermsOfServicePage /></Layout>} />
+                  <Route path="/popia" element={<Layout variant="marketing"><PopiaPage /></Layout>} />
+                  <Route path="/cookies" element={<Layout variant="marketing"><CookiePolicyPage /></Layout>} />
+                  <Route path="/security" element={<Layout variant="marketing"><SecurityPage /></Layout>} />
 
                   {/* The installed app's start_url. Landing here rather than on the
                       marketing home page is what sends a parent to the parent
@@ -564,7 +603,7 @@ export default function App() {
 
                   {/* Tenant Routes */}
                   <Route path="/:churchSlug" element={<TenantLayout />}>
-                    <Route index element={<Home />} />
+                    <Route index element={<ChurchLanding />} />
                     <Route path="login" element={<Login />} />
                     <Route path="parent" element={
                       <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
@@ -615,6 +654,7 @@ export default function App() {
                 </Routes>
                 <Toaster position="top-right" richColors />
                 <NetworkStatus />
+                <ScrollToTop />
                 <RoutedSpeedInsights />
               </div>
             </TenantProvider>

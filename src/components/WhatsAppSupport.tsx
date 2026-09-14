@@ -1,6 +1,7 @@
 import React from "react";
-import { MessageCircle } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
+import { whatsappUrl } from "../lib/whatsapp";
+import { WhatsAppIcon } from "./icons/WhatsAppIcon";
 
 interface WhatsAppButtonProps {
   phoneNumber: string;
@@ -17,11 +18,11 @@ export default function WhatsAppButton({
   position = "fixed",
   className = ""
 }: WhatsAppButtonProps) {
-  const whatsappUrl = `https://wa.me/${phoneNumber.replace(/\+/g, "")}?text=${encodeURIComponent(message)}`;
+  const href = whatsappUrl(phoneNumber, message);
 
   const content = (
     <motion.a
-      href={whatsappUrl}
+      href={href}
       target="_blank"
       rel="noopener noreferrer"
       initial={{ scale: 0, opacity: 0 }}
@@ -32,7 +33,7 @@ export default function WhatsAppButton({
         position === "fixed" ? "fixed bottom-6 right-6" : ""
       } ${className}`}
     >
-      <MessageCircle className="h-6 w-6 fill-white text-[#25D366]" />
+      <WhatsAppIcon className="h-6 w-6 text-white" />
       {label && <span className="font-bold text-sm">{label}</span>}
     </motion.a>
   );

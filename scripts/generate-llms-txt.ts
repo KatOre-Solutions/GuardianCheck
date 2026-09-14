@@ -63,8 +63,8 @@ required to begin.
 - **Authorised-guardian pickup.** A child is released only to a guardian the
   church has authorised, verified by QR code and visual confirmation. This is
   the safeguarding problem the product exists to solve.
-- **Rooms and capacity.** Children are assigned to rooms with capacity limits,
-  tracked live during a service.
+- **Rooms and live occupancy.** Administrators set a capacity per room and see,
+  live during a service, when a room is at or over it.
 - **Attendance history and reports.** Per-child and per-event history for
   administrators.
 - **Per-church branding.** Each church has its own logo, colours and URL.
@@ -77,15 +77,15 @@ built for a queue of parents on a Sunday morning.
 
 Roles: **administrators** (set up rooms, events and volunteers), **volunteers**
 (check children in and out), and **parents** (register children, nominate
-authorised guardians, see their own child's history).
+authorised guardians, and see whether their child is currently checked in).
 
 ## Pricing
 
 ${planLines()}
 
-Every tier includes QR check-in, guardian verification and attendance history;
-higher tiers raise the user and child limits and add reporting and branding.
-Billing is monthly in ZAR via PayFast.
+Every tier includes every feature — QR check-in, guardian verification,
+attendance tracking, reporting and branding included. Higher tiers only raise
+the user and child limits. Billing is monthly in ZAR via PayFast.
 
 ## Data protection
 

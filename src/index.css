@@ -3,9 +3,96 @@
 @theme {
   --color-primary: var(--primary-color, #2563eb);
   --color-secondary: var(--secondary-color, #4f46e5);
+  /* Marketing site only (docs/marketing-redesign-plan.md §4): warm ground and
+     ink navy for headings and the two dark bands (Safety, Final CTA). Not
+     used outside src/components/marketing and src/pages/Home.tsx -- the
+     authenticated app keeps its existing gray palette. */
+  --color-canvas: #faf8f5;
+  --color-ink: #0b1733;
 }
 
 @variant dark (&:where(.dark, .dark *));
+
+/* Marketing-only entrance and reveal animation (#122/#124: zero JS animation
+   in the marketing chunk). `animation-timeline: view()` isn't supported
+   everywhere; the `@supports` fallback simply shows the content, which is a
+   valid empty state rather than a broken one. */
+@keyframes marketing-hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.marketing-hero-chip {
+  animation: marketing-hero-in 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@supports (animation-timeline: view()) {
+  .marketing-reveal {
+    animation: marketing-hero-in 1 linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 30%;
+  }
+}
+
+/* How it works, step 2: a scan line sweeping the sample QR, illustrating the
+   one mechanism the whole page keeps pointing back to. Decorative but not
+   arbitrary -- it is the one animation on the page that depicts the thing
+   its step is named after, which is the bar #122/#124 set for "must justify
+   itself". CSS-only, so it costs nothing beyond this rule set. */
+@keyframes marketing-scan {
+  0% {
+    top: 0%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+.marketing-scan-line {
+  animation: marketing-scan 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/* The floating WhatsApp button's attention ring. An expanding, fading
+   box-shadow rather than a scale transform, so it never changes the
+   button's own hit-target size. */
+@keyframes marketing-whatsapp-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(37, 211, 102, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 211, 102, 0);
+  }
+}
+
+.marketing-whatsapp-flash {
+  animation: marketing-whatsapp-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marketing-hero-chip,
+  .marketing-reveal,
+  .marketing-scan-line,
+  .marketing-whatsapp-flash {
+    animation: none !important;
+  }
+}
 
 /* Keep the vertical scrollbar's gutter even when the page doesn't scroll. The
    layouts here are centred (`max-w-7xl mx-auto`), so whenever a short loading

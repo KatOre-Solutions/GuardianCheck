@@ -41,6 +41,26 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link to="/#how-it-works" className={linkClass}>
+                  How it works
+                </Link>
+              </li>
+              <li>
+                <Link to="/#safety" className={linkClass}>
+                  Safety
+                </Link>
+              </li>
+              <li>
+                <Link to="/#pricing" className={linkClass}>
+                  Pricing
+                </Link>
+              </li>
+              <li>
+                <Link to="/#faq" className={linkClass}>
+                  FAQ
+                </Link>
+              </li>
+              <li>
                 <Link to="/register-church" className={linkClass}>
                   Register your church
                 </Link>
