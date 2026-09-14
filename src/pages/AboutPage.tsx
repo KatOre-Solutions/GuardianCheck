@@ -32,7 +32,7 @@ const facts = [
   {
     icon: <Building2 className="h-6 w-6 text-purple-600" />,
     title: "A registered South African company",
-    description: `${COMPANY.legalName} (registration number ${COMPANY.registrationNumber}). Online-only, with no physical office.`,
+    description: `${COMPANY.legalName} (registration number ${COMPANY.registrationNumber}).`,
   },
 ];
 
