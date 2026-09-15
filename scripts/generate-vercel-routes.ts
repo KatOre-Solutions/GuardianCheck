@@ -18,12 +18,20 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { knownPathPatterns } from "../src/constants/appRoutes";
+import { APP_HOSTNAME } from "../src/constants/site";
 
 const VERCEL_JSON = path.join(process.cwd(), "vercel.json");
 const checkOnly = process.argv.includes("--check");
 
 function buildRoutes() {
+  const onAppHost = [{ type: "host", value: APP_HOSTNAME }];
+
   return [
+    // The app host of the domain split (#14) is never indexed. A header rather
+    // than per-page tags, so no response (JS, images, the 404 shell) can miss it.
+    { src: "/(.*)", has: onAppHost, headers: { "X-Robots-Tag": "noindex, nofollow" }, continue: true },
+    // Its robots.txt allows crawling so that noindex is actually seen; see the file.
+    { src: "^/robots\\.txt$", has: onAppHost, dest: "/robots-app.txt" },
     // API first: it is the one path family Express still owns in production.
     { src: "/api/(.*)", dest: "/server.ts" },
     // Serve real files -- assets, robots.txt, sitemap.xml, og-image.png --

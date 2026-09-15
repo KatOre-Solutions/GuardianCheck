@@ -6,6 +6,8 @@ import { NAV_ANCHORS, DEMO_MESSAGE } from "../../constants/marketing";
 import { COMPANY } from "../../constants/company";
 import { whatsappUrl } from "../../lib/whatsapp";
 import { setMarketingMobileMenuOpen } from "../../lib/marketingMobileMenu";
+import { SITE_MODE } from "../../lib/siteMode";
+import { SiteLink } from "../SiteLink";
 
 /**
  * Header for the marketing tree (`/`, `/about`, `/contact`, the legal pages).
@@ -20,7 +22,11 @@ export function MarketingHeader() {
   const { user, loading } = useAuth();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const menuButtonRef = React.useRef<HTMLButtonElement>(null);
-  const signedIn = !loading && !!user;
+  // On the marketing host the session, if any, belongs to the old combined
+  // site, not to the app host the buttons lead to (#14). Sign-in state is not
+  // shared between web addresses, so the header does not pretend to know it;
+  // "Log in" on the app host forwards an already signed-in user anyway.
+  const signedIn = SITE_MODE !== "marketing" && !loading && !!user;
   const demoHref = whatsappUrl(COMPANY.whatsapp, DEMO_MESSAGE);
 
   React.useEffect(() => {
@@ -76,33 +82,33 @@ export function MarketingHeader() {
 
           <div className="hidden lg:flex items-center gap-3 shrink-0">
             {signedIn ? (
-              <Link to="/app" className={primaryBtnClass}>
+              <SiteLink host="app" to="/app" className={primaryBtnClass}>
                 Open GuardianCheck
-              </Link>
+              </SiteLink>
             ) : (
               <>
-                <Link to="/login" className={linkClass}>
+                <SiteLink host="app" to="/login" className={linkClass}>
                   Log in
-                </Link>
+                </SiteLink>
                 <a href={demoHref} target="_blank" rel="noopener noreferrer" className={ghostBtnClass}>
                   Book a demo
                 </a>
-                <Link to="/register-church" className={primaryBtnClass}>
+                <SiteLink host="app" to="/register-church" className={primaryBtnClass}>
                   Start free trial
-                </Link>
+                </SiteLink>
               </>
             )}
           </div>
 
           <div className="flex lg:hidden items-center gap-2 shrink-0">
             {signedIn ? (
-              <Link to="/app" className={`${primaryBtnClass} !px-3 !py-1.5 !text-xs`}>
+              <SiteLink host="app" to="/app" className={`${primaryBtnClass} !px-3 !py-1.5 !text-xs`}>
                 Open app
-              </Link>
+              </SiteLink>
             ) : (
-              <Link to="/register-church" className={`${primaryBtnClass} !px-3 !py-1.5 !text-xs`}>
+              <SiteLink host="app" to="/register-church" className={`${primaryBtnClass} !px-3 !py-1.5 !text-xs`}>
                 Start free trial
-              </Link>
+              </SiteLink>
             )}
             <button
               ref={menuButtonRef}
@@ -141,13 +147,14 @@ export function MarketingHeader() {
         <div className="pt-2 space-y-2">
           {!signedIn && (
             <>
-              <Link
+              <SiteLink
+                host="app"
                 to="/login"
                 onClick={() => setMenuOpen(false)}
                 className="block px-3 py-3 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               >
                 Log in
-              </Link>
+              </SiteLink>
               <a
                 href={demoHref}
                 target="_blank"
