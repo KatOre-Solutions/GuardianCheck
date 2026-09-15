@@ -1,5 +1,6 @@
 /**
- * extend-church-trial.ts — move one church's free-trial end date.
+ * extend-church-trial.ts: move one church's free-trial end date, and with it
+ * the date the church locks.
  *
  * SAFE BY DEFAULT: with no flags it only *reports*. Nothing is written unless
  * you pass --write.
@@ -17,29 +18,28 @@
  * anything it does not recognise, writes exactly one field, and logs an audit
  * row beside it.
  *
- * What trialEndsAt actually does today
- * ------------------------------------
- * Nothing, functionally. No middleware in server.ts consults it and no
- * route refuses service on it -- `PLAN_LIMITS` caps user and child *counts*,
- * not dates. The field is read in three places, all display:
+ * trialEndsAt and accessUntil
+ * ---------------------------
+ * `subscription.trialEndsAt` is display only. What locks a church is the
+ * root `accessUntil` Timestamp (see src/lib/churchAccess.ts): once it passes,
+ * the server and the Firestore rules refuse the church's check-ins and edits.
  *
- *   - MasterAdminDashboard.tsx -- red "Trial Expired" badge once the date passes
- *   - AdminDashboard.tsx       -- "Your trial ends on <date>" banner to the church admin
- *   - ChurchSettings.tsx       -- "Trial Ends" row
- *
- * So an expired trial is a display and billing-conversation problem, not a
- * lockout. Worth keeping in mind before treating a passed date as an outage.
+ * So this writes both. `accessUntil` becomes midnight SAST at the end of
+ * --until, and is never moved earlier than it already is unless you pass
+ * --allow-shorten: a church that has paid past the new date keeps that access.
  */
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import { endOfDaySast, getChurchAccess, laterOf, toDate } from "../src/lib/churchAccess";
 
 dotenv.config();
 
 const WRITE = process.argv.includes("--write");
+const ALLOW_SHORTEN = process.argv.includes("--allow-shorten");
 const argValue = (flag: string): string | undefined => {
   const i = process.argv.indexOf(flag);
   return i !== -1 ? process.argv[i + 1] : undefined;
@@ -99,6 +99,10 @@ async function main() {
   const data = doc.data()!;
   const current = data.subscription?.trialEndsAt ?? null;
   const now = new Date();
+  const currentAccessUntil = toDate(data.accessUntil);
+  const targetAccessUntil = ALLOW_SHORTEN
+    ? endOfDaySast(target)
+    : laterOf(currentAccessUntil, endOfDaySast(target))!;
 
   console.log(`\nChurch          ${data.name}  (${CHURCH_ID})`);
   console.log(`slug            ${data.slug}`);
@@ -107,10 +111,15 @@ async function main() {
   console.log(`plan            ${data.plan}`);
   console.log(`trialStartedAt  ${data.subscription?.trialStartedAt ?? "(none)"}`);
   console.log(`trialEndsAt     ${current ?? "(none)"}${current && new Date(current) < now ? "   <-- already passed" : ""}`);
+  console.log(`accessUntil     ${currentAccessUntil?.toISOString() ?? "(none, unmetered)"}   [${getChurchAccess(data, now).state}]`);
   console.log(`\nwould set       subscription.trialEndsAt = ${target.toISOString()}`);
+  console.log(`would set       accessUntil              = ${targetAccessUntil.toISOString()}`);
 
   if (current && new Date(current) > target) {
     console.log(`\nWARNING: the current end date is LATER than --until. This would SHORTEN the trial.`);
+  }
+  if (currentAccessUntil && currentAccessUntil > endOfDaySast(target) && !ALLOW_SHORTEN) {
+    console.log(`\nNOTE: accessUntil is already later than --until and is kept. Pass --allow-shorten to move it earlier.`);
   }
 
   if (!WRITE) {
@@ -124,6 +133,7 @@ async function main() {
   // does not know about.
   await ref.update({
     "subscription.trialEndsAt": target.toISOString(),
+    accessUntil: Timestamp.fromDate(targetAccessUntil),
     updatedAt: new Date().toISOString(),
   });
 
@@ -132,14 +142,19 @@ async function main() {
     userId: "script:extend-church-trial",
     action: "trial_extended",
     category: "billing",
-    details: { from: current, to: target.toISOString() },
+    details: {
+      from: current,
+      to: target.toISOString(),
+      accessUntilFrom: currentAccessUntil?.toISOString() ?? null,
+      accessUntilTo: targetAccessUntil.toISOString(),
+    },
     timestamp: new Date().toISOString(),
     source: "server",
     traceId: null,
   });
 
-  const after = (await ref.get()).data()!.subscription?.trialEndsAt;
-  console.log(`\nWritten. trialEndsAt is now ${after}\n`);
+  const after = (await ref.get()).data()!;
+  console.log(`\nWritten. trialEndsAt is now ${after.subscription?.trialEndsAt}, accessUntil ${toDate(after.accessUntil)?.toISOString()}\n`);
 }
 
 main().catch((err) => {
