@@ -8,10 +8,37 @@
  */
 
 import { logger } from "./logger";
+import { SITE_MODE } from "./siteMode";
+
+/**
+ * The marketing host after the domain split (#14) is not an app: nothing to
+ * install, nothing to boot offline. Every device that used the app before the
+ * split still has its worker and cached shell registered on this origin,
+ * though, and offline that worker would keep booting the old app here. Remove
+ * both, and the install link with them.
+ */
+function retireServiceWorker(): void {
+  document.querySelector('link[rel="manifest"]')?.remove();
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+    .then(() => caches.keys())
+    .then((names) =>
+      Promise.all(names.filter((name) => name.startsWith("guardiancheck-shell-")).map((name) => caches.delete(name))),
+    )
+    .catch((error: unknown) => {
+      logger.warn("Service worker retirement failed", { reason: String(error) });
+    });
+}
 
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
+  if (SITE_MODE === "marketing") {
+    retireServiceWorker();
+    return;
+  }
 
   // After `load`, so registration never competes with the first render for
   // bandwidth on a slow connection.

@@ -10,10 +10,10 @@ import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { uploadFile, getPathFromUrl, deleteFile } from "../lib/storage";
 import { safeFetch } from "../lib/api";
-import { SITE_URL } from "../constants/site";
+import { churchUrlHost } from "../constants/site";
 
-/** Host only, for the slug field's prefix label. */
-const SITE_HOST = SITE_URL.replace(/^https?:\/\//, "");
+/** Host only, for the slug field's prefix label: wherever church URLs live in the domain split (#14). */
+const SITE_HOST = churchUrlHost();
 
 /** Mirrors churchNameSchema on the server; the server stays authoritative. */
 const NAME_MIN = 3;

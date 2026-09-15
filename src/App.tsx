@@ -26,6 +26,9 @@ import { PageLoading } from "./components/PageLoading";
 import { AccessDenied } from "./components/AccessDenied";
 import { useMarkWhen } from "./lib/perfMarks";
 import { lazyWithReload } from "./lib/lazyWithReload";
+import { SITE_MODE } from "./lib/siteMode";
+import { CrossHostRedirect, SiteLink } from "./components/SiteLink";
+import { AppHostNotice } from "./components/AppHostNotice";
 
 /* Route-level code splitting (#43). This used to download and parse every
    dashboard, the charting library, the QR scanner, the whole authenticated
@@ -93,7 +96,9 @@ const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
   "/[churchSlug]/admin/events": EventsServices,
 };
 function preloadRouteChunk(pathname: string) {
-  ROUTE_CHUNKS[routePatternFor(pathname)]?.preload();
+  const pattern = routePatternFor(pathname);
+  if (SITE_MODE === "app" && pattern === "/") return;
+  ROUTE_CHUNKS[pattern]?.preload();
 }
 
 /* /app (the installed app's start_url) and the bare role paths render
@@ -105,6 +110,9 @@ function preloadRouteChunk(pathname: string) {
    remember it and start that chunk at startup instead. A stale guess costs one
    unused download; DashboardRedirect still preloads the real target. */
 const REDIRECT_PATHS = new Set(["/app", "/admin", "/volunteer", "/parent"]);
+// On the app host `/` is the launch route too: the marketing home page lives
+// on the apex, and preloading its chunk here would be a wasted download.
+if (SITE_MODE === "app") REDIRECT_PATHS.add("/");
 const LAST_LANDING_KEY = "gc.lastLandingPath";
 
 function rememberLanding(pathname: string) {
@@ -181,7 +189,9 @@ function Navigation() {
 
   const handleLogout = async () => {
     await auth.signOut();
-    navigate(church ? `/${church.slug}` : "/");
+    // On the app host `/` is the launch route, which would just bounce a
+    // signed-out user to /login anyway; go there directly.
+    navigate(church ? `/${church.slug}` : SITE_MODE === "app" ? "/login" : "/");
   };
 
   const hasRole = (role: string) => roles.includes(role as any);
@@ -491,6 +501,9 @@ function ScrollToTop() {
  * block under the same id. See Home.tsx, which used to.
  */
 function GlobalJsonLd() {
+  // The app host is noindex throughout; the entity is described on the apex.
+  if (SITE_MODE === "app") return null;
+
   const organizationJsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -526,6 +539,7 @@ function Layout({ children, variant = "app" }: { children: React.ReactNode; vari
   return (
     <>
       <GlobalJsonLd />
+      <AppHostNotice />
       {variant === "marketing" ? <MarketingHeader /> : <Navigation />}
       <main id="main" className={variant === "marketing" ? "" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"}>
         {/* Inside <main>, so the header stays put while a route chunk loads,
@@ -585,9 +599,9 @@ function TenantLayout() {
             The church you are looking for doesn't exist or the link is incorrect. 
             Please check the URL or contact your church administrator.
           </p>
-          <Link to="/" className="inline-block text-primary font-bold hover:underline">
+          <SiteLink host="marketing" to="/" className="inline-block text-primary font-bold hover:underline">
             Go to GuardianCheck Home
-          </Link>
+          </SiteLink>
         </div>
       </Layout>
     );
@@ -597,6 +611,44 @@ function TenantLayout() {
     <Layout>
       <Outlet />
     </Layout>
+  );
+}
+
+/**
+ * The marketing site's pages, other than home. Declared once because they are
+ * rendered by two route tables: the full one, and the marketing host's own.
+ * The paths must match MARKETING_ROUTES in constants/appRoutes.ts.
+ */
+const MARKETING_PAGES: ReadonlyArray<readonly [string, React.ReactNode]> = [
+  ["/about", <AboutPage />],
+  ["/contact", <ContactPage />],
+  ["/privacy", <PrivacyPolicyPage />],
+  ["/terms", <TermsOfServicePage />],
+  ["/popia", <PopiaPage />],
+  ["/cookies", <CookiePolicyPage />],
+  ["/security", <SecurityPage />],
+];
+
+/** A marketing page, or on the app host a hand-off to the apex, where it lives. */
+function marketingElement(page: React.ReactNode) {
+  return SITE_MODE === "app" ? <CrossHostRedirect host="marketing" /> : <Layout variant="marketing">{page}</Layout>;
+}
+
+/**
+ * guardiancheck.co.za once the split is live: only the marketing pages, and
+ * every other path handed to the same path on the app host.
+ */
+function MarketingHostRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Layout variant="marketing"><Home /></Layout>} />
+      {MARKETING_PAGES.map(([path, page]) => (
+        <React.Fragment key={path}>
+          <Route path={path} element={marketingElement(page)} />
+        </React.Fragment>
+      ))}
+      <Route path="*" element={<CrossHostRedirect host="app" />} />
+    </Routes>
   );
 }
 
@@ -616,9 +668,15 @@ export default function App() {
           <Router>
           <TenantProvider>
               <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans text-gray-900 dark:text-gray-100 transition-colors">
+                {SITE_MODE === "marketing" ? <MarketingHostRoutes /> : (
                 <Routes>
                   {/* Global Routes - These take precedence over dynamic :churchSlug */}
-                  <Route path="/" element={<Layout variant="marketing"><Home /></Layout>} />
+                  {/* On the app host `/` is the launch route, like /app: the
+                      marketing home page lives on the apex. */}
+                  <Route
+                    path="/"
+                    element={SITE_MODE === "app" ? <Layout><DashboardRedirect /></Layout> : <Layout variant="marketing"><Home /></Layout>}
+                  />
                   <Route path="/login" element={<Layout><Login /></Layout>} />
                   <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
                   <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />
@@ -626,13 +684,11 @@ export default function App() {
                   <Route path="/pending-approval" element={<Layout><PendingApproval /></Layout>} />
                   <Route path="/rejected" element={<Layout><Rejected /></Layout>} />
                   <Route path="/policy-acceptance" element={<Layout><PolicyAcceptancePage /></Layout>} />
-                  <Route path="/about" element={<Layout variant="marketing"><AboutPage /></Layout>} />
-                  <Route path="/contact" element={<Layout variant="marketing"><ContactPage /></Layout>} />
-                  <Route path="/privacy" element={<Layout variant="marketing"><PrivacyPolicyPage /></Layout>} />
-                  <Route path="/terms" element={<Layout variant="marketing"><TermsOfServicePage /></Layout>} />
-                  <Route path="/popia" element={<Layout variant="marketing"><PopiaPage /></Layout>} />
-                  <Route path="/cookies" element={<Layout variant="marketing"><CookiePolicyPage /></Layout>} />
-                  <Route path="/security" element={<Layout variant="marketing"><SecurityPage /></Layout>} />
+                  {MARKETING_PAGES.map(([path, page]) => (
+                    <React.Fragment key={path}>
+                      <Route path={path} element={marketingElement(page)} />
+                    </React.Fragment>
+                  ))}
 
                   {/* The installed app's start_url. Landing here rather than on the
                       marketing home page is what sends a parent to the parent
@@ -726,6 +782,7 @@ export default function App() {
                       route is ever narrowed. */}
                   <Route path="*" element={<Layout><NotFound /></Layout>} />
                 </Routes>
+                )}
                 <Toaster position="top-right" richColors />
                 <NetworkStatus />
                 <ScrollToTop />
