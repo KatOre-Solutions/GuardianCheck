@@ -1,8 +1,24 @@
-export const CURRENT_POLICY_VERSION = "1.0";
+import { COMPANY } from "./company";
+import { TRIAL_MONTHS } from "./plans";
+import { PAYMENT_GRACE_DAYS } from "../lib/churchAccess";
+
+/**
+ * Bumping this sends every signed-in user (admins, volunteers and parents)
+ * back through /policy-acceptance on their next visit, and the server refuses
+ * check-in until a volunteer has accepted. Release a bump midweek, not on a
+ * Sunday morning.
+ *
+ * 1.1: payment, suspension, cancellation and data retention terms, added with
+ * the trial lockout (#137).
+ */
+export const CURRENT_POLICY_VERSION = "1.1";
+
+const trialLength = TRIAL_MONTHS === 1 ? "one month" : `${TRIAL_MONTHS} months`;
+const graceDays = `${PAYMENT_GRACE_DAYS} days`;
 
 export const LEGAL_CONTENT = {
   version: CURRENT_POLICY_VERSION,
-  lastUpdated: "2026-04-13",
+  lastUpdated: "2026-09-15",
   privacyPolicy: {
     title: "Privacy Policy (POPIA Compliant)",
     sections: [
@@ -64,6 +80,28 @@ export const LEGAL_CONTENT = {
         title: "3. Data Processing Agreement",
         content: "Admins acknowledge that by using this platform, the Church enters into a Data Processing Agreement with GuardianCheck, ensuring all processing complies with POPIA standards.",
         roles: ["admin", "master_admin"]
+      },
+      {
+        id: "trial-and-fees",
+        title: "4. Free Trial, Fees and Billing",
+        content: `Each Church starts with a free trial of ${trialLength}. No payment details are needed to start it, and nothing is charged during it. To keep using GuardianCheck after the trial, a Church Admin must choose a paid plan. Plans are billed monthly in South African rand and processed by PayFast, at the price shown for the chosen plan when you subscribe. The first charge is taken when you subscribe, or on the last day of the trial if you subscribe during it, and then on the same day each month. Each plan limits the number of users and children a Church can register. We may change our prices by giving Church Admins at least 30 days' notice by email before the change applies to their Church.`,
+        roles: ["admin", "master_admin"]
+      },
+      {
+        id: "suspension",
+        title: "5. Suspension for Non-Payment",
+        content: `If the free trial ends without a paid plan being chosen, or a monthly payment is not received within ${graceDays} of its billing date, the Church's access to GuardianCheck is suspended. While suspended, no children can be checked in and the Church's information cannot be added to or changed, for every user in that Church. Children already checked in when suspension begins can still be checked out, and parents can still see their guardian pickup codes. The Church's information is not deleted by suspension. A Church Admin can restore access at any time by choosing a plan and completing payment, and access returns once PayFast confirms the payment.`
+      },
+      {
+        id: "cancellation",
+        title: "6. Cancellation and Refunds",
+        content: `A Church Admin can cancel the subscription at any time from the Church's settings. Cancelling stops future charges. The Church keeps access until the end of the period it has already paid for, after which its access is suspended as described in section 5. Fees already paid are not refunded, including for a partly used month, unless the law requires otherwise. If you believe you were charged in error, contact us at ${COMPANY.email}.`,
+        roles: ["admin", "master_admin"]
+      },
+      {
+        id: "data-after-suspension",
+        title: "7. Your Information After Suspension or Cancellation",
+        content: `We keep a suspended or cancelled Church's information for 90 days from the date its access was suspended, so that it can be restored in full if the Church resumes its subscription. During that time a Church Admin can request a copy of the Church's information by emailing ${COMPANY.email}. After 90 days we may permanently delete the Church's information. We will email the Church Admin at least 30 days before doing so. This does not affect the rights of parents, guardians and other users to access, correct or request the deletion of their personal information under POPIA at any time.`
       }
     ]
   }

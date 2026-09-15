@@ -106,9 +106,36 @@ service cloud.firestore {
 
     function isTenant(churchId) {
       return isAuthenticated() && (
-        isMasterAdmin() || 
+        isMasterAdmin() ||
         (isApproved() && getUserData().churchId == churchId)
       );
+    }
+
+    // False once the caller's church has passed its `accessUntil`: the trial
+    // or paid period has ended. Mirrors getChurchAccess() in
+    // src/lib/churchAccess.ts, which explains the field.
+    //
+    // Applied to writes only. A locked church keeps read access to its own
+    // data: nothing is deleted or hidden, the live listeners behind the check-
+    // out screen keep working, and the app can show the locked state rather
+    // than a wall of permission errors. What stops is changing anything, with
+    // one exception on `checkins`: a child already checked in can still be
+    // checked out.
+    //
+    // A church with no `accessUntil` is unmetered and never locks. A church
+    // admin cannot write the field: `churches` update allowlists its keys.
+    //
+    // No church document at all also reads as open, as it does in
+    // getChurchAccess(): the lock is about billing, and a church that does not
+    // exist has no bill.
+    //
+    // Call only after the rule has already matched the caller's churchId, so
+    // the path below never interpolates a null.
+    function churchAccessOpen() {
+      let path = /databases/$(database)/documents/churches/$(getUserData().churchId);
+      return !exists(path) ||
+             get(path).data.get('accessUntil', null) == null ||
+             get(path).data.accessUntil > request.time;
     }
 
     // --- Validation Helpers ---
@@ -265,12 +292,14 @@ service cloud.firestore {
          !resource.data.get('roles', []).hasAny(['master_admin']) &&
          !request.resource.data.get('roles', []).hasAny(['master_admin']) &&
          resource.data.churchId == getUserData().churchId &&
-         request.resource.data.churchId == getUserData().churchId)
+         request.resource.data.churchId == getUserData().churchId &&
+         churchAccessOpen())
       );
       allow delete: if isMasterAdmin() || (
-        isAdmin() && resource != null && 
+        isAdmin() && resource != null &&
         resource.data.churchId == getUserData().churchId &&
-        (!('role' in resource.data) || resource.data.role != 'master_admin')
+        (!('role' in resource.data) || resource.data.role != 'master_admin') &&
+        churchAccessOpen()
       );
     }
 
@@ -384,7 +413,7 @@ service cloud.firestore {
       // Sensitive security data (PIN hashes, etc.)
       // Restricted: Volunteers no longer have read access. Verification moved to server.
       allow read: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
-      allow write: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId);
+      allow write: if isMasterAdmin() || (isAdmin() && getUserData().churchId == churchId && churchAccessOpen());
     }
 
     match /audit_logs/{logId} {
@@ -408,7 +437,7 @@ service cloud.firestore {
         (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId)
       );
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && request.resource.data.status == 'pending';
-      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
       allow delete: if isMasterAdmin();
     }
 
@@ -423,17 +452,19 @@ service cloud.firestore {
         isApproved() && request.resource.data.churchId == getUserData().churchId && 
         (isAdmin() || (isParent() && request.resource.data.parentId == request.auth.uid)) &&
         request.resource.data.firstName.size() < 100 &&
-        request.resource.data.lastName.size() < 100
+        request.resource.data.lastName.size() < 100 &&
+        churchAccessOpen()
       );
       allow update: if isMasterAdmin() || (
-        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId &&
         (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid)) &&
         request.resource.data.churchId == resource.data.churchId &&
         request.resource.data.parentId == resource.data.parentId &&
         request.resource.data.firstName.size() < 100 &&
-        request.resource.data.lastName.size() < 100
+        request.resource.data.lastName.size() < 100 &&
+        churchAccessOpen()
       );
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /child_medical/{childId} {
@@ -458,7 +489,8 @@ service cloud.firestore {
         isAuthenticated() && (
           (isAdmin() && get(/databases/$(database)/documents/children/$(childId)).data.churchId == getUserData().churchId) ||
           (isParent() && get(/databases/$(database)/documents/children/$(childId)).data.parentId == request.auth.uid)
-        )
+        ) &&
+        churchAccessOpen()
       );
     }
 
@@ -478,22 +510,24 @@ service cloud.firestore {
         )
       );
       allow create: if isMasterAdmin() || (
-        isApproved() && 
-        request.resource.data.churchId == getUserData().churchId && 
-        (isAdmin() || isVolunteer() || (isParent() && request.resource.data.parentId == request.auth.uid))
+        isApproved() &&
+        request.resource.data.churchId == getUserData().churchId &&
+        (isAdmin() || isVolunteer() || (isParent() && request.resource.data.parentId == request.auth.uid)) &&
+        churchAccessOpen()
       );
       allow update: if isMasterAdmin() || (
-        isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
-        (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid))
+        isApproved() && resource != null && getUserData().churchId == resource.data.churchId &&
+        (isAdmin() || isVolunteer() || (isParent() && resource.data.parentId == request.auth.uid)) &&
+        churchAccessOpen()
       );
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /rooms/{roomId} {
       allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow create: if isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId);
-      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow create: if isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId && churchAccessOpen());
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /checkins/{checkinId} {
@@ -523,9 +557,14 @@ service cloud.firestore {
         request.resource.data.churchId == getUserData().churchId && 
         (isVolunteer() || isAdmin()) &&
         isValidCheckin(request.resource.data) &&
-        request.resource.data.status == 'checked-in'
+        request.resource.data.status == 'checked-in' &&
+        churchAccessOpen()
       );
-      
+
+      // No churchAccessOpen() here, deliberately. The only update this allows
+      // is checked-in -> checked-out, and a child checked in before the church
+      // locked must still be released. It cannot be used for anything else:
+      // the transition check below rules out every other change of status.
       allow update: if isMasterAdmin() || (
         isApproved() && resource != null && getUserData().churchId == resource.data.churchId && 
         (isAdmin() || isVolunteer()) &&
@@ -536,22 +575,22 @@ service cloud.firestore {
         // Enforce state transition: checked-in -> checked-out
         isValidCheckinStateTransition()
       );
-      
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /events/{eventId} {
       allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow create: if isMasterAdmin() || (isAdmin() && request.resource.data.churchId == getUserData().churchId);
-      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow create: if isMasterAdmin() || (isAdmin() && request.resource.data.churchId == getUserData().churchId && churchAccessOpen());
+      allow update: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /services/{serviceId} {
       allow read: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId);
-      allow create: if isMasterAdmin() || (isAdmin() && request.resource.data.churchId == getUserData().churchId);
-      allow update: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId && (isVolunteer() || isAdmin()));
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow create: if isMasterAdmin() || (isAdmin() && request.resource.data.churchId == getUserData().churchId && churchAccessOpen());
+      allow update: if isMasterAdmin() || (isApproved() && resource != null && getUserData().churchId == resource.data.churchId && (isVolunteer() || isAdmin()) && churchAccessOpen());
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /invitations/{invitationId} {
@@ -573,18 +612,18 @@ service cloud.firestore {
                    ));
 
       // Layer 3: Write Protection
-      allow create: if (isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId)) && 
+      allow create: if (isMasterAdmin() || (isAdmin() && getUserData().churchId == request.resource.data.churchId && churchAccessOpen())) &&
                     isValidInvitation(request.resource.data);
-      
+
       // Single-use enforcement and role lockdown
-      allow update: if isMasterAdmin() || 
-                    (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && isValidInvitation(request.resource.data)) ||
+      allow update: if isMasterAdmin() ||
+                    (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && isValidInvitation(request.resource.data) && churchAccessOpen()) ||
                     (isAuthenticated() && request.auth.token.email == resource.data.email && 
                      resource.data.status == 'pending' &&
                      request.resource.data.status == 'accepted' && 
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy', 'updatedAt']) &&
                      isValidInvitation(request.resource.data));
-      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId);
+      allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
     match /logs/{logId} {
