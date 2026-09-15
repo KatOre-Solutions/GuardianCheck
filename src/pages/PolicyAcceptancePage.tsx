@@ -15,6 +15,7 @@ export default function PolicyAcceptancePage() {
   const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const submittingRef = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -30,6 +31,13 @@ export default function PolicyAcceptancePage() {
 
   const handleAccept = async () => {
     if (!user || !userData) return;
+    // `submitting` state only disables the button on the next render, so a
+    // fast double-click/double-tap can fire this twice before that happens.
+    // The second run would then hit the immutable policy_acceptance/history
+    // rule as an "update" on a doc the first run just created and throw a
+    // permission-denied error, even though the acceptance already saved.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
 
     try {
@@ -87,6 +95,7 @@ export default function PolicyAcceptancePage() {
       console.error("Failed to save policy acceptance:", error);
       toast.error("Failed to save acceptance. Please try again.");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
