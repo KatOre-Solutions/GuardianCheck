@@ -28,7 +28,6 @@ import { useMarkWhen } from "./lib/perfMarks";
 import { lazyWithReload } from "./lib/lazyWithReload";
 import { SITE_MODE } from "./lib/siteMode";
 import { CrossHostRedirect, SiteLink } from "./components/SiteLink";
-import { AppHostNotice } from "./components/AppHostNotice";
 
 /* Route-level code splitting (#43). This used to download and parse every
    dashboard, the charting library, the QR scanner, the whole authenticated
@@ -97,6 +96,8 @@ const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
 };
 function preloadRouteChunk(pathname: string) {
   const pattern = routePatternFor(pathname);
+  // The marketing home page is on www once the split is live (#14), so the app
+  // host never renders it and its chunk would be a wasted download.
   if (SITE_MODE === "app" && pattern === "/") return;
   ROUTE_CHUNKS[pattern]?.preload();
 }
@@ -110,9 +111,6 @@ function preloadRouteChunk(pathname: string) {
    remember it and start that chunk at startup instead. A stale guess costs one
    unused download; DashboardRedirect still preloads the real target. */
 const REDIRECT_PATHS = new Set(["/app", "/admin", "/volunteer", "/parent"]);
-// On the app host `/` is the launch route too: the marketing home page lives
-// on the apex, and preloading its chunk here would be a wasted download.
-if (SITE_MODE === "app") REDIRECT_PATHS.add("/");
 const LAST_LANDING_KEY = "gc.lastLandingPath";
 
 function rememberLanding(pathname: string) {
@@ -189,9 +187,7 @@ function Navigation() {
 
   const handleLogout = async () => {
     await auth.signOut();
-    // On the app host `/` is the launch route, which would just bounce a
-    // signed-out user to /login anyway; go there directly.
-    navigate(church ? `/${church.slug}` : SITE_MODE === "app" ? "/login" : "/");
+    navigate(church ? `/${church.slug}` : "/");
   };
 
   const hasRole = (role: string) => roles.includes(role as any);
@@ -539,7 +535,6 @@ function Layout({ children, variant = "app" }: { children: React.ReactNode; vari
   return (
     <>
       <GlobalJsonLd />
-      <AppHostNotice />
       {variant === "marketing" ? <MarketingHeader /> : <Navigation />}
       <main id="main" className={variant === "marketing" ? "" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"}>
         {/* Inside <main>, so the header stays put while a route chunk loads,
@@ -671,12 +666,10 @@ export default function App() {
                 {SITE_MODE === "marketing" ? <MarketingHostRoutes /> : (
                 <Routes>
                   {/* Global Routes - These take precedence over dynamic :churchSlug */}
-                  {/* On the app host `/` is the launch route, like /app: the
-                      marketing home page lives on the apex. */}
-                  <Route
-                    path="/"
-                    element={SITE_MODE === "app" ? <Layout><DashboardRedirect /></Layout> : <Layout variant="marketing"><Home /></Layout>}
-                  />
+                  {/* Once the split is live the home page is on www (#14), so
+                      the application host hands `/` over rather than rendering
+                      it. Its own entry point is /app. */}
+                  <Route path="/" element={marketingElement(<Home />)} />
                   <Route path="/login" element={<Layout><Login /></Layout>} />
                   <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
                   <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />

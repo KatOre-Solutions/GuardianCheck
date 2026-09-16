@@ -3,14 +3,14 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, loadEnv, type Plugin} from 'vite';
 import {MARKETING_ROUTES} from './src/constants/appRoutes';
-import {APP_HOSTNAME, APP_SITE_URL, DOMAIN_SPLIT_PHASE, MARKETING_HOSTNAMES, MARKETING_URL} from './src/constants/site';
+import {APP_HOSTNAME, APP_SITE_URL, DOMAIN_SPLIT_PHASE, MARKETING_HOSTNAME, MARKETING_URL} from './src/constants/site';
 
 /**
  * Sends a page load on the wrong host of the domain split (#14) to the right
- * one before any bundle downloads: a marketing page opened on the app host goes
- * to the apex, and once the phase is "live" anything but a marketing page on
- * the apex goes to the app host. Path, query string and hash are kept, so
- * invite tokens and payment results survive.
+ * one before any bundle downloads: anything but a marketing page opened on www
+ * goes to the application, and once the phase is "live" a marketing page on the
+ * application host, `/` included, goes to www. Path, query string and hash are
+ * kept, so invite tokens and payment results survive.
  *
  * This is the same decision src/lib/siteMode.ts makes for in-app navigation,
  * built from the same constants. It is inline in index.html rather than an edge
@@ -22,8 +22,8 @@ function domainSplitRedirect(): Plugin {
     '(function(){' +
     'var l=location,h=l.hostname,p=l.pathname.length>1?l.pathname.replace(/\\/+$/,""):l.pathname,' +
     `m=${JSON.stringify(MARKETING_ROUTES)},to="";` +
-    `if(h===${JSON.stringify(APP_HOSTNAME)}&&p!=="/"&&m.indexOf(p)!==-1)to=${JSON.stringify(MARKETING_URL)};` +
-    `else if(${JSON.stringify(DOMAIN_SPLIT_PHASE === 'live')}&&${JSON.stringify(MARKETING_HOSTNAMES)}.indexOf(h)!==-1&&m.indexOf(p)===-1)to=${JSON.stringify(APP_SITE_URL)};` +
+    `if(h===${JSON.stringify(MARKETING_HOSTNAME)}&&m.indexOf(p)===-1)to=${JSON.stringify(APP_SITE_URL)};` +
+    `else if(${JSON.stringify(DOMAIN_SPLIT_PHASE === 'live')}&&h===${JSON.stringify(APP_HOSTNAME)}&&m.indexOf(p)!==-1)to=${JSON.stringify(MARKETING_URL)};` +
     'if(to)l.replace(to+l.pathname+l.search+l.hash);' +
     '})();';
   return {

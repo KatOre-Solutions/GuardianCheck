@@ -15,29 +15,6 @@
   ],
   "routes": [
     {
-      "src": "/(.*)",
-      "has": [
-        {
-          "type": "host",
-          "value": "app.guardiancheck.co.za"
-        }
-      ],
-      "headers": {
-        "X-Robots-Tag": "noindex, nofollow"
-      },
-      "continue": true
-    },
-    {
-      "src": "^/robots\\.txt$",
-      "has": [
-        {
-          "type": "host",
-          "value": "app.guardiancheck.co.za"
-        }
-      ],
-      "dest": "/robots-app.txt"
-    },
-    {
       "src": "/api/(.*)",
       "dest": "/server.ts"
     },

@@ -1,10 +1,14 @@
-# robots.txt for app.guardiancheck.co.za, the GuardianCheck application.
+# robots.txt for guardiancheck.co.za, the GuardianCheck application.
 #
-# Served in place of robots.txt on the app host (see vercel.json). Nothing here
-# is indexed: every response carries `X-Robots-Tag: noindex, nofollow`. Pages
-# are deliberately NOT disallowed, because a crawler that may not fetch a page
-# never sees that noindex and can still index the bare URL from inbound links.
-# The public site, its sitemap and llms.txt are at https://guardiancheck.co.za.
+# Served in place of robots.txt on the application host once the domain split
+# (#14) is live: the app keeps this address, and the public site moves to
+# https://www.guardiancheck.co.za, which carries the sitemap and llms.txt.
+#
+# Nothing here is indexed: every response on this host carries
+# `X-Robots-Tag: noindex, nofollow` (see vercel.json). Pages are deliberately
+# NOT disallowed, because a crawler that may not fetch a page never sees that
+# noindex and can still index the bare URL from inbound links, of which this
+# host has many: church QR posters, invitations and shared links.
 
 User-agent: *
 Disallow: /api/
