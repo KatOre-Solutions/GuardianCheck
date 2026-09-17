@@ -21,7 +21,8 @@
     "test:checkout": "node tests/checkout-endpoints.test.mjs",
     "test:camera": "tsx tests/camera-selection.test.ts",
     "test:analytics": "tsx tests/analytics.test.ts",
-    "test:route-pattern": "tsx tests/route-pattern.test.ts"
+    "test:route-pattern": "tsx tests/route-pattern.test.ts",
+    "test:domain-split": "tsx tests/domain-split.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

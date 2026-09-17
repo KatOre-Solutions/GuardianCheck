@@ -1,5 +1,5 @@
 import { Calendar, Tag, FileDown, UserPlus, Palette, WifiOff } from "lucide-react";
-import { BrowserFrame } from "./replicas/BrowserFrame";
+import { BrowserFrame, APP_FRAME_URL } from "./replicas/BrowserFrame";
 import { AdminRightNow } from "./replicas/AdminRightNow";
 
 const CAPABILITIES = [
@@ -19,7 +19,7 @@ export function LeadersSection() {
     <section id="admin" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-28">
       <div className="grid lg:grid-cols-2 gap-16 items-center">
         <div className="order-2 lg:order-1">
-          <BrowserFrame url="guardiancheck.co.za/app">
+          <BrowserFrame url={APP_FRAME_URL}>
             <AdminRightNow />
           </BrowserFrame>
         </div>

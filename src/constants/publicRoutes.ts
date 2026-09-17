@@ -26,7 +26,9 @@ export interface PublicRoute {
   description: string;
 }
 
-export const PUBLIC_ROUTES: PublicRoute[] = [
+import { DOMAIN_SPLIT_PHASE } from "./site";
+
+const ROUTES: PublicRoute[] = [
   { path: "/", description: "Marketing home page" },
   { path: "/register-church", description: "Church signup" },
   { path: "/about", description: "Company and product information" },
@@ -37,3 +39,12 @@ export const PUBLIC_ROUTES: PublicRoute[] = [
   { path: "/cookies", description: "Cookie Policy" },
   { path: "/security", description: "Security posture and vulnerability disclosure" },
 ];
+
+/**
+ * `/register-church` is dropped once the domain split is live (#14): it creates
+ * a Firebase account, so it stays on the application host, which is not
+ * indexed. The home page's pricing section is what search engines read about
+ * starting a trial, and the marketing CTAs link across to the form.
+ */
+export const PUBLIC_ROUTES: PublicRoute[] =
+  DOMAIN_SPLIT_PHASE === "live" ? ROUTES.filter((route) => route.path !== "/register-church") : ROUTES;

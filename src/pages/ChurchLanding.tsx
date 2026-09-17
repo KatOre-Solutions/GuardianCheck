@@ -4,6 +4,7 @@ import { Seo } from "../components/Seo";
 import { ChurchLogo } from "../components/ChurchLogo";
 import { useTenant } from "../contexts/TenantContext";
 import { SITE_NAME } from "../constants/site";
+import { SiteLink } from "../components/SiteLink";
 
 /**
  * A church's own landing page at `/:churchSlug`, rendered by TenantLayout
@@ -103,9 +104,9 @@ export default function ChurchLanding() {
 
       <p className="text-center text-xs text-gray-400 dark:text-gray-500">
         Powered by{" "}
-        <Link to="/" className="underline hover:no-underline">
+        <SiteLink host="marketing" to="/" className="underline hover:no-underline">
           {SITE_NAME}
-        </Link>
+        </SiteLink>
       </p>
     </div>
   );

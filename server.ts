@@ -27,6 +27,24 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
+import { defaultAppOrigin } from "./src/constants/site.js";
+import { generateChurchSlug } from "./src/lib/churchSlug.js";
+
+/**
+ * Origin for links into the application: email verification, invitations.
+ *
+ * APP_URL is the configured answer and is set in production. Without it (a
+ * preview, local dev) the request's own origin is used, so a link opens on the
+ * deployment that sent it. The last resort is wherever the app lives in the
+ * domain split (#14), not a hard-coded apex, which after the split is the
+ * marketing site.
+ */
+function appBaseUrl(req: any): string {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
+  const origin = req.get("origin") || req.get("host");
+  if (!origin) return defaultAppOrigin();
+  return origin.startsWith("http") ? origin : `https://${origin}`;
+}
 
 const PLAN_LIMITS: Record<string, { users: number; children: number }> = {
   starter: { users: 20, children: 50 },
@@ -634,11 +652,8 @@ app.post("/api/auth/send-verification", authenticateToken, async (req, res) => {
     }
 
     // 3. Generate Link
-    const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
-    const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-
     const actionCodeSettings = {
-      url: `${process.env.APP_URL || baseUrl}/login`
+      url: `${appBaseUrl(req)}/login`
     };
     
     const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(email, actionCodeSettings);
@@ -1605,7 +1620,7 @@ async function startServer() {
       req.firestoreOps.writes++;
 
       // 6. Send Invitation Email
-      const inviteLink = `${process.env.APP_URL || req.get('origin')}/accept-invite?token=${token}`;
+      const inviteLink = `${appBaseUrl(req)}/accept-invite?token=${token}`;
       
       try {
         await emailService.sendInvitation(email, {
@@ -1720,11 +1735,8 @@ async function startServer() {
           }
         }
 
-        const origin = req.get("origin") || req.get("host") || "https://guardiancheck.co.za";
-        const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-        
         const verificationLink = await getAuth(adminApp).generateEmailVerificationLink(inviteData.email, {
-          url: `${process.env.APP_URL || baseUrl}/login`
+          url: `${appBaseUrl(req)}/login`
         });
 
         await emailService.sendVerificationEmail(
@@ -2289,23 +2301,12 @@ async function startServer() {
     try {
       console.log(`Starting church registration for: ${churchName} (${email}) [Trace: ${req.traceId}]`);
       
-      // 1. Generate unique slug
-      let slug = churchName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
-      if (slug.startsWith("-")) slug = slug.slice(1);
-      if (slug.endsWith("-")) slug = slug.slice(0, -1);
-      
-      // Fallback for empty slug
-      if (!slug || slug.length < 2) {
-        slug = `church-${Math.random().toString(36).substring(2, 7)}`;
-      }
-      
-      // Ensure slug uniqueness
-      const existingChurch = await db.collection("churches").where("slug", "==", slug).limit(1).get();
-      req.firestoreOps.reads++;
-      
-      if (!existingChurch.empty) {
-        slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
-      }
+      // 1. Generate a unique slug that is not one of the app's own paths (#143)
+      const slug = await generateChurchSlug(churchName, async (candidate) => {
+        const existingChurch = await db.collection("churches").where("slug", "==", candidate).limit(1).get();
+        req.firestoreOps.reads++;
+        return !existingChurch.empty;
+      });
 
       // 2. Create Church Document
       const initialTier = plan && ["starter", "growth", "professional"].includes(plan.toLowerCase()) 
@@ -2361,7 +2362,7 @@ async function startServer() {
 
       // 4. Send Verification Email (Await system confirmation before returning response)
       const actionCodeSettings = {
-        url: `${process.env.APP_URL || req.get("origin")}/login`
+        url: `${appBaseUrl(req)}/login`
       };
       
       try {

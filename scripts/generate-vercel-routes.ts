@@ -18,12 +18,23 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { knownPathPatterns } from "../src/constants/appRoutes";
+import { APP_HOSTNAME } from "../src/constants/site";
 
 const VERCEL_JSON = path.join(process.cwd(), "vercel.json");
 const checkOnly = process.argv.includes("--check");
 
 function buildRoutes() {
+  const onAppHost = [{ type: "host", value: APP_HOSTNAME }];
+
   return [
+    // app.guardiancheck.co.za (#14) is never indexed, whatever the phase: it is
+    // a new host, and before the switch it serves the whole site, which would
+    // otherwise be a duplicate of the apex. A header rather than per-page tags,
+    // so no response (JS, images, the 404 shell) can miss it.
+    { src: "/(.*)", has: onAppHost, headers: { "X-Robots-Tag": "noindex, nofollow" }, continue: true },
+    // Its robots.txt allows crawling so that the noindex above is actually
+    // seen; see the file.
+    { src: "^/robots\\.txt$", has: onAppHost, dest: "/robots-app.txt" },
     // API first: it is the one path family Express still owns in production.
     { src: "/api/(.*)", dest: "/server.ts" },
     // Serve real files -- assets, robots.txt, sitemap.xml, og-image.png --

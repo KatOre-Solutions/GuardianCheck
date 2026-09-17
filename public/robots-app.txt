@@ -1,0 +1,13 @@
+# robots.txt for app.guardiancheck.co.za, the GuardianCheck application.
+#
+# Served in place of robots.txt on the app host (see vercel.json). Nothing there
+# is indexed: every response carries `X-Robots-Tag: noindex, nofollow`. The
+# public site, its sitemap and llms.txt stay at https://guardiancheck.co.za.
+#
+# Pages are deliberately NOT disallowed, because a crawler that may not fetch a
+# page never sees that noindex and can still index the bare URL from inbound
+# links, of which this host has many: church QR posters, invitations and links
+# shared on WhatsApp.
+
+User-agent: *
+Disallow: /api/
