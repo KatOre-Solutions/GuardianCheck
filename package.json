@@ -6,9 +6,8 @@
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node dist/server.js",
-    "build": "npm run check:vercel-routes && npm run check:firebase-db && vite build && npm run generate:sw-precache && npm run generate:robots && npm run generate:sitemap && npm run generate:llms-txt && esbuild server.ts --bundle --platform=node --format=esm --outfile=dist/server.js --packages=external",
+    "build": "npm run check:vercel-routes && npm run check:firebase-db && vite build && npm run generate:sw-precache && npm run generate:sitemap && npm run generate:llms-txt && esbuild server.ts --bundle --platform=node --format=esm --outfile=dist/server.js --packages=external",
     "generate:sw-precache": "tsx scripts/generate-sw-precache.ts",
-    "generate:robots": "tsx scripts/generate-robots.ts",
     "generate:sitemap": "tsx scripts/generate-sitemap.ts",
     "generate:llms-txt": "tsx scripts/generate-llms-txt.ts",
     "generate:vercel-routes": "tsx scripts/generate-vercel-routes.ts",

@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { knownPathPatterns } from "../src/constants/appRoutes";
-import { APP_HOSTNAME, DOMAIN_SPLIT_PHASE } from "../src/constants/site";
+import { APP_HOSTNAME } from "../src/constants/site";
 
 const VERCEL_JSON = path.join(process.cwd(), "vercel.json");
 const checkOnly = process.argv.includes("--check");
@@ -26,25 +26,15 @@ const checkOnly = process.argv.includes("--check");
 function buildRoutes() {
   const onAppHost = [{ type: "host", value: APP_HOSTNAME }];
 
-  /**
-   * The application host of the domain split (#14) is never indexed, and serves
-   * its own robots.txt. Both rules are host-scoped, and both appear only once
-   * the phase is "live": until then that host is still the marketing site, and
-   * these would hide the whole public site from search.
-   */
-  const appHostRules =
-    DOMAIN_SPLIT_PHASE === "live"
-      ? [
-          // A header rather than per-page tags, so no response (JS, images, the
-          // 404 shell) can miss it.
-          { src: "/(.*)", has: onAppHost, headers: { "X-Robots-Tag": "noindex, nofollow" }, continue: true },
-          // Allows crawling so that the noindex above is actually seen; see the file.
-          { src: "^/robots\\.txt$", has: onAppHost, dest: "/robots-app.txt" },
-        ]
-      : [];
-
   return [
-    ...appHostRules,
+    // app.guardiancheck.co.za (#14) is never indexed, whatever the phase: it is
+    // a new host, and before the switch it serves the whole site, which would
+    // otherwise be a duplicate of the apex. A header rather than per-page tags,
+    // so no response (JS, images, the 404 shell) can miss it.
+    { src: "/(.*)", has: onAppHost, headers: { "X-Robots-Tag": "noindex, nofollow" }, continue: true },
+    // Its robots.txt allows crawling so that the noindex above is actually
+    // seen; see the file.
+    { src: "^/robots\\.txt$", has: onAppHost, dest: "/robots-app.txt" },
     // API first: it is the one path family Express still owns in production.
     { src: "/api/(.*)", dest: "/server.ts" },
     // Serve real files -- assets, robots.txt, sitemap.xml, og-image.png --

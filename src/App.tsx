@@ -96,8 +96,8 @@ const ROUTE_CHUNKS: Record<string, { preload: () => void }> = {
 };
 function preloadRouteChunk(pathname: string) {
   const pattern = routePatternFor(pathname);
-  // The marketing home page is on www once the split is live (#14), so the app
-  // host never renders it and its chunk would be a wasted download.
+  // The marketing home page stays on the apex (#14), so the app host never
+  // renders it and its chunk would be a wasted download.
   if (SITE_MODE === "app" && pattern === "/") return;
   ROUTE_CHUNKS[pattern]?.preload();
 }
@@ -111,6 +111,9 @@ function preloadRouteChunk(pathname: string) {
    remember it and start that chunk at startup instead. A stale guess costs one
    unused download; DashboardRedirect still preloads the real target. */
 const REDIRECT_PATHS = new Set(["/app", "/admin", "/volunteer", "/parent"]);
+// On the app host `/` is a launch route too: the marketing home page stays on
+// the apex, so opening app.guardiancheck.co.za goes straight to a dashboard.
+if (SITE_MODE === "app") REDIRECT_PATHS.add("/");
 const LAST_LANDING_KEY = "gc.lastLandingPath";
 
 function rememberLanding(pathname: string) {
@@ -666,10 +669,18 @@ export default function App() {
                 {SITE_MODE === "marketing" ? <MarketingHostRoutes /> : (
                 <Routes>
                   {/* Global Routes - These take precedence over dynamic :churchSlug */}
-                  {/* Once the split is live the home page is on www (#14), so
-                      the application host hands `/` over rather than rendering
-                      it. Its own entry point is /app. */}
-                  <Route path="/" element={marketingElement(<Home />)} />
+                  {/* On the app host `/` is a launch route, like /app: the
+                      marketing home page stays on the apex (#14). */}
+                  <Route
+                    path="/"
+                    element={
+                      SITE_MODE === "app" ? (
+                        <Layout><DashboardRedirect /></Layout>
+                      ) : (
+                        <Layout variant="marketing"><Home /></Layout>
+                      )
+                    }
+                  />
                   <Route path="/login" element={<Layout><Login /></Layout>} />
                   <Route path="/register-church" element={<Layout><RegisterChurch /></Layout>} />
                   <Route path="/accept-invite" element={<Layout><AcceptInvite /></Layout>} />

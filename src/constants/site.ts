@@ -14,66 +14,68 @@
 export const SITE_NAME = "GuardianCheck";
 
 /**
- * The domain split (#14): the application keeps guardiancheck.co.za and the
- * marketing site moves to www.guardiancheck.co.za.
+ * The domain split (#14): guardiancheck.co.za becomes the marketing site and
+ * the application moves to app.guardiancheck.co.za.
  *
- * That direction is deliberate, and it is the opposite of the usual
- * convention. A saved sign-in, an installed app, a volunteer's camera
- * permission and, most importantly, the offline copy of a parent's QR codes
- * all belong to the exact address they were created on. Whichever site keeps
- * guardiancheck.co.za keeps all of it. Moving the *marketing* site instead
- * costs nine pages a few weeks of settling in search results and costs users
- * nothing, on a system people depend on at a check-in desk on a Sunday
- * morning. Church URLs (`/<slug>`, printed on posters) never change either.
+ * Accounts and data are untouched by this: they live in Firebase, which does
+ * not care which address serves the app. What does belong to an address is the
+ * browser's own state, so on their first visit to the app host people sign in
+ * once more, a parent's offline copy of their QR codes is rebuilt on the first
+ * online visit, and anyone who added the app to a home screen adds it again.
+ * Old links keep working: the marketing host hands every application path to
+ * the same path on the app host, query string and all.
  *
  * One constant drives it, so the browser bundle, the server and the build
  * scripts can never disagree:
  *
  *   - `"off"`: guardiancheck.co.za serves everything, exactly as today. If
- *     www.guardiancheck.co.za is attached to the Vercel project it already
- *     serves the marketing site, so it can be checked before the switch.
- *   - `"live"`: guardiancheck.co.za is the application, and its marketing
- *     paths (including `/`) redirect to www, which is the indexable site.
+ *     app.guardiancheck.co.za is attached to the Vercel project it already
+ *     behaves as the app host, so the whole thing can be checked before
+ *     anybody is sent there.
+ *   - `"live"`: guardiancheck.co.za is the marketing site, and every other
+ *     path there is handed to the app host.
  *
- * Before switching to "live": attach www.guardiancheck.co.za to the Vercel
- * project (removing any domain-level redirect of www to the apex). Nothing
- * changes in Firebase, PayFast, APP_URL or DNS beyond that, because the
- * application's address is not moving.
+ * Before switching to "live": attach app.guardiancheck.co.za to the Vercel
+ * project, add it to Firebase Auth's authorized domains and to the reCAPTCHA
+ * Enterprise key's allowed domains, and set APP_URL and VITE_APP_URL to
+ * {@link APP_SITE_URL} in Vercel's production environment so new invitation
+ * and verification emails point at the app host.
+ *
+ * Both hosts are served by one deployment, so /api answers on either. That is
+ * what keeps PayFast's recurring payment notifications working: they keep
+ * arriving at the address a subscription was started on.
  */
 export type DomainSplitPhase = "off" | "live";
 export const DOMAIN_SPLIT_PHASE = "off" as DomainSplitPhase;
 
-/** Production origin of the application. No trailing slash. This does not change. */
-export const APP_SITE_URL = "https://guardiancheck.co.za";
-export const APP_HOSTNAME = "guardiancheck.co.za";
-
-/** Where the marketing site lives once the split is live. */
-export const MARKETING_HOSTNAME = "www.guardiancheck.co.za";
-
-/** Origin of the marketing site: the apex until the split is live, www after. */
-export const MARKETING_URL =
-  DOMAIN_SPLIT_PHASE === "live" ? `https://${MARKETING_HOSTNAME}` : APP_SITE_URL;
-
 /**
  * Production origin of the public, indexable site. No trailing slash.
  *
- * Canonicals, the sitemap, llms.txt and JSON-LD all use this, and they move to
- * www together with the marketing pages themselves, never before: a canonical
- * pointing at a host that is not serving yet is worse than no split at all.
+ * Canonicals, the sitemap, llms.txt and JSON-LD all use this. The marketing
+ * site keeps this address through the split, so none of them ever move.
  */
-export const SITE_URL = MARKETING_URL;
+export const SITE_URL = "https://guardiancheck.co.za";
+
+/** Alias of {@link SITE_URL} for code that links *to* the marketing site. */
+export const MARKETING_URL = SITE_URL;
+export const MARKETING_HOSTNAMES: readonly string[] = ["guardiancheck.co.za", "www.guardiancheck.co.za"];
+
+/** Production origin of the application after the split. No trailing slash. */
+export const APP_SITE_URL = "https://app.guardiancheck.co.za";
+export const APP_HOSTNAME = "app.guardiancheck.co.za";
 
 /**
  * Where church URLs (`/<slug>`) live, as shown to church admins. Host only, no
- * scheme. The application keeps the apex, so this is the same before and after.
+ * scheme. They move to the app host with the rest of the application, and the
+ * links already printed on posters are redirected there.
  */
-export function churchUrlHost(): string {
-  return APP_HOSTNAME;
+export function churchUrlHost(phase: DomainSplitPhase = DOMAIN_SPLIT_PHASE): string {
+  return (phase === "off" ? SITE_URL : APP_SITE_URL).replace(/^https?:\/\//, "");
 }
 
 /** The origin new links into the application should use, for code with no request to go on. */
-export function defaultAppOrigin(): string {
-  return APP_SITE_URL;
+export function defaultAppOrigin(phase: DomainSplitPhase = DOMAIN_SPLIT_PHASE): string {
+  return phase === "off" ? SITE_URL : APP_SITE_URL;
 }
 
 /**

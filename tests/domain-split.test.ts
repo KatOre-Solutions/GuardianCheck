@@ -10,9 +10,9 @@
  *     which keeps serving users, must stay "combined" and every link relative
  *     until the phase is "live"
  *   - previews and localhost ever behaving like a production host
- *   - a redirect loop between the hosts (a marketing page on the marketing
- *     host, the app's own pages on the app host)
- *   - the church URLs on posters ever pointing somewhere else
+ *   - a redirect loop between the hosts, in particular `/` on the app host and
+ *     a marketing page on the marketing host
+ *   - an invite token or payment result being lost on the way across
  *   - a church being handed one of the app's own paths as its URL
  */
 
@@ -35,13 +35,15 @@ const check = (name: string, expected: unknown, actual: unknown) => {
 
 const APEX = "guardiancheck.co.za";
 const WWW = "www.guardiancheck.co.za";
+const APP = "app.guardiancheck.co.za";
 const PREVIEW = "guardiancheck-git-feat-x.vercel.app";
 
 console.log("site mode per host and phase");
 check("apex, off: combined (production is untouched until the switch)", "combined", siteModeFor(APEX, "off"));
-check("apex, live: the application", "app", siteModeFor(APEX, "live"));
-check("www, off: marketing, so it can be checked before the switch", "marketing", siteModeFor(WWW, "off"));
+check("apex, live: marketing", "marketing", siteModeFor(APEX, "live"));
 check("www, live: marketing", "marketing", siteModeFor(WWW, "live"));
+check("app host, off: the application, so it can be checked first", "app", siteModeFor(APP, "off"));
+check("app host, live: the application", "app", siteModeFor(APP, "live"));
 check("preview, live: combined", "combined", siteModeFor(PREVIEW, "live"));
 check("localhost, live: combined", "combined", siteModeFor("localhost", "live"));
 
@@ -55,16 +57,17 @@ check("app host: app link relative", "", originFor("app", "app"));
 
 console.log("page loads on the wrong host");
 check("combined never redirects", null, crossHostRedirectFor("combined", "/login"));
-check("app host hands / to marketing", "marketing", crossHostRedirectFor("app", "/"));
+check("app host keeps /, its own launch route", null, crossHostRedirectFor("app", "/"));
 check("app host hands /privacy to marketing", "marketing", crossHostRedirectFor("app", "/privacy"));
 check("app host hands /about/ to marketing", "marketing", crossHostRedirectFor("app", "/about/"));
-check("app host keeps /app, its own entry point", null, crossHostRedirectFor("app", "/app"));
+check("app host keeps /app", null, crossHostRedirectFor("app", "/app"));
 check("app host keeps a church page", null, crossHostRedirectFor("app", "/grace"));
 check("app host keeps /accept-invite", null, crossHostRedirectFor("app", "/accept-invite"));
 check("app host keeps /register-church", null, crossHostRedirectFor("app", "/register-church"));
 check("marketing host keeps /", null, crossHostRedirectFor("marketing", "/"));
 check("marketing host keeps /security", null, crossHostRedirectFor("marketing", "/security"));
 check("marketing host hands /login to the app", "app", crossHostRedirectFor("marketing", "/login"));
+check("marketing host hands /parent to the app", "app", crossHostRedirectFor("marketing", "/parent"));
 check("marketing host hands a church page to the app", "app", crossHostRedirectFor("marketing", "/grace/parent"));
 check("marketing host hands /register-church to the app", "app", crossHostRedirectFor("marketing", "/register-church"));
 
@@ -72,10 +75,11 @@ console.log("route lists agree");
 check("every marketing route is a reserved slug", true, MARKETING_ROUTES.filter((r) => r !== "/").every((r) => RESERVED_SLUGS.includes(r.slice(1))));
 check("isMarketingPath rejects app routes", false, isMarketingPath("/app"));
 
-console.log("addresses");
-check("church URLs never leave the apex", "guardiancheck.co.za", churchUrlHost());
-check("server link fallback is the app host", APP_SITE_URL, defaultAppOrigin());
-check("the app host is the apex", "https://guardiancheck.co.za", APP_SITE_URL);
+console.log("addresses per phase");
+check("church URLs on the apex while off", "guardiancheck.co.za", churchUrlHost("off"));
+check("church URLs on the app host once live", "app.guardiancheck.co.za", churchUrlHost("live"));
+check("server link fallback while off", MARKETING_URL, defaultAppOrigin("off"));
+check("server link fallback when live", APP_SITE_URL, defaultAppOrigin("live"));
 
 console.log("church slugs");
 check("slugify trims and collapses", "grace-community-church", slugify("  Grace -- Community Church! "));

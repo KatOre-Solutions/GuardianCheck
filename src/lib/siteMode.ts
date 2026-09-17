@@ -1,18 +1,17 @@
 /**
  * Which role the page's host plays in the domain split (#14).
  *
- * The same build serves guardiancheck.co.za (the application) and
- * www.guardiancheck.co.za (the marketing site), so the difference is decided
+ * One deployment serves both guardiancheck.co.za (marketing) and
+ * app.guardiancheck.co.za (the application), so the difference is decided
  * here, at runtime, from the hostname and `DOMAIN_SPLIT_PHASE` (see
- * src/constants/site.ts, which explains why the marketing site is the one
- * that moves):
+ * src/constants/site.ts):
  *
- *   - `"marketing"`: www.guardiancheck.co.za. The marketing pages only;
- *     everything else goes to the application. A new host, so it behaves this
- *     way as soon as it is attached, before the switch, and can be checked.
- *   - `"app"`: guardiancheck.co.za once the phase is "live". The application
- *     only; its marketing paths, `/` included, go to www, and nothing is
- *     indexed.
+ *   - `"app"`: app.guardiancheck.co.za. The application only. `/` opens the
+ *     dashboard, the marketing and legal pages are handed back to the apex,
+ *     and nothing is indexed. A new host, so it behaves this way as soon as it
+ *     is attached, before the switch, and can be checked.
+ *   - `"marketing"`: guardiancheck.co.za once the phase is "live". The
+ *     marketing pages only; every other path is handed to the app host.
  *   - `"combined"`: everything else. The apex before "live", Vercel previews
  *     and localhost. Behaves exactly as the site did before the split.
  *
@@ -24,7 +23,7 @@ import {
   APP_HOSTNAME,
   APP_SITE_URL,
   DOMAIN_SPLIT_PHASE,
-  MARKETING_HOSTNAME,
+  MARKETING_HOSTNAMES,
   MARKETING_URL,
   type DomainSplitPhase,
 } from "../constants/site";
@@ -34,10 +33,10 @@ export type SiteMode = "combined" | "app" | "marketing";
 export type SiteHost = "app" | "marketing";
 
 export function siteModeFor(hostname: string, phase: DomainSplitPhase): SiteMode {
-  // www is new, so it is the marketing site from the moment it is attached.
-  if (hostname === MARKETING_HOSTNAME) return "marketing";
+  // The app host is new, so it is the application from the moment it is attached.
+  if (hostname === APP_HOSTNAME) return "app";
   // The apex is serving real users, so it only changes at the switch.
-  if (hostname === APP_HOSTNAME && phase === "live") return "app";
+  if (MARKETING_HOSTNAMES.includes(hostname) && phase === "live") return "marketing";
   return "combined";
 }
 
@@ -54,12 +53,12 @@ export function originFor(host: SiteHost, mode: SiteMode): string {
  * Where a page load of `pathname` on this host belongs instead, or null when it
  * belongs here. Only app and marketing mode ever redirect.
  *
- * `/` on the application host counts: someone typing the bare domain wants the
- * marketing home page, and the application's own entry point is `/app`, which
- * is what the installed app opens and where the launch redirect lives.
+ * `/` is the exception on the app host: someone opening
+ * app.guardiancheck.co.za wants the application, so it opens a dashboard
+ * rather than being sent to the marketing home page.
  */
 export function crossHostRedirectFor(mode: SiteMode, pathname: string): SiteHost | null {
-  if (mode === "app" && isMarketingPath(pathname)) return "marketing";
+  if (mode === "app" && pathname !== "/" && isMarketingPath(pathname)) return "marketing";
   if (mode === "marketing" && !isMarketingPath(pathname)) return "app";
   return null;
 }
