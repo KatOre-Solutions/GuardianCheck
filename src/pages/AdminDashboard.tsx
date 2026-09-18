@@ -84,6 +84,8 @@ import {
 import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { PLAN_LIMITS, PlanTier } from "../constants/plans";
+import { useChurchAccess } from "../hooks/useChurchAccess";
+import { LOCK_WARNING_DAYS, toDate } from "../lib/churchAccess";
 
 const HelpTooltip = ({ text }: { text: string }) => (
   <span className="group relative inline-block ml-1 align-middle">
@@ -204,6 +206,13 @@ export default function AdminDashboard() {
     roomsQ.loaded && servicesQ.loaded && childrenQ.loaded && usersQ.loaded;
 
   const churchData = churchDoc.data;
+  const access = useChurchAccess(churchData);
+  // A paying church inside its grace period: the billing date has passed, no
+  // payment has moved `accessUntil` on, and the lock is days away.
+  const nextBillingDate = toDate(churchData?.nextBillingDate);
+  const paymentOverdue =
+    churchData?.status === "active" && access.state === "open" &&
+    !!nextBillingDate && nextBillingDate.getTime() < Date.now();
   const churchSecurity = securityDoc.data;
   const rooms = roomsQ.data;
   const users = usersQ.data;
@@ -1040,10 +1049,18 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 <>
-                  <p className="font-bold">Free Trial Active</p>
+                  <p className="font-bold">
+                    Free Trial Active
+                    {access.daysLeft !== null && access.daysLeft <= LOCK_WARNING_DAYS && (
+                      <span className="ml-2 text-xs bg-white/20 px-2 py-0.5 rounded-full">
+                        {access.daysLeft === 0 ? "Ends today" : `${access.daysLeft} day${access.daysLeft === 1 ? "" : "s"} left`}
+                      </span>
+                    )}
+                  </p>
                   <p className="text-sm text-orange-50/80">
-                    Your trial ends on {churchData.subscription?.trialEndsAt ? format(new Date(churchData.subscription.trialEndsAt), "MMMM d, yyyy") : "N/A"}. 
-                    Upgrade now to ensure uninterrupted service.
+                    {access.accessUntil
+                      ? `Your trial ends on ${format(access.accessUntil, "MMMM d, yyyy")}. After that, check-in is paused until you choose a plan. Nothing is deleted.`
+                      : `Your trial ends on ${churchData.subscription?.trialEndsAt ? format(new Date(churchData.subscription.trialEndsAt), "MMMM d, yyyy") : "N/A"}. Upgrade now to ensure uninterrupted service.`}
                   </p>
                 </>
               )}
@@ -1063,7 +1080,7 @@ export default function AdminDashboard() {
         </motion.div>
       )}
 
-      {churchData?.status === "delinquent" && (
+      {(churchData?.status === "delinquent" || paymentOverdue) && (
         <motion.div 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -1076,7 +1093,9 @@ export default function AdminDashboard() {
             <div>
               <p className="font-bold">Subscription Overdue</p>
               <p className="text-sm text-red-50/80">
-                Your account is currently restricted due to a payment issue. Please update your subscription.
+                {paymentOverdue && access.accessUntil
+                  ? `We haven't received your latest payment. Check-in will pause on ${format(access.accessUntil, "MMMM d, yyyy")} unless it comes through.`
+                  : "Your account is currently restricted due to a payment issue. Please update your subscription."}
               </p>
             </div>
           </div>
