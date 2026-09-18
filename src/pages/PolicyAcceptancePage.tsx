@@ -44,8 +44,20 @@ export default function PolicyAcceptancePage() {
       const acceptanceRef = doc(db, "policy_acceptance", user.uid);
       const historyRef = doc(db, "policy_acceptance", user.uid, "history", CURRENT_POLICY_VERSION);
       const churchId = userData.churchId || "system";
+      const isAdmin = roles.includes("admin") || roles.includes("master_admin");
+      const churchPolicyRef = doc(db, "church_policy_acceptance", churchId);
 
       await runTransaction(db, async (transaction) => {
+        // Firestore transactions require every read before any write. We also
+        // read church_policy_acceptance/{churchId} here because that doc is
+        // create-only in firestore.rules ("allow update, delete: if false");
+        // once any admin has recorded it, a later admin's (or the same
+        // admin's, on a future policy version) attempt to set it again is
+        // denied as an "update" and rolls back the whole transaction,
+        // including their own history/summary writes below. Reading it first
+        // lets us skip the write once it already exists.
+        const churchPolicySnap = isAdmin ? await transaction.get(churchPolicyRef) : null;
+
         // 1. Create the immutable history record
         transaction.set(historyRef, {
           version: CURRENT_POLICY_VERSION,
@@ -54,7 +66,7 @@ export default function PolicyAcceptancePage() {
           roleAtTime: userData.role || "unknown",
           legalContext: {
             policyHash: "sha256:placeholder_hash_v1", // In a real app, this would be a real hash
-            agreementType: roles.includes("admin") || roles.includes("master_admin") ? "Operator_Agreement" : "Privacy_Notice"
+            agreementType: isAdmin ? "Operator_Agreement" : "Privacy_Notice"
           },
           forensicData: {
             userAgent: navigator.userAgent,
@@ -71,14 +83,13 @@ export default function PolicyAcceptancePage() {
           status: "compliant"
         });
 
-        // 3. If Admin, also record church-level acceptance if not already done
-        if (roles.includes("admin") || roles.includes("master_admin")) {
-          const churchPolicyRef = doc(db, "church_policy_acceptance", churchId);
+        // 3. If Admin and the church has no acceptance record yet, create one.
+        if (isAdmin && churchPolicySnap && !churchPolicySnap.exists()) {
           transaction.set(churchPolicyRef, {
             acceptedBy: user.uid,
             acceptedAt: serverTimestamp(),
             policyVersion: CURRENT_POLICY_VERSION
-          }, { merge: true });
+          });
         }
       });
 
