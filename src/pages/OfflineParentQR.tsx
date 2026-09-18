@@ -107,6 +107,17 @@ export default function OfflineParentQR({
             // Same test as both check-out paths, the server's guardian lookup
             // and CheckOutTab's offline one: `active` must be exactly true.
             // Any other guardian's code would only fail at the desk.
+            //
+            // Deliberately stricter than ChildrenDirectory's inclusive
+            // `deleted || active === false`, and the two are not in conflict:
+            // that screen lists people an admin manages, so an odd record is
+            // better shown than hidden, while this one lists codes that have to
+            // work when scanned. `resolveGuardianByToken` in server.ts refuses
+            // anything but `active === true`, so an inclusive filter here would
+            // hand a parent a code the desk rejects, offline and with no way to
+            // find out why. Every write path sets the field (SetupWizard,
+            // ParentDashboard), and an audit of the 308 guardian records in
+            // production found none without it.
             const childGuardians = guardians.filter(
               (g) => g.childIds?.includes(child.id) && g.active === true && g.deleted !== true,
             );
