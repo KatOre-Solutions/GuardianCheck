@@ -27,6 +27,7 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
+import { pricingForPayment } from "./src/lib/planPricing.js";
 import { TRIAL_MONTHS } from "./src/constants/plans.js";
 import {
   CHURCH_ACCESS_LOCKED,
@@ -624,12 +625,6 @@ const requireChurchAccess = async (req: any, res: any, next: any) => {
     console.error("Church access check failed:", error.message);
     res.status(500).json({ error: "Internal server error during access check", traceId: req.traceId });
   }
-};
-
-const PLAN_PRICES: Record<string, number> = {
-  starter: 249,
-  growth: 499,
-  professional: 999
 };
 
 // Transactions List Endpoint
@@ -2064,9 +2059,23 @@ async function startServer() {
           // and ping-back above prove PayFast took this money, not that it was
           // the right amount for the plan. Now that a payment is what unlocks
           // a church, R1 against "professional" must not buy a month of it.
+          //
+          // Checked against the price this church agreed to, not today's list
+          // price: a recurring subscription charges a fixed amount forever, so
+          // a price rise would otherwise fail every existing subscriber's next
+          // renewal and lock them out. See src/lib/planPricing.ts.
           const paidPlan = String(plan || existingData?.plan || "starter").toLowerCase();
-          const planPrice = PLAN_PRICES[paidPlan];
-          const coversPlan = planPrice !== undefined && amount + 0.005 >= planPrice;
+          const pricing = pricingForPayment(existingData, paidPlan, amount);
+          const coversPlan = pricing.covers;
+
+          // Only ever written on an accepted payment, and only when this tier
+          // has no recorded price yet, so it records what was agreed and never
+          // drifts up to a later price.
+          const recordAgreedPrice = () => {
+            if (pricing.priceToRecord === null) return;
+            updateData["subscription.priceTier"] = paidPlan;
+            updateData["subscription.priceZar"] = pricing.priceToRecord;
+          };
 
           if (token) updateData["subscription.payfast_token"] = token;
           if (plan && (amount === 0 || coversPlan)) {
@@ -2078,7 +2087,7 @@ async function startServer() {
             await db.collection("logs").add({
               level: "error",
               message: `[ITN_${traceId}] Payment below plan price, access not extended: ${churchId}`,
-              metadata: { churchId, plan: paidPlan, amount, planPrice: planPrice ?? null },
+              metadata: { churchId, plan: paidPlan, amount, requiredAmount: pricing.requiredAmount },
               source: "payfast_itn",
               timestamp: now.toISOString()
             });
@@ -2086,6 +2095,7 @@ async function startServer() {
             updateData.status = "active";
             updateData["subscription.status"] = "active";
             updateData.lastPaymentDate = now.toISOString();
+            recordAgreedPrice();
 
             // Try root field first, then nested subscription field
             const trialEndsAt = existingData?.trialEndsAt || existingData?.subscription?.trialEndsAt;
@@ -2115,6 +2125,8 @@ async function startServer() {
             // choosing a billing date in 2030 would be a free trial until 2030.
             updateData.status = "trialing";
             updateData["subscription.status"] = "trialing";
+            // Subscription time: the price on the checkout page they just used.
+            recordAgreedPrice();
             if (data.billing_date) {
               updateData["subscription.billingDate"] = new Date(data.billing_date).toISOString();
             }
