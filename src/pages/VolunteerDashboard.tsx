@@ -34,7 +34,7 @@ import { useChurchCollection, useLiveCollection } from "../hooks/useLiveData";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
 import { useMarkWhen } from "../lib/perfMarks";
 import { useTenant } from "../contexts/TenantContext";
-import { useChurchAccess } from "../hooks/useChurchAccess";
+import { useChurchLocked } from "../hooks/useChurchAccess";
 import { ChurchLockedScreen } from "../components/ChurchLockedScreen";
 
 export default function VolunteerDashboard() {
@@ -472,8 +472,7 @@ export default function VolunteerDashboard() {
      guardian. So while any check-in is open the page stays up in check-out
      only mode, and once the room is empty it gives way to the locked screen.
      Master admins are never locked. */
-  const access = useChurchAccess(churchData);
-  const isLocked = access.state === "locked" && !roles.includes("master_admin");
+  const isLocked = useChurchLocked(churchData);
   // Set once this page has shown a locked church with children still here, so
   // checking out the last one leaves the check-out confirmation on screen
   // instead of swapping it for the locked screen mid-handover.

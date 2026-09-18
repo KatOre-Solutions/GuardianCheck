@@ -3,7 +3,7 @@ import { useAuth } from "../hooks/useAuth";
 import { ParentDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
 import { useLiveCollection, useLiveDocument } from "../hooks/useLiveData";
-import { useChurchAccess } from "../hooks/useChurchAccess";
+import { useChurchLocked } from "../hooks/useChurchAccess";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/storage";
@@ -66,8 +66,7 @@ export default function ParentDashboard() {
      lock can still be collected with the guardian's QR. Master admins are
      never locked. */
   const churchDoc = useLiveDocument("churches", churchId);
-  const access = useChurchAccess(churchDoc.data);
-  const isLocked = access.state === "locked" && !roles.includes("master_admin");
+  const isLocked = useChurchLocked(churchDoc.data);
   const [medicalInfo, setMedicalInfo] = useState<Record<string, any>>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getChurchAccess, toDate, type ChurchAccess } from "../lib/churchAccess";
+import { useAuth } from "./useAuth";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -37,4 +38,22 @@ export function useChurchAccess(church: { accessUntil?: unknown } | null | undef
   }, [accessUntilMs, tick]);
 
   return getChurchAccess(church);
+}
+
+/**
+ * Whether the lock applies to the person looking at the page: the church's
+ * access has ended and they are not a master admin, who is never locked out of
+ * a church they support.
+ *
+ * One definition, because three pages decide it and each one acts on it
+ * differently. ChurchAccessGate swaps the page for the locked screen, the
+ * parent dashboard falls back to the offline pickup view, and the volunteer
+ * dashboard drops to check-out only. If those three ever disagreed about who
+ * is locked, a church would see one answer in the shell and another in the
+ * page inside it.
+ */
+export function useChurchLocked(church: { accessUntil?: unknown } | null | undefined): boolean {
+  const { roles } = useAuth();
+  const access = useChurchAccess(church);
+  return access.state === "locked" && !roles.includes("master_admin");
 }

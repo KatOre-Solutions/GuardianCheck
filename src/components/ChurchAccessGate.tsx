@@ -1,7 +1,7 @@
 import React from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useLiveDocument } from "../hooks/useLiveData";
-import { useChurchAccess } from "../hooks/useChurchAccess";
+import { useChurchLocked } from "../hooks/useChurchAccess";
 import { ChurchLockedScreen } from "./ChurchLockedScreen";
 
 /**
@@ -25,9 +25,9 @@ export function ChurchAccessGate({ children }: { children: React.ReactNode }) {
   const churchId: string | undefined = userData?.churchId;
 
   const churchDoc = useLiveDocument("churches", isMasterAdmin ? null : churchId);
-  const access = useChurchAccess(churchDoc.data);
+  const locked = useChurchLocked(churchDoc.data);
 
-  if (!isMasterAdmin && churchId && access.state === "locked") {
+  if (locked && churchId) {
     return <ChurchLockedScreen church={churchDoc.data} churchId={churchId} canPay={roles.includes("admin")} />;
   }
 
