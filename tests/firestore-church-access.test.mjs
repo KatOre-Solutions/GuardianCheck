@@ -71,6 +71,30 @@ const checkin = (churchId, over = {}) => ({
 
 const room = (churchId) => ({ name: "Lions", capacity: "20", minAge: "0", maxAge: "12", churchId });
 
+// A pending invitation that satisfies isValidInvitation(). The invitee has no
+// user document: that is the point of an invitation, and it is why the accept
+// branch of the rule asks about the invitation's own churchId rather than the
+// caller's.
+const INVITEE_EMAIL = "invitee@x.com";
+const invitation = (churchId) => ({
+  email: INVITEE_EMAIL,
+  firstName: "Thandi",
+  lastName: "Nkosi",
+  role: "volunteer",
+  churchId,
+  status: "pending",
+  token: "t".repeat(64),
+  expiresAt: "2030-01-01T00:00:00.000Z",
+});
+
+/** The invitee's own accept write: the four keys the rule allows them to change. */
+const acceptedBy = (uid) => ({
+  status: "accepted",
+  acceptedAt: "2026-09-15T10:00:00.000Z",
+  acceptedBy: uid,
+  updatedAt: "2026-09-15T10:00:00.000Z",
+});
+
 // Chained after the other suites in `npm run test:rules`; see the note in
 // firestore-checkins.test.mjs.
 async function clearFirestoreWithRetry(attempts = 5) {
@@ -104,10 +128,14 @@ await env.withSecurityRulesDisabled(async (ctx) => {
     });
     await setDoc(doc(db, "rooms", `room-${churchId}`), room(churchId));
     await setDoc(doc(db, "checkins", `ci-${churchId}`), checkin(churchId));
+    await setDoc(doc(db, "invitations", `inv-${churchId}`), invitation(churchId));
   }
 });
 
 const as = (uid) => env.authenticatedContext(uid, { email: users[uid]?.email }).firestore();
+
+/** Signed in with an email but no user document, as an invitee is. */
+const asInvitee = (uid) => env.authenticatedContext(uid, { email: INVITEE_EMAIL }).firestore();
 
 let pass = 0;
 let fail = 0;
@@ -162,6 +190,15 @@ await check("locked: admin cannot move accessUntil forward", "deny", () =>
 await check("open: admin cannot write accessUntil either", "deny", () =>
   updateDoc(doc(as("adminO"), "churches", OPEN), { accessUntil: nextYear }));
 
+// An invitation is the one write whose subject is a church the caller does not
+// belong to yet, so it is the one the lock is easiest to miss on. The server
+// route checks it too; this pins the rules, which any client can reach directly.
+await check("locked: invitee cannot accept an invitation", "deny", () =>
+  updateDoc(doc(asInvitee("inviteeL"), "invitations", `inv-${LOCKED}`), acceptedBy("inviteeL")));
+
+await check("locked: admin cannot invite anyone new", "deny", () =>
+  setDoc(doc(as("adminL"), "invitations", "invNewLocked"), invitation(LOCKED)));
+
 // --------------------------------------------------------------- ALLOW ----
 
 await check("locked: volunteer still reads the church's children", "allow", () =>
@@ -193,6 +230,9 @@ await check("open: parent registers a child", "allow", () =>
 
 await check("open: admin creates a room", "allow", () =>
   setDoc(doc(as("adminO"), "rooms", "roomNewOpen"), room(OPEN)));
+
+await check("open: invitee accepts an invitation", "allow", () =>
+  updateDoc(doc(asInvitee("inviteeO"), "invitations", `inv-${OPEN}`), acceptedBy("inviteeO")));
 
 await check("unmetered: admin creates a room", "allow", () =>
   setDoc(doc(as("adminU"), "rooms", "roomNewUnmetered"), room(UNMETERED)));

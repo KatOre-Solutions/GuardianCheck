@@ -129,13 +129,22 @@ service cloud.firestore {
     // getChurchAccess(): the lock is about billing, and a church that does not
     // exist has no bill.
     //
-    // Call only after the rule has already matched the caller's churchId, so
-    // the path below never interpolates a null.
-    function churchAccessOpen() {
-      let path = /databases/$(database)/documents/churches/$(getUserData().churchId);
+    // Two forms. `churchOpen(churchId)` asks about a named church, for writes
+    // whose subject is a church the caller may not belong to yet: accepting an
+    // invitation is one, since the invitee's user document does not exist
+    // until the server creates it, so getUserData() would fail there.
+    // `churchAccessOpen()` asks about the caller's own church, and must be
+    // called only after the rule has already matched their churchId, so the
+    // path never interpolates a null.
+    function churchOpen(churchId) {
+      let path = /databases/$(database)/documents/churches/$(churchId);
       return !exists(path) ||
              get(path).data.get('accessUntil', null) == null ||
              get(path).data.accessUntil > request.time;
+    }
+
+    function churchAccessOpen() {
+      return churchOpen(getUserData().churchId);
     }
 
     // --- Validation Helpers ---
@@ -622,7 +631,13 @@ service cloud.firestore {
                      resource.data.status == 'pending' &&
                      request.resource.data.status == 'accepted' && 
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedAt', 'acceptedBy', 'updatedAt']) &&
-                     isValidInvitation(request.resource.data));
+                     isValidInvitation(request.resource.data) &&
+                     // The invitation names the church, and the invitee has no
+                     // user document to read a churchId from. /api/accept-invite
+                     // makes the same check, but the rules are a separate
+                     // boundary: without this, the client SDK could accept an
+                     // invitation to a locked church directly.
+                     churchOpen(resource.data.churchId));
       allow delete: if isMasterAdmin() || (isAdmin() && resource != null && getUserData().churchId == resource.data.churchId && churchAccessOpen());
     }
 
