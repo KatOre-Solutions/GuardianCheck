@@ -45,7 +45,7 @@ const HAS_EXTENSION = /\.(?:[cm]?js|json|node)$/;
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js"];
 
 function fail(message: string): never {
-  console.error(`check:server-imports -- ${message}\n`);
+  console.error(`check:server-imports: ${message}\n`);
   process.exit(1);
 }
 
@@ -69,8 +69,21 @@ function resolveSource(fromFile: string, specifier: string): string | null {
   const stem = base.replace(/\.js$/, "");
   const candidates = HAS_EXTENSION.test(specifier)
     ? [stem + ".ts", stem + ".tsx", base]
-    : SOURCE_EXTENSIONS.map((ext) => base + ext);
+    : [
+        ...SOURCE_EXTENSIONS.map((ext) => base + ext),
+        ...SOURCE_EXTENSIONS.map((ext) => path.join(base, "index" + ext)),
+      ];
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+// What to write instead of a bare specifier. A directory import needs the index
+// file named, so `./sub` becomes `./sub/index.js`, not the nonexistent `./sub.js`.
+function withExtension(specifier: string, resolved: string | null): string {
+  const isIndex =
+    resolved !== null && /^index\.(?:ts|tsx|js)$/.test(path.basename(resolved));
+  return isIndex && !specifier.endsWith("/index")
+    ? `${specifier}/index.js`
+    : `${specifier}.js`;
 }
 
 const entry = path.join(ROOT, ENTRY);
@@ -91,11 +104,13 @@ while (queue.length > 0) {
   const shown = path.relative(ROOT, file).split(path.sep).join("/");
 
   for (const specifier of relativeImports(readFileSync(file, "utf8"))) {
+    const resolved = resolveSource(file, specifier);
+
     if (!HAS_EXTENSION.test(specifier)) {
-      offenders.push(`  ${shown}: "${specifier}"  ->  "${specifier}.js"`);
+      const fixed = withExtension(specifier, resolved);
+      offenders.push(`  ${shown}: "${specifier}"  ->  "${fixed}"`);
     }
 
-    const resolved = resolveSource(file, specifier);
     if (!resolved) {
       unresolved.push(`  ${shown}: "${specifier}"`);
     } else if (/\.(?:ts|tsx)$/.test(resolved)) {
