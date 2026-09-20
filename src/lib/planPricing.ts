@@ -36,7 +36,7 @@
  * grandfathered church straight into the lockout this exists to prevent.
  */
 
-import { PLAN_LIMITS } from "../constants/plans";
+import { PLAN_LIMITS } from "../constants/plans.js";
 
 /**
  * Prices in effect when the ITN began recording what a church agreed to pay.

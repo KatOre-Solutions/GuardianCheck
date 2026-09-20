@@ -1,6 +1,6 @@
-import { COMPANY } from "./company";
-import { TRIAL_MONTHS } from "./plans";
-import { PAYMENT_GRACE_DAYS } from "../lib/churchAccess";
+import { COMPANY } from "./company.js";
+import { TRIAL_MONTHS } from "./plans.js";
+import { PAYMENT_GRACE_DAYS } from "../lib/churchAccess.js";
 
 /**
  * Bumping this sends every signed-in user (admins, volunteers and parents)
