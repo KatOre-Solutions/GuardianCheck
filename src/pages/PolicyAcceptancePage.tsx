@@ -58,23 +58,37 @@ export default function PolicyAcceptancePage() {
         // lets us skip the write once it already exists.
         const churchPolicySnap = isAdmin ? await transaction.get(churchPolicyRef) : null;
 
-        // 1. Create the immutable history record
-        transaction.set(historyRef, {
-          version: CURRENT_POLICY_VERSION,
-          acceptedAt: serverTimestamp(),
-          churchId: churchId,
-          roleAtTime: userData.role || "unknown",
-          legalContext: {
-            policyHash: "sha256:placeholder_hash_v1", // In a real app, this would be a real hash
-            agreementType: isAdmin ? "Operator_Agreement" : "Privacy_Notice"
-          },
-          forensicData: {
-            userAgent: navigator.userAgent,
-            ipMasked: "0.0.0.0", // Server will populate this if using a Cloud Function, or we mask it here
-            traceId: `ui_${Date.now()}`
-          },
-          acceptanceMethod: "explicit_checkbox_click"
-        });
+        // policy_acceptance/{uid}/history/{versionId} is create-only for the
+        // same reason as church_policy_acceptance above. If a first Accept
+        // already committed this doc but the client never saw the response
+        // (the connection dropped right after the write landed), retrying
+        // lands here again with historyRef already existing, and an
+        // unconditional set() is evaluated as a denied update, rolling back
+        // this whole transaction, including the harmless summary write
+        // below, on every subsequent retry. Reading it first and skipping
+        // the write once it exists lets a retry after an already-successful
+        // accept just succeed.
+        const historySnap = await transaction.get(historyRef);
+
+        // 1. Create the immutable history record, unless it already exists.
+        if (!historySnap.exists()) {
+          transaction.set(historyRef, {
+            version: CURRENT_POLICY_VERSION,
+            acceptedAt: serverTimestamp(),
+            churchId: churchId,
+            roleAtTime: userData.role || "unknown",
+            legalContext: {
+              policyHash: "sha256:placeholder_hash_v1", // In a real app, this would be a real hash
+              agreementType: isAdmin ? "Operator_Agreement" : "Privacy_Notice"
+            },
+            forensicData: {
+              userAgent: navigator.userAgent,
+              ipMasked: "0.0.0.0", // Server will populate this if using a Cloud Function, or we mask it here
+              traceId: `ui_${Date.now()}`
+            },
+            acceptanceMethod: "explicit_checkbox_click"
+          });
+        }
 
         // 2. Update the summary record
         transaction.set(acceptanceRef, {
