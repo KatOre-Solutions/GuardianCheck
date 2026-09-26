@@ -12,10 +12,15 @@ import { SITE_MODE } from "./siteMode";
 
 /**
  * The marketing host after the domain split (#14) is not an app: nothing to
- * install, nothing to boot offline. Every device that used the app before the
- * split still has its worker and cached shell registered on this origin,
- * though, and offline that worker would keep booting the old app here. Remove
- * both, and the install link with them.
+ * install, nothing to boot offline.
+ *
+ * The worker retires itself, in public/sw.js, because this code only runs for
+ * someone who actually loads a marketing page: an application path on this
+ * host is redirected away before any bundle downloads, so a user whose entry
+ * point is /app or a church slug would never reach it. What is left here is
+ * the part a worker cannot do, removing the install link, plus the same
+ * cleanup for anyone who does land on a marketing page and whose browser has
+ * not re-fetched the worker yet.
  */
 function retireServiceWorker(): void {
   document.querySelector('link[rel="manifest"]')?.remove();

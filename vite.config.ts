@@ -12,10 +12,17 @@ import {APP_HOSTNAME, APP_SITE_URL, DOMAIN_SPLIT_PHASE, MARKETING_HOSTNAMES, MAR
  * on the apex goes to the app host. Path, query string and hash are kept, so
  * invite tokens and payment results survive the move.
  *
- * This is the same decision src/lib/siteMode.ts makes for in-app navigation,
- * built from the same constants. It is inline in index.html rather than an edge
- * rule because it has to carry the query string, and it only ever runs on the
- * production hostnames, so previews and localhost are untouched.
+ * A fallback, not the mechanism. The redirects that matter are 308s in
+ * vercel.json, generated from these same constants, so a crawler, an unfurler
+ * or a monitor with no JavaScript is told the page has moved rather than
+ * handed 200 and an app shell. This catches anything the edge rule does not:
+ * a stale cached HTML document, or a host the `has` conditions do not name. It
+ * only ever fires on the production hostnames, so previews and localhost are
+ * untouched.
+ *
+ * It is the same decision src/lib/siteMode.ts makes for in-app navigation,
+ * built from the same constants, and tests/domain-split.test.ts holds the
+ * three of them to the same answer.
  */
 function domainSplitRedirect(): Plugin {
   const code =
@@ -24,7 +31,7 @@ function domainSplitRedirect(): Plugin {
     `m=${JSON.stringify(MARKETING_ROUTES)},to="";` +
     `if(h===${JSON.stringify(APP_HOSTNAME)}&&p!=="/"&&m.indexOf(p)!==-1)to=${JSON.stringify(MARKETING_URL)};` +
     `else if(${JSON.stringify(DOMAIN_SPLIT_PHASE === 'live')}&&${JSON.stringify(MARKETING_HOSTNAMES)}.indexOf(h)!==-1&&m.indexOf(p)===-1)to=${JSON.stringify(APP_SITE_URL)};` +
-    'if(to)l.replace(to+l.pathname+l.search+l.hash);' +
+    'if(to)l.replace(to+p+l.search+l.hash);' +
     '})();';
   return {
     name: 'domain-split-redirect',

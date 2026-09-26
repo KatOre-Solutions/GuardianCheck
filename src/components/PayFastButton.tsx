@@ -1,6 +1,7 @@
 import React from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { logger } from "../lib/logger";
+import { payFastUrls } from "../lib/payfastUrls";
 
 interface PayFastButtonProps {
   amount: number;
@@ -64,11 +65,12 @@ export default function PayFastButton({
   // Configuration warning for developers
   const isMissingConfig = !merchantId || !merchantKey;
 
-  const rawAppUrl = import.meta.env.VITE_APP_URL || window.location.origin;
-  const appUrl = rawAppUrl.endsWith("/") ? rawAppUrl.slice(0, -1) : rawAppUrl;
-  const returnUrl = `${appUrl}/admin?payment=success&plan=${plan}`;
-  const cancelUrl = `${appUrl}/admin?payment=cancel`;
-  const notifyUrl = import.meta.env.VITE_PAYFAST_NOTIFY_URL || `${appUrl}/api/payfast-itn`;
+  const { returnUrl, cancelUrl, notifyUrl } = payFastUrls({
+    appUrl: import.meta.env.VITE_APP_URL,
+    fallbackOrigin: window.location.origin,
+    notifyUrlOverride: import.meta.env.VITE_PAYFAST_NOTIFY_URL,
+    plan,
+  });
 
   if (isMissingConfig) {
     return (

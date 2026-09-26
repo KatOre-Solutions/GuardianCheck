@@ -35,15 +35,30 @@ export const SITE_NAME = "GuardianCheck";
  *   - `"live"`: guardiancheck.co.za is the marketing site, and every other
  *     path there is handed to the app host.
  *
- * Before switching to "live": attach app.guardiancheck.co.za to the Vercel
- * project, add it to Firebase Auth's authorized domains and to the reCAPTCHA
- * Enterprise key's allowed domains, and set APP_URL and VITE_APP_URL to
- * {@link APP_SITE_URL} in Vercel's production environment so new invitation
- * and verification emails point at the app host.
+ * Before switching to "live", in this order:
  *
- * Both hosts are served by one deployment, so /api answers on either. That is
- * what keeps PayFast's recurring payment notifications working: they keep
- * arriving at the address a subscription was started on.
+ *   1. Attach app.guardiancheck.co.za to the *same* Vercel project that serves
+ *      the apex. One deployment serving both hosts is what keeps /api
+ *      answering on either, and that is what keeps PayFast's recurring
+ *      payment notifications working: they keep arriving at the address a
+ *      subscription was started on, with no proxy in between. On a second
+ *      project none of that holds.
+ *   2. Add the host to Firebase Auth's authorized domains and to the
+ *      reCAPTCHA Enterprise key's allowed domains.
+ *   3. Set APP_URL and VITE_APP_URL to {@link APP_SITE_URL} in Vercel's
+ *      production environment. VITE_APP_URL is compiled into the bundle, so
+ *      it takes a rebuild, not just a save.
+ *   4. Check the PayFast merchant console for a configured default ITN or
+ *      return URL, and point it at the app host if one is set.
+ *
+ * Steps 3 and 4 are enforced: scripts/check-domain-split.ts fails the build
+ * when the phase is "live" and the environment disagrees. Steps 1 and 2 are
+ * outside the repository and cannot be, so they are the ones to check twice.
+ *
+ * Flipping the phase also changes generated output, so regenerate and commit:
+ * `npm run generate:vercel-routes` writes the 308s that hand each host's
+ * paths to the other, and `npm run build` bakes the phase into the redirect
+ * script in index.html and into the service worker's self-retirement.
  */
 export type DomainSplitPhase = "off" | "live";
 export const DOMAIN_SPLIT_PHASE = "off" as DomainSplitPhase;

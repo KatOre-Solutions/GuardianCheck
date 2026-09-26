@@ -45,6 +45,19 @@
       "handle": "filesystem"
     },
     {
+      "src": "^/(about|contact|privacy|terms|popia|cookies|security)/?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "status": 308,
+      "headers": {
+        "Location": "https://guardiancheck.co.za/$1"
+      }
+    },
+    {
       "src": "^/$",
       "dest": "/index.html"
     },
