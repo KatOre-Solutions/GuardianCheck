@@ -225,6 +225,16 @@ export class EmailService {
     `;
   }
 
+  // The Resend SDK does not throw on API failures (invalid key, unverified
+  // domain, rejected recipient). It returns them in `error`, so without this
+  // check a refused send is logged as a success.
+  private async sendViaResend(payload: { from: string; to: string; subject: string; html: string }) {
+    const { error } = await this.resend!.emails.send(payload);
+    if (error) {
+      throw new Error(`Resend rejected the email: ${error.message}`);
+    }
+  }
+
   private sanitizeSenderName(name: string): string {
     // Remove characters that could be used for header injection
     return name.replace(/[\r\n\t]/g, "").replace(/["\\]/g, "");
@@ -284,7 +294,7 @@ export class EmailService {
       await Promise.all(uniqueRecipients.map(async (email) => {
         try {
           if (this.resend) {
-            await this.resend.emails.send({
+            await this.sendViaResend({
               from: `${senderName} <${this.fromEmail}>`,
               to: email,
               subject: data.eventType === 'emergency' ? `URGENT: ${subject}` : subject,
@@ -408,7 +418,7 @@ export class EmailService {
       `;
 
       if (this.resend) {
-        await this.resend.emails.send({
+        await this.sendViaResend({
           from: `${senderName} <${this.fromEmail}>`,
           to: email,
           subject: subject,
@@ -494,7 +504,7 @@ export class EmailService {
       `;
 
       if (this.resend) {
-        await this.resend.emails.send({
+        await this.sendViaResend({
           from: `${senderName} <${this.fromEmail}>`,
           to: email,
           subject: subject,

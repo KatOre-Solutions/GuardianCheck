@@ -15,7 +15,7 @@
  *     never itself checked.
  */
 
-import { UNCLAIMABLE_SLUGS } from "../constants/appRoutes";
+import { UNCLAIMABLE_SLUGS } from "../constants/appRoutes.js";
 
 /** Lower-case letters, digits and single hyphens, trimmed. May be empty. */
 export function slugify(name: string): string {

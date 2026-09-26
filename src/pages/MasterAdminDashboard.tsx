@@ -4,11 +4,12 @@ import { Plus, Church as ChurchIcon, MapPin, Mail, Trash2, Loader2, Shield, User
 import { getChurches, addDocument, removeDocument, getCollection, updateDocument, subscribeToCollection } from "../lib/firestore";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion, AnimatePresence } from "motion/react";
-import { format, isAfter, parseISO } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { where } from "firebase/firestore";
 import WhatsAppSupport from "../components/WhatsAppSupport";
 
 import { useAuth } from "../hooks/useAuth";
+import { getChurchAccess } from "../lib/churchAccess";
 
 /**
  * Churches whose data is real.
@@ -511,8 +512,11 @@ export default function MasterAdminDashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {filteredChurches.map((church) => {
-            const isTrialing = church.status === "trialing";
-            const trialExpired = isTrialing && church.trialEndsAt && !isAfter(parseISO(church.trialEndsAt), new Date());
+            // `accessUntil` is what actually locks a church. This used to test a
+            // root `trialEndsAt` that nothing writes (it lives under
+            // `subscription`), so "Trial Expired" never showed.
+            const access = getChurchAccess(church);
+            const isLocked = access.state === "locked";
 
             return (
               <motion.div
@@ -527,11 +531,12 @@ export default function MasterAdminDashboard() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                      isLocked ? "bg-red-100 text-red-600" :
                       church.status === "active" ? "bg-green-100 text-green-600" :
-                      church.status === "trialing" ? (trialExpired ? "bg-red-100 text-red-600" : "bg-orange-100 text-orange-600") :
+                      church.status === "trialing" ? "bg-orange-100 text-orange-600" :
                       "bg-gray-100 text-gray-600"
                     }`}>
-                      {church.status === "trialing" && trialExpired ? "Trial Expired" : church.status}
+                      {isLocked ? (church.status === "trialing" ? "Trial Expired" : "Locked") : church.status}
                     </span>
                     <button
                       onClick={() => setChurchToDelete(church)}
@@ -560,6 +565,12 @@ export default function MasterAdminDashboard() {
                     <div className="flex items-center space-x-2 text-xs text-green-600 font-medium">
                       <ShieldCheck className="h-4 w-4 shrink-0" />
                       <span>Last Paid: {format(parseISO(church.lastPaymentDate), "MMM dd, yyyy")}</span>
+                    </div>
+                  )}
+                  {access.accessUntil && (
+                    <div className={`flex items-center space-x-2 text-xs font-medium ${isLocked ? "text-red-600" : "text-gray-500 dark:text-gray-400"}`}>
+                      <Shield className="h-4 w-4 shrink-0" />
+                      <span>{isLocked ? "Locked since" : "Access until"}: {format(access.accessUntil, "MMM dd, yyyy")}</span>
                     </div>
                   )}
                   {church.nextBillingDate && (

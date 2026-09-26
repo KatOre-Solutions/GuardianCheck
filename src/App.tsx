@@ -15,6 +15,7 @@ import Footer from "./components/Footer";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import { MarketingHeader } from "./components/marketing/MarketingHeader";
 import { PolicyGuard } from "./components/PolicyGuard";
+import { ChurchAccessGate } from "./components/ChurchAccessGate";
 import NotFound from "./pages/NotFound";
 import { isKnownAppPath, RESERVED_SLUGS, routePatternFor } from "./constants/appRoutes";
 import { resolveLandingPath } from "./lib/landing";
@@ -739,6 +740,10 @@ export default function App() {
                   <Route path="/:churchSlug" element={<TenantLayout />}>
                     <Route index element={<ChurchLanding />} />
                     <Route path="login" element={<Login />} />
+                    {/* No ChurchAccessGate on parent or volunteer: both pages
+                        handle the lock themselves, so a child checked in before
+                        it can still be collected (the parent shows a guardian
+                        QR, the volunteer scans it). */}
                     <Route path="parent" element={
                       <ProtectedRoute allowedRoles={["master_admin", "admin", "parent"]}>
                         <PolicyGuard>
@@ -756,21 +761,27 @@ export default function App() {
                     <Route path="admin" element={
                       <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
                         <PolicyGuard>
-                          <AdminDashboard />
+                          <ChurchAccessGate>
+                            <AdminDashboard />
+                          </ChurchAccessGate>
                         </PolicyGuard>
                       </ProtectedRoute>
                     } />
                     <Route path="admin/settings" element={
                       <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
                         <PolicyGuard>
-                          <ChurchSettings />
+                          <ChurchAccessGate>
+                            <ChurchSettings />
+                          </ChurchAccessGate>
                         </PolicyGuard>
                       </ProtectedRoute>
                     } />
                     <Route path="admin/events" element={
                       <ProtectedRoute allowedRoles={["admin", "master_admin"]}>
                         <PolicyGuard>
-                          <EventsServices />
+                          <ChurchAccessGate>
+                            <EventsServices />
+                          </ChurchAccessGate>
                         </PolicyGuard>
                       </ProtectedRoute>
                     } />

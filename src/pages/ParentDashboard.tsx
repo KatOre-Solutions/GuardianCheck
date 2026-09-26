@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { ParentDashboardSkeleton } from "../components/skeletons";
 import { AccessDenied } from "../components/AccessDenied";
-import { useLiveCollection } from "../hooks/useLiveData";
+import { useLiveCollection, useLiveDocument } from "../hooks/useLiveData";
+import { useChurchLocked } from "../hooks/useChurchAccess";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/storage";
@@ -59,6 +60,13 @@ export default function ParentDashboard() {
   const children = childrenQ.data;
   const guardians = guardiansQ.data;
   const checkins = checkinsQ.data;
+
+  /* A locked church (trial or subscription ended) gets the read-only pickup
+     view below instead of this dashboard, so a child checked in before the
+     lock can still be collected with the guardian's QR. Master admins are
+     never locked. */
+  const churchDoc = useLiveDocument("churches", churchId);
+  const isLocked = useChurchLocked(churchDoc.data);
   const [medicalInfo, setMedicalInfo] = useState<Record<string, any>>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -137,6 +145,9 @@ export default function ParentDashboard() {
   }, [children]);
 
   useEffect(() => {
+    // A locked church's rules refuse this write, and the pickup view has
+    // nothing that depends on it. It runs again once access is restored.
+    if (isLocked) return;
     if (user && userData) {
       // Sync account holder guardian info if it exists
       const syncAccountHolder = async () => {
@@ -166,7 +177,7 @@ export default function ParentDashboard() {
       };
       syncAccountHolder();
     }
-  }, [userData, guardians, user]);
+  }, [userData, guardians, user, isLocked]);
 
   const handleAddChild = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -597,6 +608,22 @@ export default function ParentDashboard() {
   // Firestore's own persistent cache, not a new fetch.
   if (!isOnline) {
     return <OfflineParentQR children={children} guardians={guardians} downloadQR={downloadQR} />;
+  }
+
+  // After the offline branch: with no signal, "you're offline" is the more
+  // useful message, and that view already shows the same pickup codes.
+  if (isLocked) {
+    return (
+      <OfflineParentQR
+        mode="locked"
+        children={children}
+        guardians={guardians}
+        checkins={checkins}
+        downloadQR={downloadQR}
+        churchName={churchDoc.data?.name}
+        adminPath={roles.includes("admin") && church?.slug ? `/${church.slug}/admin` : undefined}
+      />
+    );
   }
 
   return (

@@ -16,7 +16,7 @@ import crypto from "crypto";
 import axios from "axios";
 import fs from "fs";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { addMonths, format, parseISO } from "date-fns";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -27,6 +27,16 @@ import { z } from "zod";
 import NodeCache from "node-cache";
 import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
+import { pricingForPayment } from "./src/lib/planPricing.js";
+import { TRIAL_MONTHS } from "./src/constants/plans.js";
+import {
+  CHURCH_ACCESS_LOCKED,
+  accessUntilForBillingDate,
+  endOfDaySast,
+  getChurchAccess,
+  laterOf,
+  toDate,
+} from "./src/lib/churchAccess.js";
 import { defaultAppOrigin } from "./src/constants/site.js";
 import { generateChurchSlug } from "./src/lib/churchSlug.js";
 
@@ -593,10 +603,46 @@ const requireVolunteer = async (req: any, res: any, next: any) => {
   res.status(403).json({ error: "Forbidden. Volunteer access required." });
 };
 
-const PLAN_PRICES: Record<string, number> = {
-  starter: 249,
-  growth: 499,
-  professional: 999
+// Church Access Middleware
+//
+// Refuses tenant work for a church whose trial or paid period has run out (see
+// src/lib/churchAccess.ts). Goes after the role middleware on routes that
+// create or manage data: check-in, child registration, invites, settings.
+//
+// Deliberately NOT on check-out, guardian lookup, move-room or the emergency
+// alert. A church can lock while children are still checked in, and those
+// children must still be released to the right guardian. Billing routes and
+// the PayFast ITN stay open too, or a locked church could never pay its way
+// out.
+//
+// Reads the church document directly rather than through getCachedDoc: a
+// church that has just paid must be let back in on its next request, not a
+// minute later.
+const requireChurchAccess = async (req: any, res: any, next: any) => {
+  if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+  if (req.user.role === "master_admin" || req.user.email === "oreutlwilediutlwileng@gmail.com") return next();
+
+  const churchId = req.user.churchId;
+  if (!churchId) return next();
+
+  try {
+    const churchDoc = await db.collection("churches").doc(churchId).get();
+    req.firestoreOps.reads++;
+
+    const access = getChurchAccess(churchDoc.exists ? churchDoc.data() : null);
+    if (access.state === "locked") {
+      return res.status(402).json({
+        error: "Your church's GuardianCheck access has ended. A church admin can restore it by choosing a plan.",
+        code: CHURCH_ACCESS_LOCKED,
+        accessUntil: access.accessUntil?.toISOString() ?? null,
+        traceId: req.traceId
+      });
+    }
+    next();
+  } catch (error: any) {
+    console.error("Church access check failed:", error.message);
+    res.status(500).json({ error: "Internal server error during access check", traceId: req.traceId });
+  }
 };
 
 // Transactions List Endpoint
@@ -898,7 +944,7 @@ async function startServer() {
   });
 
   // Child Registration via API (with Plan Limit Enforcement)
-  app.post("/api/children", authenticateToken, validate(RegisterChildSchema), async (req, res) => {
+  app.post("/api/children", authenticateToken, requireChurchAccess, validate(RegisterChildSchema), async (req, res) => {
     const childData = req.body;
     const { uid, churchId, firstName, lastName } = req.user;
 
@@ -1000,7 +1046,7 @@ async function startServer() {
   });
 
   // Atomic Check-in Endpoint
-  app.post("/api/check-in", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, validate(CheckInSchema), async (req, res) => {
+  app.post("/api/check-in", authenticateToken, peakLimiter, requirePolicyAcceptance, requireVolunteer, requireChurchAccess, validate(CheckInSchema), async (req, res) => {
     const { childId, roomId, serviceId, volunteerId, checkedInBy, qrCode, parentId } = req.body;
     const churchId = req.user.churchId;
 
@@ -1530,7 +1576,7 @@ async function startServer() {
   });
 
   // User Invitation Endpoint
-  app.post("/api/invite-user", sensitiveLimiter, authenticateToken, requireAdmin, validate(InviteUserSchema), async (req, res) => {
+  app.post("/api/invite-user", sensitiveLimiter, authenticateToken, requireAdmin, requireChurchAccess, validate(InviteUserSchema), async (req, res) => {
     const { email, firstName, lastName, role } = req.body;
     const churchId = req.user.churchId;
     const inviterId = req.user.uid;
@@ -1674,6 +1720,19 @@ async function startServer() {
         await inviteDoc.ref.update({ status: "expired" });
         req.firestoreOps.writes++;
         return res.status(400).json({ error: "This invitation has expired." });
+      }
+
+      // The inviter's church may have locked since the invite was sent. This
+      // route has no signed-in user, so requireChurchAccess cannot guard it.
+      // Checked before the Auth user is created so a refusal leaves nothing
+      // behind.
+      const inviteChurchDoc = await db.collection("churches").doc(inviteData.churchId).get();
+      req.firestoreOps.reads++;
+      if (getChurchAccess(inviteChurchDoc.exists ? inviteChurchDoc.data() : null).state === "locked") {
+        return res.status(402).json({
+          error: "This church's GuardianCheck access is paused, so the invitation can't be accepted yet. Please contact your church administrator.",
+          code: CHURCH_ACCESS_LOCKED
+        });
       }
 
       // 3. Create Auth User
@@ -1999,30 +2058,63 @@ async function startServer() {
 
         if (churchDoc.exists) {
           const now = new Date();
+          const existingData = churchDoc.data();
+          const existingAccessUntil = toDate(existingData?.accessUntil);
           const updateData: any = {
             updatedAt: now.toISOString(),
             payfast_m_payment_id: data.m_payment_id || null,
             payfast_pf_payment_id: data.pf_payment_id || null
           };
 
+          // The PayFast form is built in the browser, so `amount` and
+          // `custom_str2` are whatever the payer chose to send. The signature
+          // and ping-back above prove PayFast took this money, not that it was
+          // the right amount for the plan. Now that a payment is what unlocks
+          // a church, R1 against "professional" must not buy a month of it.
+          //
+          // Checked against the price this church agreed to, not today's list
+          // price: a recurring subscription charges a fixed amount forever, so
+          // a price rise would otherwise fail every existing subscriber's next
+          // renewal and lock them out. See src/lib/planPricing.ts.
+          const paidPlan = String(plan || existingData?.plan || "starter").toLowerCase();
+          const pricing = pricingForPayment(existingData, paidPlan, amount);
+          const coversPlan = pricing.covers;
+
+          // Only ever written on an accepted payment, and only when this tier
+          // has no recorded price yet, so it records what was agreed and never
+          // drifts up to a later price.
+          const recordAgreedPrice = () => {
+            if (pricing.priceToRecord === null) return;
+            updateData["subscription.priceTier"] = paidPlan;
+            updateData["subscription.priceZar"] = pricing.priceToRecord;
+          };
+
           if (token) updateData["subscription.payfast_token"] = token;
-          if (plan) {
+          if (plan && (amount === 0 || coversPlan)) {
             updateData["plan"] = plan;
             updateData["subscription.tier"] = plan;
           }
 
-          if (amount > 0) {
+          if (amount > 0 && !coversPlan) {
+            await db.collection("logs").add({
+              level: "error",
+              message: `[ITN_${traceId}] Payment below plan price, access not extended: ${churchId}`,
+              metadata: { churchId, plan: paidPlan, amount, requiredAmount: pricing.requiredAmount },
+              source: "payfast_itn",
+              timestamp: now.toISOString()
+            });
+          } else if (amount > 0) {
             updateData.status = "active";
             updateData["subscription.status"] = "active";
             updateData.lastPaymentDate = now.toISOString();
-            
-            const existingData = churchDoc.data();
+            recordAgreedPrice();
+
             // Try root field first, then nested subscription field
             const trialEndsAt = existingData?.trialEndsAt || existingData?.subscription?.trialEndsAt;
             const currentNextBilling = existingData?.nextBillingDate || existingData?.subscription?.billingDate;
-            
+
             let anchorDate = now;
-            
+
             if (trialEndsAt && new Date(trialEndsAt) > now) {
               anchorDate = new Date(trialEndsAt);
             } else if (currentNextBilling && new Date(currentNextBilling) > now) {
@@ -2032,12 +2124,33 @@ async function startServer() {
             const nextDate = addMonths(anchorDate, 1);
             updateData.nextBillingDate = nextDate.toISOString();
             updateData["subscription.billingDate"] = nextDate.toISOString();
+
+            // Never shortens: a church the master admin has extended past this
+            // date keeps the longer access.
+            updateData.accessUntil = Timestamp.fromDate(
+              laterOf(existingAccessUntil, accessUntilForBillingDate(nextDate))!
+            );
           } else if (token) {
+            // A subscription set up during the trial, first charge still to
+            // come. `billing_date` came from the browser too, so it is recorded
+            // for display but never moves the trial end or access: otherwise
+            // choosing a billing date in 2030 would be a free trial until 2030.
             updateData.status = "trialing";
             updateData["subscription.status"] = "trialing";
+            // Subscription time: the price on the checkout page they just used.
+            recordAgreedPrice();
             if (data.billing_date) {
-              updateData["subscription.trialEndsAt"] = new Date(data.billing_date).toISOString();
               updateData["subscription.billingDate"] = new Date(data.billing_date).toISOString();
+            }
+            // The first charge lands on the trial's last day. Give it the same
+            // grace as any other billing date, measured from the trial end this
+            // server set, so a charge or ITN that arrives late does not lock a
+            // church that has already subscribed.
+            const serverTrialEnd = toDate(existingData?.subscription?.trialEndsAt);
+            if (existingAccessUntil && serverTrialEnd) {
+              updateData.accessUntil = Timestamp.fromDate(
+                laterOf(existingAccessUntil, accessUntilForBillingDate(serverTrialEnd))!
+              );
             }
           }
 
@@ -2137,7 +2250,7 @@ async function startServer() {
     await db.collection("church_public").doc(churchId).set(buildChurchPublic(churchId, source));
   };
 
-  app.post("/api/church/settings", generalLimiter, authenticateToken, requireAdmin, validate(UpdateChurchSettingsSchema), async (req, res) => {
+  app.post("/api/church/settings", generalLimiter, authenticateToken, requireAdmin, requireChurchAccess, validate(UpdateChurchSettingsSchema), async (req, res) => {
     const { name, branding } = req.body;
     const churchId = req.user.churchId;
 
@@ -2313,17 +2426,23 @@ async function startServer() {
         ? plan.toLowerCase() 
         : "starter";
 
+      const trialStartedAt = new Date();
+      const trialEndsAt = addMonths(trialStartedAt, TRIAL_MONTHS);
+
       churchRef = await db.collection("churches").add({
         name: churchName,
         slug: slug,
         adminEmail: email,
         status: "trialing",
         plan: initialTier,
+        // The church locks at midnight SAST on the trial's last day unless a
+        // payment moves this forward. See src/lib/churchAccess.ts.
+        accessUntil: Timestamp.fromDate(endOfDaySast(trialEndsAt)),
         subscription: {
           tier: initialTier,
           status: "active",
-          trialStartedAt: new Date().toISOString(),
-          trialEndsAt: addMonths(new Date(), 1).toISOString(), // 1 month trial
+          trialStartedAt: trialStartedAt.toISOString(),
+          trialEndsAt: trialEndsAt.toISOString(),
         },
         metrics: {
           totalChildren: 0,
