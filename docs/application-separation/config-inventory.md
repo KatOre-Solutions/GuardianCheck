@@ -23,7 +23,9 @@ what has to happen to it for the split described in
   - **Redirect** / **Proxy**: handled by the apex edge config.
   - **Verify**: probably fine, confirm during the phase.
   - **None**: listed so nobody has to re-check it.
-- Line numbers are as of the surveyed commit.
+- Line numbers are as of `main` at `944e3d4`. They drift, `server.ts` fastest of
+  all, so each reference also names the symbol, route or constant it points at.
+  If a line does not match, search for that name.
 
 Search used to build this list: `APP_URL`, `SITE_URL`, `guardiancheck.co.za`,
 `window.location`, `return_url`/`cancel_url`/`notify_url`, `authDomain`,
@@ -35,7 +37,7 @@ Search used to build this list: `APP_URL`, `SITE_URL`, `guardiancheck.co.za`,
 
 | ID | Variable | Read by | Today | After split | Action | Phase |
 |---|---|---|---|---|---|---|
-| A1 | `APP_URL` | [server.ts:641](../../server.ts#L641), [:1608](../../server.ts#L1608), [:1727](../../server.ts#L1727), [:2364](../../server.ts#L2364); fallback for `VITE_APP_URL` in [vite.config.ts:13](../../vite.config.ts#L13) | `https://guardiancheck.co.za` | Production: App. Preview: unset, so the request origin is used. | Change in Vercel | 2 |
+| A1 | `APP_URL` | `/api/auth/send-verification`, `/api/invite-user`, `/api/accept-invite`, `/api/register-church`: [server.ts:687](../../server.ts#L687), [:1654](../../server.ts#L1654), [:1786](../../server.ts#L1786), [:2483](../../server.ts#L2483); fallback for `VITE_APP_URL` in [vite.config.ts:13](../../vite.config.ts#L13) | `https://guardiancheck.co.za` | Production: App. Preview: unset, so the request origin is used. | Change in Vercel | 2 |
 | A2 | `VITE_APP_URL` | [PayFastButton.tsx:67](../../src/components/PayFastButton.tsx#L67) | `https://guardiancheck.co.za` | Production: App. Preview: unset, so `window.location.origin` is used. Marketing project: not needed. | Change in Vercel | 2 |
 | A3 | `VITE_PAYFAST_NOTIFY_URL` | [PayFastButton.tsx:71](../../src/components/PayFastButton.tsx#L71) | Not in `.env.example`; optional override | Leave unset so it derives from A2. If set in Vercel, update to App. | Verify | 2 |
 | A4 | `VITE_PAYFAST_SANDBOX`, `PAYFAST_SANDBOX`, `VITE_PAYFAST_MERCHANT_ID`, `VITE_PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE` | PayFast button, ITN handler, cancel API | Per environment | App project only | None | n/a |
@@ -68,10 +70,10 @@ exist because the **fallbacks** are wrong for the split.
 
 | ID | Link | Location | Today | After split | Action | Phase |
 |---|---|---|---|---|---|---|
-| C1 | Resend-verification continue URL | [server.ts:637-641](../../server.ts#L637-L641) | `APP_URL`, else `Origin`, else `Host`, else literal `https://guardiancheck.co.za` | Literal fallback becomes the app constant. If `Origin` is ever the apex (a request proxied from an old apex tab), the continue URL would point at the marketing site; `APP_URL` in production prevents that. | Change | 0 |
-| C2 | Verification after invite acceptance | [server.ts:1723-1727](../../server.ts#L1723-L1727) | Same pattern as C1 | Same as C1 | Change | 0 |
-| C3 | Invitation link | [server.ts:1608](../../server.ts#L1608) | `APP_URL`, else `Origin` | `/accept-invite` is an app route. Correct once A1 is set. Old emailed links are handled by the apex redirect (F5). | Verify | 2 |
-| C4 | Verification after church registration | [server.ts:2363-2364](../../server.ts#L2363-L2364) | `APP_URL`, else `Origin` | Correct once A1 is set | Verify | 2 |
+| C1 | Resend-verification continue URL | `POST /api/auth/send-verification`, [server.ts:683-687](../../server.ts#L683-L687) | `APP_URL`, else `Origin`, else `Host`, else literal `https://guardiancheck.co.za` | Literal fallback becomes the app constant. If `Origin` is ever the apex (a request proxied from an old apex tab), the continue URL would point at the marketing site; `APP_URL` in production prevents that. | Change | 0 |
+| C2 | Verification after invite acceptance | `POST /api/accept-invite`, [server.ts:1782-1786](../../server.ts#L1782-L1786) | Same pattern as C1 | Same as C1 | Change | 0 |
+| C3 | Invitation link | `POST /api/invite-user`, [server.ts:1654](../../server.ts#L1654) | `APP_URL`, else `Origin` | `/accept-invite` is an app route. Correct once A1 is set. Old emailed links are handled by the apex redirect (F5). | Verify | 2 |
+| C4 | Verification after church registration | `POST /api/register-church`, [server.ts:2482-2483](../../server.ts#L2482-L2483) | `APP_URL`, else `Origin` | Correct once A1 is set | Verify | 2 |
 | C5 | Password reset | [src/pages/Login.tsx:358](../../src/pages/Login.tsx#L358) | Client call with no continue URL | No host involved | None | n/a |
 | C6 | Guardian QR image in notification email | [emailService.ts:147](../../emailService.ts#L147) | `api.qrserver.com` | Third party, unrelated to hosts | None | n/a |
 
@@ -82,8 +84,8 @@ exist because the **fallbacks** are wrong for the split.
 | D1 | `return_url` | [PayFastButton.tsx:69](../../src/components/PayFastButton.tsx#L69) | `${VITE_APP_URL}/admin?payment=success&plan=` | App. Derives from A2. `/admin` is the launch redirect, which preserves the query. | Verify | 2 |
 | D2 | `cancel_url` | [PayFastButton.tsx:70](../../src/components/PayFastButton.tsx#L70) | `${VITE_APP_URL}/admin?payment=cancel` | Same as D1 | Verify | 2 |
 | D3 | `notify_url` for new checkouts | [PayFastButton.tsx:71](../../src/components/PayFastButton.tsx#L71) | `VITE_PAYFAST_NOTIFY_URL`, else `${VITE_APP_URL}/api/payfast-itn` | App | Verify | 2 |
-| D4 | ITNs for subscriptions created before the split | PayFast, handled at [server.ts:1884](../../server.ts#L1884) | Recurring charges notify the `notify_url` given at signup: the apex | Apex **proxies** `/api/*` to App, permanently. Handler validates by signature and PayFast ping-back, not source IP, so a proxy is transparent. Confirm redirect behaviour with PayFast support (architecture open question 2). | Proxy | 3 |
-| D5 | Subscription cancel API call | [server.ts:2197](../../server.ts#L2197) | Server to `api.payfast.co.za` | Outbound, host-independent | None | n/a |
+| D4 | ITNs for subscriptions created before the split | `POST /api/payfast-itn` in [server.ts:1943](../../server.ts#L1943) | Recurring charges notify the `notify_url` given at signup: the apex | Apex **proxies** `/api/*` to App, permanently. Handler validates by signature and PayFast ping-back, not source IP, so a proxy is transparent. Nothing to build before phase 3: while one Vercel project serves both hosts, [vercel.json](../../vercel.json) routes `/api/(.*)` to `server.ts` with no host condition, so apex ITNs already land. The proxy becomes load-bearing the moment the marketing project takes the apex. Confirm redirect behaviour with PayFast support (architecture open question 2). | Proxy | 3 |
+| D5 | Subscription cancel API call | `POST /api/subscriptions/cancel`, [server.ts:2310](../../server.ts#L2310) | Server to `api.payfast.co.za` | Outbound, host-independent | None | n/a |
 | D6 | PayFast merchant dashboard | PayFast console | Unknown whether a default ITN or return URL is configured there | If set, update to App | Verify (J6) | 1 |
 | D7 | Sandbox test | n/a | n/a | Full sandbox checkout and ITN on the app host before phase 2 | Verify | 1 |
 
@@ -113,13 +115,13 @@ to marketing link when rendered on the app host.
 |---|---|---|---|---|---|
 | E7 | Footer: home, section anchors | [Footer.tsx:39](../../src/components/Footer.tsx#L39), [:44](../../src/components/Footer.tsx#L44), [:49](../../src/components/Footer.tsx#L49), [:54](../../src/components/Footer.tsx#L54), [:59](../../src/components/Footer.tsx#L59) | `/`, `/#how-it-works`, `/#safety`, `/#pricing`, `/#faq` | Marketing, absolute. On the marketing build these stay relative. Simplest: the footer takes a base URL, or each build has its own footer. **(#47)** | Change | 0 |
 | E8 | Footer: company and legal | [Footer.tsx:77-115](../../src/components/Footer.tsx#L77-L115) | `/about`, `/contact`, `/security`, `/privacy`, `/terms`, `/popia`, `/cookies` | Marketing, absolute | Change | 0 |
-| E9 | Sign-out destination | [App.tsx:184](../../src/App.tsx#L184) | `/` or `/<slug>` | App `/login` or `/<slug>/login` ([auth-session.md](auth-session.md#app-host)) | Change | 0 |
-| E10 | App header logo when no church | [App.tsx:233](../../src/App.tsx#L233) | `/` | App `/` (launch redirect). Stays relative. | None once F3 lands | 0 |
-| E11 | "Church not found" home link | [App.tsx:588](../../src/App.tsx#L588) | `/` | Marketing, absolute | Change | 0 |
+| E9 | Sign-out destination | [App.tsx:185](../../src/App.tsx#L185) | `/` or `/<slug>` | App `/login` or `/<slug>/login` ([auth-session.md](auth-session.md#app-host)) | Change | 0 |
+| E10 | App header logo when no church | [App.tsx:234](../../src/App.tsx#L234) | `/` | App `/` (launch redirect). Stays relative. | None once F3 lands | 0 |
+| E11 | "Church not found" home link | [App.tsx:589](../../src/App.tsx#L589) | `/` | Marketing, absolute | Change | 0 |
 | E12 | "Powered by GuardianCheck" on church landing | [ChurchLanding.tsx:106](../../src/pages/ChurchLanding.tsx#L106) | `/` | Marketing, absolute | Change | 0 |
 | E13 | Not found page "Go home" | [NotFound.tsx:35](../../src/pages/NotFound.tsx#L35) | `/` | App `/` on the app host; marketing gets its own 404 **(#47)** | None once F3 lands | 0 |
 | E14 | Error boundary reset | [ErrorBoundary.tsx:34](../../src/components/ErrorBoundary.tsx#L34) | `window.location.href = "/"` | App `/`. Stays relative. | None once F3 lands | 0 |
-| E15 | Onboarding and profile fall-throughs | [PendingApproval.tsx:15](../../src/pages/PendingApproval.tsx#L15), [Rejected.tsx:15](../../src/pages/Rejected.tsx#L15), [ProfileCompletion.tsx:56](../../src/pages/ProfileCompletion.tsx#L56), [Profile.tsx:160](../../src/pages/Profile.tsx#L160), [PolicyAcceptancePage.tsx:84](../../src/pages/PolicyAcceptancePage.tsx#L84) | `navigate("/")` | App `/` (launch redirect). These are signed-in users who belong in the app, which is what F3 gives them. | None once F3 lands | 0 |
+| E15 | Onboarding and profile fall-throughs | [PendingApproval.tsx:15](../../src/pages/PendingApproval.tsx#L15), [Rejected.tsx:15](../../src/pages/Rejected.tsx#L15), [ProfileCompletion.tsx:56](../../src/pages/ProfileCompletion.tsx#L56), [Profile.tsx:160](../../src/pages/Profile.tsx#L160), [PolicyAcceptancePage.tsx:103](../../src/pages/PolicyAcceptancePage.tsx#L103) | `navigate("/")` | App `/` (launch redirect). These are signed-in users who belong in the app, which is what F3 gives them. | None once F3 lands | 0 |
 | E16 | Landing resolver fallback | [src/lib/landing.ts:66](../../src/lib/landing.ts#L66) | `/` when an account has no church-scoped destination | App `/` would loop into the launch redirect again. Must resolve to a real app screen (for example `/profile`) instead. | Change | 0 |
 | E17 | Demo invite hidden for signed-in users | [DemoInvite.tsx:40](../../src/components/marketing/DemoInvite.tsx#L40) | `useAuth` | Remove `useAuth`; show to everyone | Change | 0 |
 
@@ -142,11 +144,11 @@ to marketing link when rendered on the app host.
 |---|---|---|---|---|---|---|
 | F1 | Vercel config | [vercel.json](../../vercel.json) | One project: static build, `/api` to `server.ts`, generated route table, 404 catch-all | App project: same file minus marketing routes, plus the `noindex` header (G5). Marketing project: its own config with the redirect map and `/api` rewrite (F5). | Split | 1 (header), 3 |
 | F2 | Route manifest | [src/constants/appRoutes.ts](../../src/constants/appRoutes.ts) | `EXACT_ROUTES` includes marketing paths (`/about`, `/privacy`, ...) | Marketing paths leave `EXACT_ROUTES` and move to a shared `MARKETING_ROUTES` list | Change | 3 (removal), 0 (new list) |
-| F3 | Route `/` | [App.tsx:621](../../src/App.tsx#L621), `ROUTE_CHUNKS` at [App.tsx:76](../../src/App.tsx#L76) | Marketing home | App build: `DashboardRedirect`, like `/app`. Home and marketing chunks leave the app bundle. | Change | 0 behind a host check, 3 unconditionally |
-| F4 | Reserved slugs | `RESERVED_SLUGS` in [appRoutes.ts](../../src/constants/appRoutes.ts) | Derived from app routes only | Also includes `MARKETING_ROUTES` and the future list in [architecture.md](architecture.md#the-slug-rule-important). Run a production query for existing churches holding any of them before phase 3. The server does **not** check reserved slugs today: slug generation in [server.ts:2292-2307](../../server.ts#L2292-L2307) checks only uniqueness, so a church named "About" already gets an unreachable `/about`. Add the check there, suffixing a reserved slug the way duplicates are suffixed ([#143](https://github.com/KatOre-Solutions/GuardianCheck/issues/143)). | Change | 0 |
+| F3 | Route `/` | [App.tsx:622](../../src/App.tsx#L622), `ROUTE_CHUNKS` at [App.tsx:76](../../src/App.tsx#L76) | Marketing home | App build: `DashboardRedirect`, like `/app`. Home and marketing chunks leave the app bundle. | Change | 0 behind a host check, 3 unconditionally |
+| F4 | Reserved slugs | `RESERVED_SLUGS` in [appRoutes.ts](../../src/constants/appRoutes.ts) | Derived from app routes only | Also includes `MARKETING_ROUTES` and the future list in [architecture.md](architecture.md#the-slug-rule-important). Run a production query for existing churches holding any of them before phase 3. The server does **not** check reserved slugs today: slug generation in [server.ts:2405-2420](../../server.ts#L2405-L2420) checks only uniqueness, so a church named "About" already gets an unreachable `/about`. Add the check there, suffixing a reserved slug the way duplicates are suffixed ([#143](https://github.com/KatOre-Solutions/GuardianCheck/issues/143)). | Change | 0 |
 | F5 | Apex redirect map and rewrites | New, marketing project | n/a | Generated from `MARKETING_ROUTES`, exactly as [architecture.md](architecture.md#redirects-and-proxies-on-the-apex) specifies: serve marketing paths, rewrite `/api/*`, serve kill-switch `sw.js`, 308 everything else to App with path and query | Split **(#47)** | 3 |
 | F6 | Route generator and build check | [scripts/generate-vercel-routes.ts](../../scripts/generate-vercel-routes.ts), `check:vercel-routes` in [package.json](../../package.json) | Keeps `vercel.json` in step with the manifest | App project keeps it. Add an equivalent check for the marketing redirect config. | Split | 3 |
-| F7 | Express SPA fallback | [server.ts:2455-2457](../../server.ts#L2455-L2457) | Self-hosted and local only; mirrors `vercel.json` | Follows F2 automatically | None | n/a |
+| F7 | Express SPA fallback | `app.get("*")`, [server.ts:2574-2576](../../server.ts#L2574-L2576) | Self-hosted and local only; mirrors `vercel.json` | Follows F2 automatically | None | n/a |
 | F8 | Layout variants | `Layout variant="marketing"` in [App.tsx](../../src/App.tsx) | Marketing tree inside the SPA | App build drops the marketing variant and `MarketingHeader`. Marketing build replaces it **(#47)**. | Change | 3 |
 | F9 | `www` host | Vercel domains | Unknown | 308 to apex (architecture open question 1) | Verify | 3 |
 
@@ -161,7 +163,7 @@ to marketing link when rendered on the app host.
 | G5 | `X-Robots-Tag` header | None today | n/a | Not set | `noindex, nofollow` on every response, via app project headers | 1 |
 | G6 | Robots meta in `<Seo>` | [Seo.tsx](../../src/components/Seo.tsx) (`removeMeta("robots")` on indexable routes) | Removed on indexable routes, set on `noindex` routes | Replaced by server-rendered head **(#47)** | Static `noindex, nofollow` meta in `index.html`; `<Seo>` on the app build never removes it | 0 |
 | G7 | Canonicals, `og:url` | `canonicalUrl` in [site.ts](../../src/constants/site.ts), [Seo.tsx](../../src/components/Seo.tsx) | Apex | Apex, server-rendered **(#47)** | None (no canonical on `noindex` pages, as `<Seo>` already does) | 3 |
-| G8 | Organization and WebSite JSON-LD | `GlobalJsonLd` in [App.tsx:493](../../src/App.tsx#L493) | Every route | Apex pages | Remove from the app build | 3 |
+| G8 | Organization and WebSite JSON-LD | `GlobalJsonLd` in [App.tsx:494](../../src/App.tsx#L494) | Every route | Apex pages | Remove from the app build | 3 |
 | G9 | Home page JSON-LD (SoftwareApplication, Offer, FAQPage) | [src/pages/Home.tsx](../../src/pages/Home.tsx), [src/constants/marketing.ts](../../src/constants/marketing.ts) | Home | Home | None | 3 |
 | G10 | Social card image | `public/og-image.png`, `OG_IMAGE_PATH` in [site.ts](../../src/constants/site.ts) | Apex | Served | Not needed | 3 |
 
@@ -190,7 +192,7 @@ to marketing link when rendered on the app host.
 | J1 | Firebase Authentication | Authorized domains | Add App in phase 1. Remove apex 30 days after phase 2. | 1, 4 |
 | J2 | Google Cloud reCAPTCHA Enterprise | Site key allowed domains | Add App in phase 1. Remove apex in phase 4. | 1, 4 |
 | J3 | Google Cloud OAuth | Consent screen authorized domains, client redirect URIs | None expected while `authDomain` stays on `firebaseapp.com`. Confirm. | 1 |
-| J4 | Vercel | Projects and domains | Phase 1: add App domain to the existing project. Phase 3: create marketing project, move apex and `www` to it. Both projects need production and preview deploys wired into the pipeline (architecture open question 3). Speed Insights enabled per project. | 1, 3 |
+| J4 | Vercel | Projects and domains | Phase 1: add App domain to the existing project. Phase 3: create marketing project, move apex and `www` to it, and connect it to Vercel's GitHub integration the way the app project is. There is no CI pipeline to extend: the repository has no `.github` directory, so if the two projects are to share build gates, one has to be **created** (architecture open question 3, now answered). Speed Insights enabled per project. | 1, 3 |
 | J5 | DNS (registrar or Vercel DNS) | Records | Add `app` `CNAME` to Vercel. **Do not touch** apex `MX` (ImprovMX forwarding for `info@`), SPF, DKIM and DMARC (Resend), or any verification `TXT`. Record current values before editing. | 1 |
 | J6 | PayFast merchant dashboard | Default notify or return URL, if configured | Update to App if present; ask support about ITN redirect handling | 1 |
 | J7 | Google Search Console | Properties and sitemaps | Apex: resubmit sitemap after cutover, watch coverage for redirected URLs. App: add as a property only to confirm zero indexed pages. | 3, 4 |

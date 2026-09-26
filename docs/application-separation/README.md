@@ -7,6 +7,10 @@ application on `app.guardiancheck.co.za`.
 These documents prepare the migration. They do not perform it. No code, DNS,
 Vercel, Firebase or PayFast setting has been changed.
 
+Code references throughout are lines on `main` at `944e3d4`, and each one also
+names the route, symbol or constant it points at. `server.ts` in particular
+moves quickly, so if a line does not match, search for the name instead.
+
 | Document | Issue | Answers |
 |---|---|---|
 | [architecture.md](architecture.md) | [#50](https://github.com/KatOre-Solutions/GuardianCheck/issues/50) (7.1) | Which host serves what, SEO and indexing per host, the redirect map, the phased migration plan and checklist |
@@ -24,7 +28,9 @@ Vercel, Firebase or PayFast setting has been changed.
 3. **Church signup moves to the app host.** It creates a Firebase account, so
    it has to run where the user will stay signed in.
 4. **The apex proxies `/api/*` to the app permanently**, because PayFast keeps
-   sending renewal notifications for existing subscriptions to the apex.
+   sending renewal notifications for existing subscriptions to the apex. This is
+   built in phase 3, when the marketing site becomes its own Vercel project;
+   before that the single project already answers `/api` on both hosts.
 5. **No session sharing and no parent-domain cookies.** Users sign in once on
    the app host. The marketing site has no auth state.
 6. **Phased rollout.** The app host runs in parallel and takes new traffic for
@@ -38,6 +44,9 @@ Vercel, Firebase or PayFast setting has been changed.
 - [#47](https://github.com/KatOre-Solutions/GuardianCheck/issues/47) must be
   decided (phase 3 needs it; phases 0 to 2 do not).
 - Open questions are listed at the end of [architecture.md](architecture.md#open-questions).
+  Question 3 (the deploy pipeline) is answered there: the repository has no
+  `.github` directory and no CI, so the Vercel build is the only gate. Four
+  questions remain open.
 - One pre-existing bug surfaced while surveying: church slug generation does not
   check reserved paths, so a church named "About" or "Login" gets an unreachable
   URL today. Tracked in [#143](https://github.com/KatOre-Solutions/GuardianCheck/issues/143);

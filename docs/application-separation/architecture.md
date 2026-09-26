@@ -28,7 +28,9 @@ The target is two hosts:
 Old apex URLs for app pages keep working through permanent redirects. The apex
 also keeps answering `/api/*`, by proxying to the app host rather than
 redirecting, because PayFast keeps sending recurring-billing notifications to
-the address it was originally given.
+the address it was originally given. That proxy is a phase 3 job: until the
+marketing site becomes its own Vercel project, the single project already
+answers `/api` on both hosts.
 
 Because the two hosts are different browser origins, a user's sign-in, offline
 data and installed app do **not** carry over. Everyone signs in once more on
@@ -51,6 +53,7 @@ only as a step someone will eventually perform.
 | Aspect | Today | Source |
 |---|---|---|
 | Hosting | One Vercel project. `@vercel/static-build` serves `dist/`, `@vercel/node` serves `server.ts` for `/api/*`. | [vercel.json](../../vercel.json) |
+| Deploys | Vercel's own GitHub integration, and nothing else. There is **no `.github` directory** in the repository, so no CI runs `test:rules`, `test:route-pattern` or any other suite. The Vercel build is the only gate. The README's claim of a `.github/workflows/deploy.yml` is stale. | [README.md](../../README.md) |
 | Origin | `https://guardiancheck.co.za`, hard-coded as `SITE_URL` and used for every canonical, the sitemap and JSON-LD. | [src/constants/site.ts](../../src/constants/site.ts) |
 | App shape | One SPA. `Layout variant="marketing"` wraps `/`, `/about`, `/contact` and the legal pages; everything else uses the app layout. | [src/App.tsx](../../src/App.tsx) |
 | Route manifest | `EXACT_ROUTES`, tenant child routes, `RESERVED_SLUGS`. `vercel.json` routes are generated from it and the build fails if they drift. | [src/constants/appRoutes.ts](../../src/constants/appRoutes.ts), [scripts/generate-vercel-routes.ts](../../scripts/generate-vercel-routes.ts) |
@@ -100,9 +103,9 @@ flowchart LR
 
 **Why keep the existing Vercel project for the app, not the marketing site:**
 the app project holds all the production environment variables (Firebase Admin,
-PayFast, Resend, Discord) and the deploy pipeline. Re-pointing its domain is a
-settings change; recreating those secrets in a new project is where mistakes
-happen. The marketing project needs almost no secrets.
+PayFast, Resend, Discord) and its Vercel Git integration. Re-pointing its domain
+is a settings change; recreating those secrets in a new project is where
+mistakes happen. The marketing project needs almost no secrets.
 
 **One repository, two projects.** The two builds must keep sharing
 single-sourced facts: pricing (`src/constants/plans.ts`), company details
@@ -131,7 +134,7 @@ lives after the split.
 | `/admin`, `/volunteer`, `/parent` | App | 308, query kept (`?payment=`) | PayFast `return_url` targets `/admin`. |
 | `/profile`, `/master-admin`, `/master-admin/logs` | App | 308 | |
 | `/:churchSlug` and every tenant child route | **App** | 308 for any path that is not a marketing path | QR posters, WhatsApp messages and bookmarks already point here. |
-| `/api/*` | App | **Rewrite (proxy)** to app host | See [PayFast ITN](#why-api-is-proxied-not-redirected). |
+| `/api/*` | App | **Rewrite (proxy)** to app host, from phase 3 | Until then one project serves both hosts and `/api` already resolves to `server.ts`. See [PayFast ITN](#why-api-is-proxied-not-redirected). |
 | `/sw.js` | App | Serves a self-unregistering worker | See [Service worker on the apex](#service-worker-on-the-apex). |
 | `/manifest.webmanifest`, `/offline.html`, app icons | App | Removed (icons kept if marketing uses them) | Marketing is not installable. |
 | `/robots.txt`, `/sitemap.xml`, `/llms.txt` | Both, different content | Marketing versions | See [Indexing policy](#indexing-policy-per-host). |
@@ -157,8 +160,8 @@ Required before cutover:
    `MARKETING_ROUTES` constant) that the apex redirect config is generated
    from, the same way `vercel.json` is generated today.
 2. Feed that list into `RESERVED_SLUGS`, **and make the server enforce it**.
-   Today it does not: `/api/register-church`
-   ([server.ts:2292-2307](../../server.ts#L2292-L2307)) derives the slug from
+   Today it does not: the slug block in `app.post("/api/register-church")`
+   ([server.ts:2405-2420](../../server.ts#L2405-L2420)) derives the slug from
    the church name and checks only uniqueness. A church registering as "About"
    or "Login" already gets a slug the router treats as reserved, so its page is
    unreachable. This is a pre-existing bug, tracked independently of the split
@@ -240,7 +243,7 @@ production apex, as [site.ts](../../src/constants/site.ts) already insists.
 |---|---|---|---|
 | `www.guardiancheck.co.za/*` | Redirect to apex, same path and query | 308 | One canonical host |
 | Marketing paths, SEO files, marketing assets | Serve | 200 | |
-| `/api/*` | Rewrite to `https://app.guardiancheck.co.za/api/*` | Proxy | PayFast ITN, old clients |
+| `/api/*` | Rewrite to `https://app.guardiancheck.co.za/api/*` | Proxy | PayFast ITN, old clients. Needed from phase 3, when the apex stops running `server.ts`. |
 | `/sw.js` | Serve kill-switch worker | 200 | Retire the old app worker |
 | Everything else | Redirect to `https://app.guardiancheck.co.za` + same path + same query | 308 | Old app and church URLs |
 
@@ -268,7 +271,22 @@ source IP or host, so proxying is transparent to it.
 The same rewrite keeps any old apex tab or old cached shell working while it
 still calls relative `/api` paths.
 
-**This rewrite is permanent** for as long as any pre-split subscription exists.
+**When the rewrite becomes necessary: phase 3, not before.** It is needed only
+once the marketing site is its own Vercel project and the apex stops running
+`server.ts`. While one project still serves both hosts, the `/api/(.*)` route in
+[vercel.json](../../vercel.json) sends every `/api` request to `server.ts` with
+no host condition, ahead of `handle: filesystem`, so an ITN posted to the apex
+already reaches the handler whichever host it arrived on. An interim change that
+moves users to the app host with client-side redirects inside `index.html` does
+not affect this either, because `index.html` is never served for an `/api` path.
+
+So there is nothing to build before phase 3, and nothing already broken. The
+reverse misreading is the dangerous one: do not treat the ITN problem as solved
+by a proxy that was never built, because the moment the marketing project takes
+the apex, those ITNs stop reaching a server at all.
+
+**Once built, the rewrite is permanent** for as long as any pre-split
+subscription exists.
 
 ### Service worker on the apex
 
@@ -460,7 +478,7 @@ Run against production immediately after phase 3:
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| R1 | Renewals for existing subscriptions not recorded because ITNs hit the apex | High without the rewrite | High: churches locked out despite paying | Permanent `/api/*` rewrite on the apex; watch ITN logs after cutover |
+| R1 | Renewals for existing subscriptions not recorded because ITNs hit the apex | High from phase 3 without the rewrite; zero before it, while one project serves both hosts | High: churches locked out despite paying | Permanent `/api/*` rewrite on the apex, built as part of phase 3; watch ITN logs after cutover |
 | R2 | A church's slug collides with a future marketing path | Medium | High for that church: their poster URL shows a marketing page | Shared route list, reserved slugs, production clash check |
 | R3 | Parents arrive on a Sunday signed out or offline with no cached QR | Medium | High at the check-in desk | Phase 2 soak and notice, weekday cutover, church comms; volunteers can still look children up |
 | R4 | Old service worker boots the old app on the apex while offline | High for installed users | Medium: confusing, and possibly stale data | Kill-switch worker |
@@ -477,10 +495,18 @@ Run against production immediately after phase 3:
 2. **PayFast ITN redirects.** Does PayFast follow a 3xx on an ITN POST? The plan
    does not depend on the answer, but it decides whether the rewrite could ever
    be retired.
-3. **Deploy pipeline.** The README describes deploys from
-   `.github/workflows/deploy.yml`, but that file is not in the repository tree.
-   Confirm where production deploys are triggered, since phase 3 adds a second
-   project that needs the same pipeline.
+3. ~~**Deploy pipeline.**~~ **Answered.** There is no `.github` directory in the
+   repository, so there is no CI at all: no workflow runs the test suites, and
+   the README's reference to `.github/workflows/deploy.yml` is stale. Deploys
+   come from Vercel's own GitHub integration, which builds a preview on every
+   pull request and, by its default setting, production on pushes to `main`.
+   Confirm the production branch on the Vercel project page. Either way the
+   Vercel build is the only gate. What remains is a decision, not a question:
+   phase 3 adds a second project, and wiring both projects into a pipeline means
+   **creating one**, not extending an existing one. Tracked as part of J4 in
+   [config-inventory.md](config-inventory.md#j-external-consoles-not-in-the-repository).
+   The stale README line should be corrected separately, since this PR changes
+   no file outside `docs/application-separation/`.
 4. **Vercel plan.** Confirm two projects and the domain moves are allowed on the
    current plan.
 5. **Rich cards for church links.** Should a shared `app.guardiancheck.co.za/grace`

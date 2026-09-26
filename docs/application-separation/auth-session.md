@@ -42,10 +42,10 @@ The rest of this document explains why, and lists the required changes and risks
 | Google | `signInWithPopup`, not redirect. The popup runs on the `firebaseapp.com` handler and hands the credential back to the opener. | [src/pages/Login.tsx:177](../../src/pages/Login.tsx#L177) |
 | Auth state | One `onAuthStateChanged` subscription for the whole app, plus a live `users/{uid}` document | [src/contexts/AuthContext.tsx](../../src/contexts/AuthContext.tsx) |
 | Post sign-in routing | `resolveLandingPath` picks the dashboard; `/login` forwards an already signed-in user automatically | [src/lib/landing.ts](../../src/lib/landing.ts), [src/pages/Login.tsx:140](../../src/pages/Login.tsx#L140) |
-| API auth | `Authorization: Bearer <Firebase ID token>`, verified by the Admin SDK. Same-origin calls to relative `/api/...` paths. No CORS middleware. | [server.ts:422](../../server.ts#L422) (`authenticateToken`) |
-| Email verification | Server generates the link with `generateEmailVerificationLink` and a continue URL of `${APP_URL}/login` | [server.ts:637](../../server.ts#L637), [server.ts:1723](../../server.ts#L1723), [server.ts:2363](../../server.ts#L2363) |
+| API auth | `Authorization: Bearer <Firebase ID token>`, verified by the Admin SDK. Same-origin calls to relative `/api/...` paths. No CORS middleware. | [server.ts:432](../../server.ts#L432) (`authenticateToken`) |
+| Email verification | Server generates the link with `generateEmailVerificationLink` and a continue URL of `${APP_URL}/login` | `/api/auth/send-verification` [server.ts:683](../../server.ts#L683), `/api/accept-invite` [server.ts:1782](../../server.ts#L1782), `/api/register-church` [server.ts:2482](../../server.ts#L2482) |
 | Password reset | Client `sendPasswordResetEmail(auth, email)` with no continue URL, so Firebase's default handler page | [src/pages/Login.tsx:358](../../src/pages/Login.tsx#L358) |
-| Invitations | Random token stored in Firestore; link `${APP_URL}/accept-invite?token=` | [server.ts:1608](../../server.ts#L1608) |
+| Invitations | Random token stored in Firestore; link `${APP_URL}/accept-invite?token=` | `/api/invite-user` [server.ts:1654](../../server.ts#L1654) |
 | App Check | reCAPTCHA Enterprise, when `VITE_RECAPTCHA_SITE_KEY` is set. The key has a domain allowlist in Google Cloud. | [src/lib/firebase.ts:16](../../src/lib/firebase.ts#L16) |
 | Cookies | GuardianCheck sets none. The public Cookie Policy says so; only Google's reCAPTCHA may set its own. | [src/pages/legal/CookiePolicyPage.tsx](../../src/pages/legal/CookiePolicyPage.tsx) |
 | Marketing awareness of auth | `MarketingHeader` and `DemoInvite` call `useAuth` to swap "Log in" for "Open GuardianCheck" and to hide the demo invite from signed-in users | [MarketingHeader.tsx:20](../../src/components/marketing/MarketingHeader.tsx#L20), [DemoInvite.tsx:40](../../src/components/marketing/DemoInvite.tsx#L40) |
@@ -58,7 +58,7 @@ The split affects more than the session. All of these are keyed by origin:
 |---|---|---|---|
 | Firebase session | IndexedDB `firebaseLocalStorageDb` | Staying signed in | Firebase SDK |
 | Firestore offline cache | IndexedDB, `persistentLocalCache` | Offline dashboards, **the parent's offline QR view** | [src/lib/firebase.ts:29](../../src/lib/firebase.ts#L29), [OfflineParentQR.tsx](../../src/pages/OfflineParentQR.tsx) |
-| Last landing path | `localStorage["gc.lastLandingPath"]` | Preloading the right dashboard chunk | [src/App.tsx:108](../../src/App.tsx#L108) |
+| Last landing path | `localStorage["gc.lastLandingPath"]` | Preloading the right dashboard chunk | [src/App.tsx:109](../../src/App.tsx#L109) |
 | Church cache | `localStorage["gc.church.<slug>"]` | Instant and offline church resolution | [src/contexts/TenantContext.tsx](../../src/contexts/TenantContext.tsx) |
 | Chosen camera | `localStorage["guardiancheck.scanner.camera"]` | Volunteers' scanner camera choice | [src/lib/camera.ts:298](../../src/lib/camera.ts#L298) |
 | Demo invite dismissal | `sessionStorage` / `localStorage` | Marketing popup snooze | [DemoInvite.tsx](../../src/components/marketing/DemoInvite.tsx) |
