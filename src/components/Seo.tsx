@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { SITE_NAME, OG_IMAGE_ALT, OG_IMAGE_PATH, absoluteUrl, canonicalUrl } from "../constants/site";
+import { SITE_MODE } from "../lib/siteMode";
 
 /**
  * Per-route document head management.
@@ -170,12 +171,16 @@ export function Seo({
   title,
   documentTitle,
   description,
-  noindex = false,
+  noindex: noindexProp = false,
   canonicalPath,
   image,
   imageAlt,
 }: SeoProps) {
   const { pathname } = useLocation();
+  // Nothing on the app host is indexed (#14): its public-looking pages
+  // (register, login, church landing) all have their indexable counterpart on
+  // the apex, or none at all.
+  const noindex = noindexProp || SITE_MODE === "app";
 
   useEffect(() => {
     document.title = documentTitle || (title ? `${title} | ${SITE_NAME}` : SITE_NAME);

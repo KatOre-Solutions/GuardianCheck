@@ -8,10 +8,42 @@
  */
 
 import { logger } from "./logger";
+import { SITE_MODE } from "./siteMode";
+
+/**
+ * The marketing host after the domain split (#14) is not an app: nothing to
+ * install, nothing to boot offline.
+ *
+ * The worker retires itself, in public/sw.js, because this code only runs for
+ * someone who actually loads a marketing page: an application path on this
+ * host is redirected away before any bundle downloads, so a user whose entry
+ * point is /app or a church slug would never reach it. What is left here is
+ * the part a worker cannot do, removing the install link, plus the same
+ * cleanup for anyone who does land on a marketing page and whose browser has
+ * not re-fetched the worker yet.
+ */
+function retireServiceWorker(): void {
+  document.querySelector('link[rel="manifest"]')?.remove();
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+    .then(() => caches.keys())
+    .then((names) =>
+      Promise.all(names.filter((name) => name.startsWith("guardiancheck-shell-")).map((name) => caches.delete(name))),
+    )
+    .catch((error: unknown) => {
+      logger.warn("Service worker retirement failed", { reason: String(error) });
+    });
+}
 
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
+  if (SITE_MODE === "marketing") {
+    retireServiceWorker();
+    return;
+  }
 
   // After `load`, so registration never competes with the first render for
   // bandwidth on a slow connection.

@@ -9,11 +9,14 @@ import {
 } from "firebase/firestore";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import firebaseConfig from "../../firebase-applet-config.json";
+import { SITE_MODE } from "./siteMode";
 
 export const app = initializeApp(firebaseConfig);
 
 // Initialize App Check immediately after app init
-if (typeof window !== "undefined") {
+// Not on the marketing host (#14): it makes no authenticated call, and the
+// reCAPTCHA Enterprise key's domain list names the application's host only.
+if (typeof window !== "undefined" && SITE_MODE !== "marketing") {
   const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
   if (siteKey) {
     initializeAppCheck(app, {

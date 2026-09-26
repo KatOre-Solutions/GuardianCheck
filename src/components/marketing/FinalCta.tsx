@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { SiteLink } from "../SiteLink";
 import { ArrowRight } from "lucide-react";
 import { DEMO_MESSAGE } from "../../constants/marketing";
 import { COMPANY } from "../../constants/company";
@@ -15,13 +15,14 @@ export function FinalCta() {
           See it running before your next service.
         </h2>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Link
+          <SiteLink
+            host="app"
             to="/register-church"
             className="inline-flex items-center justify-center gap-2 bg-primary text-white px-7 py-3.5 rounded-xl font-semibold hover:bg-primary/90 transition-colors"
           >
             Start free trial
             <ArrowRight className="h-4 w-4" />
-          </Link>
+          </SiteLink>
           <a
             href={demoHref}
             target="_blank"

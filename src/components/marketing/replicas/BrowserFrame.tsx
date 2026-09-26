@@ -1,4 +1,8 @@
 import type { ReactNode } from "react";
+import { churchUrlHost, DOMAIN_SPLIT_PHASE } from "../../../constants/site";
+
+/** The address the app is reached at, as the mock address bar shows it. */
+export const APP_FRAME_URL = DOMAIN_SPLIT_PHASE === "off" ? `${churchUrlHost()}/app` : churchUrlHost();
 
 /** A thin browser-chrome frame (three dots, a URL pill) around a desktop replica screen. */
 export function BrowserFrame({
