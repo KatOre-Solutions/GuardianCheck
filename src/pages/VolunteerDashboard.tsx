@@ -15,7 +15,8 @@ import {
   Clock,
   ChevronRight,
   X,
-  WifiOff
+  WifiOff,
+  Lock
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { format } from "date-fns";
@@ -33,6 +34,8 @@ import { useChurchCollection, useLiveCollection } from "../hooks/useLiveData";
 import { useOnlineStatus } from "../hooks/useOnlineStatus";
 import { useMarkWhen } from "../lib/perfMarks";
 import { useTenant } from "../contexts/TenantContext";
+import { useChurchLocked } from "../hooks/useChurchAccess";
+import { ChurchLockedScreen } from "../components/ChurchLockedScreen";
 
 export default function VolunteerDashboard() {
   const { user, userData, role, roles, darkMode, loading: authLoading } = useAuth();
@@ -464,6 +467,25 @@ export default function VolunteerDashboard() {
     }
   };
 
+  /* A locked church (trial or subscription ended) cannot check children in,
+     but a child checked in before the lock must still go home with the right
+     guardian. So while any check-in is open the page stays up in check-out
+     only mode, and once the room is empty it gives way to the locked screen.
+     Master admins are never locked. */
+  const isLocked = useChurchLocked(churchData);
+  // Set once this page has shown a locked church with children still here, so
+  // checking out the last one leaves the check-out confirmation on screen
+  // instead of swapping it for the locked screen mid-handover.
+  const [releasedDuringLock, setReleasedDuringLock] = useState(false);
+
+  useEffect(() => {
+    if (isLocked && checkedInChildren.length > 0) setReleasedDuringLock(true);
+  }, [isLocked, checkedInChildren.length]);
+
+  useEffect(() => {
+    if (isLocked && activeTab === "scan") setActiveTab("checkout");
+  }, [isLocked, activeTab]);
+
   // The same conditions as the skeleton gates below. Declared first: it is a hook.
   useMarkWhen("dashboard-rendered", !authLoading && isVolunteer && !serviceLoading, { page: "volunteer" });
 
@@ -480,6 +502,15 @@ export default function VolunteerDashboard() {
     return <VolunteerDashboardSkeleton />;
   }
 
+  // Waits for the roster to answer: an empty array before then is not "no
+  // children in the building".
+  if (
+    isLocked && rosterQ.loaded && checkedInChildren.length === 0 && churchId &&
+    !(releasedDuringLock && activeTab === "checkout")
+  ) {
+    return <ChurchLockedScreen church={churchData} churchId={churchId} canPay={roles.includes("admin")} />;
+  }
+
   return (
     <div className="space-y-8">
       {!isOnline && (
@@ -492,7 +523,20 @@ export default function VolunteerDashboard() {
           <span>Offline Mode Active. Actions will sync when connection is restored.</span>
         </motion.div>
       )}
-      
+
+      {isLocked && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-900 dark:text-amber-200 px-4 sm:px-6 py-3 rounded-xl flex items-start gap-3 text-sm">
+          <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>
+            <strong>Check-out only.</strong> Your church's GuardianCheck access has ended, so no new
+            children can be checked in.{" "}
+            {checkedInChildren.length > 0
+              ? `You can still check out the ${checkedInChildren.length} ${checkedInChildren.length === 1 ? "child" : "children"} already here.`
+              : "Every child has been checked out."}
+          </span>
+        </div>
+      )}
+
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Volunteer Station</h1>
@@ -504,12 +548,12 @@ export default function VolunteerDashboard() {
                   <CheckCircle2 className="h-3 w-3" />
                   <span>{activeService.name} Active</span>
                 </span>
-                <button
+                {!isLocked && <button
                   onClick={() => closeService(activeService.id)}
                   className="text-[10px] font-bold text-red-600 hover:underline uppercase tracking-wider"
                 >
                   Close Service
-                </button>
+                </button>}
               </div>
             ) : upcomingServices.length > 0 ? (
               <div className="flex items-center space-x-2">
@@ -517,12 +561,12 @@ export default function VolunteerDashboard() {
                   <Clock className="h-3 w-3" />
                   <span>{upcomingServices[0].name} Starting Soon</span>
                 </span>
-                <button
+                {!isLocked && <button
                   onClick={() => activateService(userData!.churchId, upcomingServices[0].id)}
                   className="text-[10px] font-bold text-primary hover:underline uppercase tracking-wider"
                 >
                   Start Now
-                </button>
+                </button>}
               </div>
             ) : (
               <span className="flex items-center space-x-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
@@ -533,6 +577,7 @@ export default function VolunteerDashboard() {
           </div>
         </div>
         <div className="flex bg-white dark:bg-gray-800 p-1 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 w-full md:w-auto">
+          {!isLocked && (
           <button
             onClick={() => setActiveTab("scan")}
             className={`flex-1 md:flex-none min-w-0 px-1 sm:px-4 md:px-6 py-2.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 whitespace-nowrap ${
@@ -542,6 +587,7 @@ export default function VolunteerDashboard() {
             <Scan className="h-5 w-5 sm:h-4 sm:w-4 flex-shrink-0" />
             <span>Check In</span>
           </button>
+          )}
           <button
             onClick={() => setActiveTab("checkout")}
             className={`flex-1 md:flex-none min-w-0 px-1 sm:px-4 md:px-6 py-2.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 whitespace-nowrap ${
@@ -563,7 +609,7 @@ export default function VolunteerDashboard() {
         </div>
       </header>
 
-      {activeTab === "scan" && (
+      {activeTab === "scan" && !isLocked && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
           <div className="space-y-6">
             <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-6">
