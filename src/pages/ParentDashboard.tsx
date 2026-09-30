@@ -5,8 +5,8 @@ import { AccessDenied } from "../components/AccessDenied";
 import { useLiveCollection, useLiveDocument } from "../hooks/useLiveData";
 import { useChurchLocked } from "../hooks/useChurchAccess";
 import { addDocument, getCollection, updateDocument, subscribeToCollection, removeDocument, setDocument, subscribeToDocument } from "../lib/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../lib/storage";
+import { uploadPrivateImage } from "../lib/privateImages";
+import { PrivateImage } from "../components/PrivateImage";
 import { where } from "firebase/firestore";
 import QRCode from "react-qr-code";
 import { useTenant } from "../contexts/TenantContext";
@@ -312,16 +312,14 @@ export default function ParentDashboard() {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      showErrorToast("Image size must be less than 5MB");
+    if (file.size > 4 * 1024 * 1024) {
+      showErrorToast("Image size must be less than 4MB");
       return;
     }
 
     setUploading(true);
     try {
-      const storageRef = ref(storage, `children/${user.uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
+      const url = await uploadPrivateImage("children", file);
       
       if (isEditing) {
         setEditingChild({ ...editingChild, photoUrl: url, photoURL: url });
@@ -341,16 +339,14 @@ export default function ParentDashboard() {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      showErrorToast("Image size must be less than 5MB");
+    if (file.size > 4 * 1024 * 1024) {
+      showErrorToast("Image size must be less than 4MB");
       return;
     }
 
     setUploading(true);
     try {
-      const storageRef = ref(storage, `guardians/${user.uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
+      const url = await uploadPrivateImage("guardians", file);
 
       setNewGuardian({ ...newGuardian, photoUrl: url, photoURL: url });
       showSuccessToast("Image uploaded successfully");
@@ -381,16 +377,14 @@ export default function ParentDashboard() {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      showErrorToast("Image size must be less than 5MB");
+    if (file.size > 4 * 1024 * 1024) {
+      showErrorToast("Image size must be less than 4MB");
       return;
     }
 
     setUploadingPhotoFor(guardianId);
     try {
-      const storageRef = ref(storage, `guardians/${user.uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
+      const url = await uploadPrivateImage("guardians", file);
 
       // Both spellings, matching what every other write in this file does.
       await updateDocument("guardians", guardianId, { photoUrl: url, photoURL: url });
@@ -754,11 +748,11 @@ export default function ParentDashboard() {
             <div className="flex items-center justify-between">
               <div className="h-16 w-16 bg-primary/10 dark:bg-primary/20 rounded-2xl flex items-center justify-center overflow-hidden">
                 {child.photoUrl || child.photoURL ? (
-                  <img 
-                    src={child.photoUrl || child.photoURL} 
-                    alt={`${child.firstName} ${child.lastName}`} 
-                    className="h-full w-full object-cover" 
-                    referrerPolicy="no-referrer" 
+                  <PrivateImage
+                    src={child.photoUrl || child.photoURL}
+                    alt={`${child.firstName} ${child.lastName}`}
+                    className="h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
                   />
                 ) : (
                   <User className="h-8 w-8 text-primary dark:text-primary/80" />
@@ -915,7 +909,7 @@ export default function ParentDashboard() {
                                   <span className="text-[8px] font-bold text-primary uppercase">Uploading...</span>
                                 </div>
                               ) : newGuardian.photoUrl || newGuardian.photoURL ? (
-                                <img src={newGuardian.photoUrl || newGuardian.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                                <PrivateImage src={newGuardian.photoUrl || newGuardian.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                               ) : (
                                 <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
                               )}
@@ -1020,7 +1014,7 @@ export default function ParentDashboard() {
                           <div className="flex items-center space-x-3 min-w-0">
                             <div className="h-10 w-10 shrink-0 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
                               {guardian.photoUrl || guardian.photoURL ? (
-                                <img
+                                <PrivateImage
                                   src={guardian.photoUrl || guardian.photoURL}
                                   alt={`${guardian.firstName} ${guardian.lastName}`}
                                   className="h-full w-full object-cover"
@@ -1170,7 +1164,7 @@ export default function ParentDashboard() {
                           <span className="text-[10px] font-bold text-primary uppercase">Uploading...</span>
                         </div>
                       ) : newChild.photoUrl || newChild.photoURL ? (
-                        <img src={newChild.photoUrl || newChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                        <PrivateImage src={newChild.photoUrl || newChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
                       )}
@@ -1311,7 +1305,7 @@ export default function ParentDashboard() {
                           <span className="text-[10px] font-bold text-primary uppercase">Uploading...</span>
                         </div>
                       ) : editingChild.photoUrl || editingChild.photoURL ? (
-                        <img src={editingChild.photoUrl || editingChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                        <PrivateImage src={editingChild.photoUrl || editingChild.photoURL} alt="Preview" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <User className="h-10 w-10 text-gray-300 dark:text-gray-600" />
                       )}
@@ -1547,7 +1541,7 @@ export default function ParentDashboard() {
                         <div className="flex items-center space-x-3">
                           <div className="h-10 w-10 bg-white dark:bg-gray-800 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
                             {child.photoUrl || child.photoURL ? (
-                              <img src={child.photoUrl || child.photoURL} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                              <PrivateImage src={child.photoUrl || child.photoURL} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
                               <User className="h-5 w-5 text-primary dark:text-primary/80" />
                             )}

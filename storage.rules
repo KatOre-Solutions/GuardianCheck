@@ -1,21 +1,24 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // Private images use authenticated server endpoints. Admin SDK operations
+    // bypass these client rules after authorization against the named database.
     match /profiles/{userId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if false;
     }
-    match /children/{childId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null;
+    match /children/{allPaths=**} {
+      allow read, write: if false;
     }
-    match /guardians/{guardianId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null;
+    match /guardians/{allPaths=**} {
+      allow read, write: if false;
+    }
+    // Church logos are intentionally shown on public landing pages.
+    match /churches/{churchId}/{fileName} {
+      allow get: if fileName.matches('^logo_[^/]+$');
+      allow list, write: if false;
     }
     match /{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

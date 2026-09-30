@@ -1,3 +1,4 @@
+import { PrivateImage } from "../components/PrivateImage";
 import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
@@ -2456,7 +2457,7 @@ export default function AdminDashboard() {
                 <div className="flex items-center space-x-4">
                   <div className="h-10 w-10 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center overflow-hidden">
                     {u.photoUrl || u.photoURL ? (
-                      <img src={u.photoUrl || u.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      <PrivateImage src={u.photoUrl || u.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                     ) : (
                       <Users className="h-5 w-5 text-gray-400" />
                     )}

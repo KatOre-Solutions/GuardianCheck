@@ -18,6 +18,7 @@ import fs from "fs";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import { getStorage as getAdminStorage } from "firebase-admin/storage";
 import { addMonths, format, parseISO } from "date-fns";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
@@ -29,6 +30,17 @@ import { CURRENT_POLICY_VERSION } from "./src/constants/legalContent.js";
 import { isKnownAppPath } from "./src/constants/appRoutes.js";
 import { pricingForPayment } from "./src/lib/planPricing.js";
 import { TRIAL_MONTHS } from "./src/constants/plans.js";
+import {
+  mayReadPrivateImage,
+  mayUploadPrivateImage,
+  mayManageChurchBranding,
+  isPlatformAdmin,
+  newPrivateImagePath,
+  parsePrivateImagePath,
+  privateImagePathFromReference,
+  validImageBytes,
+  MAX_PRIVATE_IMAGE_BYTES,
+} from "./src/lib/privateStorageAccess.js";
 import {
   CHURCH_ACCESS_LOCKED,
   accessUntilForBillingDate,
@@ -107,6 +119,7 @@ const initializeFirebase = () => {
       
       const options: any = {
         projectId: firebaseConfig.projectId,
+        storageBucket: firebaseConfig.storageBucket,
       };
 
       if (hasServiceAccount) {
@@ -272,7 +285,16 @@ const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   keyGenerator,
+  skip: (req) => req.method === "GET" && req.path === "/private-images",
   message: { error: "Too many requests, please try again later." }
+});
+
+const privateImageReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3000,
+  keyGenerator,
+  skip: (req) => req.method !== "GET",
+  message: { error: "Too many image requests, please try again later." }
 });
 
 const peakLimiter = rateLimit({
@@ -494,6 +516,7 @@ const authenticateToken = async (req: any, res: any, next: any) => {
         ...decodedToken,
         churchId: userData.churchId,
         role: userData.role,
+        roles: userData.roles,
         status: userData.status,
         firstName: userData.firstName,
         lastName: userData.lastName
@@ -624,6 +647,27 @@ const requireChurchAccess = async (req: any, res: any, next: any) => {
   } catch (error: any) {
     console.error("Church access check failed:", error.message);
     res.status(500).json({ error: "Internal server error during access check", traceId: req.traceId });
+  }
+};
+
+// Storage decisions must read the configured named database. The general API
+// middleware has a legacy default-database fallback that is unsafe here.
+const authenticateStorageUser = async (req: any, res: any, next: any) => {
+  const header = req.headers.authorization;
+  const token = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token || !adminApp || !firebaseConfig.firestoreDatabaseId) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  try {
+    const identity = await getAuth(adminApp).verifyIdToken(token);
+    const storageDb = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
+    const snapshot = await storageDb.collection("users").doc(identity.uid).get();
+    if (!snapshot.exists) return res.status(403).json({ error: "GuardianCheck account required" });
+    req.user = { ...identity, ...snapshot.data(), uid: identity.uid, email: identity.email };
+    return next();
+  } catch (error) {
+    console.error("Storage authentication failed:", error);
+    return res.status(401).json({ error: "Authentication failed" });
   }
 };
 
@@ -778,6 +822,8 @@ async function getCachedDoc(req: any, collection: string, id: string, churchId: 
 async function startServer() {
   const PORT = 3000;
 
+  app.use("/api/private-images", express.raw({ type: "*/*", limit: "6mb" }));
+  app.use("/api/church-logo", express.raw({ type: "*/*", limit: "6mb" }));
   app.use(express.json({
     verify: (req: any, res, buf) => {
       req.rawBody = buf;
@@ -790,11 +836,146 @@ async function startServer() {
     }
   }));
   app.set("trust proxy", 1);
+  app.use("/api/private-images", privateImageReadLimiter);
   app.use("/api/", generalLimiter);
 
   // API routes
   app.get("/api/legal-version", (req, res) => {
     res.json({ version: CURRENT_POLICY_VERSION });
+  });
+
+  // The named Firestore database is the source of roles and church membership.
+  // Storage Rules cannot read it, so private objects are served through this boundary.
+  app.post("/api/private-images/:kind", authenticateStorageUser, async (req, res) => {
+    const kind = req.params.kind;
+    if (kind !== "children" && kind !== "guardians" && kind !== "profiles") {
+      return res.status(404).json({ error: "Unknown image type" });
+    }
+    if (!mayUploadPrivateImage(req.user, kind) || (kind !== "profiles" && !req.user.churchId)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (kind !== "profiles") {
+      try {
+        const churchDoc = await getFirestore(adminApp, firebaseConfig.firestoreDatabaseId).collection("churches").doc(req.user.churchId).get();
+        if (getChurchAccess(churchDoc.exists ? churchDoc.data() : null).state === "locked") {
+          return res.status(402).json({ error: "Church access has ended" });
+        }
+      } catch (error) {
+        console.error("Private image church access check failed:", error);
+        return res.status(500).json({ error: "Church access check failed" });
+      }
+    }
+    const contentType = (req.headers["content-type"] || "").split(";")[0].toLowerCase();
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length > MAX_PRIVATE_IMAGE_BYTES || !validImageBytes(contentType, body)) {
+      return res.status(415).json({ error: "A JPEG, PNG or WebP image of at most 4 MB is required" });
+    }
+    const extension = contentType === "image/jpeg" ? "jpg" : contentType === "image/png" ? "png" : "webp";
+    const objectPath = newPrivateImagePath(kind, req.user, extension);
+    try {
+      await getAdminStorage(adminApp).bucket(firebaseConfig.storageBucket).file(objectPath).save(body, {
+        resumable: false,
+        metadata: { contentType, cacheControl: "private, no-store" },
+      });
+      return res.status(201).json({ reference: `storage://${objectPath}` });
+    } catch (error) {
+      console.error("Private image upload failed:", error);
+      return res.status(500).json({ error: "Image upload failed" });
+    }
+  });
+
+  app.get("/api/private-images", authenticateStorageUser, async (req, res) => {
+    const reference = req.query.ref;
+    const objectPath = typeof reference === "string"
+      ? privateImagePathFromReference(reference, firebaseConfig.storageBucket)
+      : null;
+    const target = objectPath ? parsePrivateImagePath(objectPath) : null;
+    if (!target) return res.status(400).json({ error: "Invalid image reference" });
+    try {
+      const storageDb = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
+      const ownerSnapshot = await storageDb.collection("users").doc(target.ownerUid).get();
+      const owner = ownerSnapshot.exists ? { uid: target.ownerUid, ...ownerSnapshot.data() } : null;
+      if (!mayReadPrivateImage(req.user, owner, target)) {
+        return res.status(404).json({ error: "Image not found" });
+      }
+      const file = getAdminStorage(adminApp).bucket(firebaseConfig.storageBucket).file(objectPath);
+      const [metadata] = await file.getMetadata();
+      const contentType = metadata.contentType || "";
+      if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(contentType)) {
+        return res.status(415).json({ error: "Unsupported image" });
+      }
+      res.setHeader("Cache-Control", "private, no-store");
+      const [url] = await file.getSignedUrl({ version: "v4", action: "read", expires: Date.now() + 60_000, responseDisposition: "inline" });
+      return res.json({ url, expiresInSeconds: 60 });
+    } catch (error: any) {
+      if (error?.code === 404) return res.status(404).json({ error: "Image not found" });
+      console.error("Private image read failed:", error);
+      return res.status(500).json({ error: "Image read failed" });
+    }
+  });
+
+  app.post("/api/church-logo", authenticateStorageUser, async (req, res) => {
+    const requestedChurchId = isPlatformAdmin(req.user) && typeof req.query.churchId === "string"
+      ? req.query.churchId : req.user.churchId;
+    if (!mayManageChurchBranding(req.user) || !requestedChurchId || !/^[A-Za-z0-9_-]+$/.test(requestedChurchId)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const churchDoc = await getFirestore(adminApp, firebaseConfig.firestoreDatabaseId).collection("churches").doc(requestedChurchId).get();
+      if (!churchDoc.exists) return res.status(404).json({ error: "Church not found" });
+      if (!isPlatformAdmin(req.user) && getChurchAccess(churchDoc.data()).state === "locked") {
+        return res.status(402).json({ error: "Church access has ended" });
+      }
+    } catch (error) {
+      console.error("Church logo access check failed:", error);
+      return res.status(500).json({ error: "Church access check failed" });
+    }
+    const contentType = (req.headers["content-type"] || "").split(";")[0].toLowerCase();
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length > MAX_PRIVATE_IMAGE_BYTES || !validImageBytes(contentType, body)) {
+      return res.status(415).json({ error: "A JPEG, PNG or WebP image of at most 4 MB is required" });
+    }
+    const extension = contentType === "image/jpeg" ? "jpg" : contentType === "image/png" ? "png" : "webp";
+    const objectPath = `churches/${requestedChurchId}/logo_${uuidv4()}.${extension}`;
+    const downloadToken = uuidv4();
+    try {
+      await getAdminStorage(adminApp).bucket(firebaseConfig.storageBucket).file(objectPath).save(body, {
+        resumable: false,
+        metadata: { contentType, metadata: { firebaseStorageDownloadTokens: downloadToken } },
+      });
+      const url = `https://firebasestorage.googleapis.com/v0/b/${firebaseConfig.storageBucket}/o/${encodeURIComponent(objectPath)}?alt=media&token=${downloadToken}`;
+      return res.status(201).json({ url });
+    } catch (error) {
+      console.error("Church logo upload failed:", error);
+      return res.status(500).json({ error: "Logo upload failed" });
+    }
+  });
+
+  app.delete("/api/church-logo", authenticateStorageUser, async (req, res) => {
+    if (!mayManageChurchBranding(req.user)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    const reference = req.query.ref;
+    if (typeof reference !== "string") return res.status(400).json({ error: "Invalid logo reference" });
+    try {
+      const url = new URL(reference);
+      const prefix = `/v0/b/${encodeURIComponent(firebaseConfig.storageBucket)}/o/`;
+      if (url.protocol !== "https:" || url.hostname !== "firebasestorage.googleapis.com" || !url.pathname.startsWith(prefix)) {
+        return res.status(400).json({ error: "Invalid logo reference" });
+      }
+      const objectPath = decodeURIComponent(url.pathname.slice(prefix.length));
+      const parts = objectPath.split("/");
+      if (parts.length !== 3 || parts[0] !== "churches" ||
+          (!isPlatformAdmin(req.user) && parts[1] !== req.user.churchId) || !parts[2].startsWith("logo_")) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      await getAdminStorage(adminApp).bucket(firebaseConfig.storageBucket).file(objectPath).delete();
+      return res.status(204).end();
+    } catch (error: any) {
+      if (error?.code === 404) return res.status(204).end();
+      console.error("Church logo deletion failed:", error);
+      return res.status(500).json({ error: "Logo deletion failed" });
+    }
   });
 
   app.get("/api/health", async (req, res) => {
