@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
-import { uploadFile, getPathFromUrl, deleteFile } from "../lib/storage";
+import { uploadChurchLogo, deleteChurchLogo } from "../lib/storage";
 import { safeFetch } from "../lib/api";
 import { SITE_URL } from "../constants/site";
 
@@ -109,8 +109,8 @@ export default function ChurchSettings() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      showErrorToast("Please upload an image file (PNG, JPG, etc.)");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      showErrorToast("Please upload a JPEG, PNG or WebP image");
       return;
     }
 
@@ -168,18 +168,10 @@ export default function ChurchSettings() {
     setSaving(true);
     try {
       let finalLogoUrl = formData.logoUrl;
+      const previousLogoUrl = formData.logoUrl;
 
       if (logoFile) {
-        if (formData.logoUrl && formData.logoUrl.includes("firebasestorage")) {
-          const oldPath = getPathFromUrl(formData.logoUrl);
-          if (oldPath) {
-            try { await deleteFile(oldPath); } catch (err) { console.warn("Failed to delete old logo:", err); }
-          }
-        }
-
-        const extension = logoFile.name.split(".").pop();
-        const path = `churches/${userData.churchId}/logo_${Date.now()}.${extension}`;
-        finalLogoUrl = await uploadFile(path, logoFile);
+        finalLogoUrl = await uploadChurchLogo(logoFile);
       }
 
       // Name and branding go in one request. They used to be written
@@ -204,6 +196,10 @@ export default function ChurchSettings() {
       });
 
       if (!ok) throw new Error(error || "Failed to update settings");
+
+      if (logoFile && previousLogoUrl && previousLogoUrl.includes("firebasestorage")) {
+        try { await deleteChurchLogo(previousLogoUrl); } catch (err) { console.warn("Failed to delete old logo:", err); }
+      }
 
       setLogoFile(null);
       showSuccessToast("Settings updated successfully!");

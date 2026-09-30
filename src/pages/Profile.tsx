@@ -4,8 +4,8 @@ import { useAuth } from "../hooks/useAuth";
 import { updateProfile } from "firebase/auth";
 import { getDocument, updateDocument, deactivateUser } from "../lib/firestore";
 import { auth } from "../lib/firebase";
-import { storage } from "../lib/storage";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { uploadPrivateImage } from "../lib/privateImages";
+import { PrivateImage } from "../components/PrivateImage";
 import { User, Mail, Phone, MapPin, Camera, Trash2, Moon, Sun, Save, LogOut, AlertCircle, Loader2, ArrowLeft, Calendar } from "lucide-react";
 import { showErrorToast, showSuccessToast } from "../lib/error-handler";
 import { motion } from "motion/react";
@@ -24,7 +24,7 @@ export default function Profile() {
   const [showDeactivateModal, setShowDeactivateModal] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
 
-  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_FILE_SIZE = 4 * 1024 * 1024;
 
   useEffect(() => {
     if (user) {
@@ -84,27 +84,25 @@ export default function Profile() {
     if (!file || !user) return;
 
     if (file.size > MAX_FILE_SIZE) {
-      showErrorToast("File size exceeds 5MB limit");
+      showErrorToast("File size exceeds 4MB limit");
       return;
     }
 
     setUploading(true);
     try {
-      const storageRef = ref(storage, `profiles/${user.uid}/${Date.now()}_${file.name}`);
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
+      const reference = await uploadPrivateImage("profiles", file);
       
-      setProfile({ ...profile, photoUrl: downloadURL });
+      setProfile({ ...profile, photoUrl: reference });
       
       // Also update Firestore immediately to persist the photo change
       await updateDocument("users", user.uid, { 
-        photoUrl: downloadURL,
-        photoURL: downloadURL,
+        photoUrl: reference,
+        photoURL: reference,
         updatedAt: new Date().toISOString()
       });
 
-      // Update Firebase Auth profile as well
-      await updateProfile(user, { photoURL: downloadURL });
+      // Clear the previous Auth download-token reference. Firestore now owns the private path.
+      await updateProfile(user, { photoURL: null });
       
       showSuccessToast("Profile picture uploaded!");
     } catch (error) {
@@ -211,7 +209,7 @@ export default function Profile() {
             <div className="relative inline-block">
               <div className="h-32 w-32 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 border-4 border-white dark:border-gray-800 shadow-lg mx-auto relative group">
                 {profile?.photoUrl || auth.currentUser?.photoURL ? (
-                  <img src={profile?.photoUrl || auth.currentUser?.photoURL || ""} alt="Profile" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                  <PrivateImage src={profile?.photoUrl || auth.currentUser?.photoURL || ""} alt="Profile" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="h-full w-full flex items-center justify-center text-gray-400">
                     <User className="h-16 w-16" />
