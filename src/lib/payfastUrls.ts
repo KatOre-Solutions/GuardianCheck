@@ -31,6 +31,24 @@ export interface PayFastUrls {
   notifyUrl: string;
 }
 
+/** A configured ITN override must reach the app host's actual handler. */
+export function isPayFastNotifyUrlForApp(notifyUrl: string, appUrl: string): boolean {
+  try {
+    const parsed = new URL(notifyUrl);
+    const appOrigin = new URL(appUrl).origin;
+    return (
+      parsed.origin === appOrigin &&
+      parsed.pathname === "/api/payfast-itn" &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.search &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Strips trailing slashes so `${origin}/admin` never becomes `//admin`. */
 function normaliseOrigin(origin: string): string {
   return origin.replace(/\/+$/, "");

@@ -32,7 +32,7 @@ import {
   isMarketingPath,
 } from "../src/constants/appRoutes";
 import { APP_SITE_URL, MARKETING_URL, churchUrlHost, defaultAppOrigin } from "../src/constants/site";
-import { payFastUrls } from "../src/lib/payfastUrls";
+import { isPayFastNotifyUrlForApp, payFastUrls } from "../src/lib/payfastUrls";
 import { buildRoutes } from "../scripts/generate-vercel-routes";
 
 let pass = 0;
@@ -145,6 +145,10 @@ console.log("payfast urls");
   });
   check("an explicit notify override wins", `${APP_SITE_URL}/api/payfast-itn`, override.notifyUrl);
   check("the override does not touch return_url", `${MARKETING_URL}/admin?payment=success&plan=growth`, override.returnUrl);
+  check("the rollout guard accepts the exact app ITN endpoint", true, isPayFastNotifyUrlForApp(`${APP_SITE_URL}/api/payfast-itn`, APP_SITE_URL));
+  check("the rollout guard rejects a wrong endpoint path", false, isPayFastNotifyUrlForApp(`${APP_SITE_URL}/not-the-handler`, APP_SITE_URL));
+  check("the rollout guard rejects a lookalike app hostname", false, isPayFastNotifyUrlForApp("https://app.guardiancheck.co.za.example.com/api/payfast-itn", APP_SITE_URL));
+  check("the rollout guard rejects query strings on the ITN endpoint", false, isPayFastNotifyUrlForApp(`${APP_SITE_URL}/api/payfast-itn?redirect=elsewhere`, APP_SITE_URL));
 }
 
 console.log("edge redirects in vercel.json");

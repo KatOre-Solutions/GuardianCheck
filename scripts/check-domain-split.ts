@@ -26,6 +26,7 @@
 
 import { loadEnv } from "vite";
 import { APP_SITE_URL, DOMAIN_SPLIT_PHASE } from "../src/constants/site";
+import { isPayFastNotifyUrlForApp } from "../src/lib/payfastUrls";
 
 // Same resolution vite.config.ts uses, so this checks the value that will
 // actually be compiled in rather than a different view of the environment.
@@ -63,10 +64,10 @@ function main(): void {
 
   // Optional, but if it is set it overrides the derived notify_url entirely.
   const notifyUrl = resolved("VITE_PAYFAST_NOTIFY_URL");
-  if (notifyUrl && !notifyUrl.startsWith(APP_SITE_URL)) {
+  if (notifyUrl && !isPayFastNotifyUrlForApp(notifyUrl, APP_SITE_URL)) {
     problems.push(
-      `VITE_PAYFAST_NOTIFY_URL is ${notifyUrl}, which is not on ${APP_SITE_URL}. ` +
-        `Unset it to derive the notify_url from VITE_APP_URL, or point it at the app host.`,
+      `VITE_PAYFAST_NOTIFY_URL is ${notifyUrl}, expected ${APP_SITE_URL}/api/payfast-itn. ` +
+        `Unset it to derive the notify_url from VITE_APP_URL, or set it to that exact endpoint.`,
     );
   }
 
