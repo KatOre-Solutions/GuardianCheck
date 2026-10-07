@@ -34,6 +34,7 @@ import {
 import { APP_SITE_URL, MARKETING_URL, churchUrlHost, defaultAppOrigin } from "../src/constants/site";
 import { isPayFastNotifyUrlForApp, payFastUrls } from "../src/lib/payfastUrls";
 import { buildRoutes } from "../scripts/generate-vercel-routes";
+import { findDomainSplitProblems } from "../scripts/check-domain-split";
 
 let pass = 0;
 let fail = 0;
@@ -149,6 +150,75 @@ console.log("payfast urls");
   check("the rollout guard rejects a wrong endpoint path", false, isPayFastNotifyUrlForApp(`${APP_SITE_URL}/not-the-handler`, APP_SITE_URL));
   check("the rollout guard rejects a lookalike app hostname", false, isPayFastNotifyUrlForApp("https://app.guardiancheck.co.za.example.com/api/payfast-itn", APP_SITE_URL));
   check("the rollout guard rejects query strings on the ITN endpoint", false, isPayFastNotifyUrlForApp(`${APP_SITE_URL}/api/payfast-itn?redirect=elsewhere`, APP_SITE_URL));
+  check("the rollout guard rejects a trailing slash on the ITN endpoint", false, isPayFastNotifyUrlForApp(`${APP_SITE_URL}/api/payfast-itn/`, APP_SITE_URL));
+
+  const correctLiveEnv = {
+    APP_URL: `${APP_SITE_URL}/`,
+    VITE_APP_URL: APP_SITE_URL,
+    VITE_PAYFAST_NOTIFY_URL: `${APP_SITE_URL}/api/payfast-itn`,
+  };
+  check("live environment guard accepts a correct ITN override", "[]", JSON.stringify(findDomainSplitProblems("live", correctLiveEnv, APP_SITE_URL)));
+  check(
+    "live environment guard accepts the app URL fallback when VITE_APP_URL is unset",
+    "[]",
+    JSON.stringify(
+      findDomainSplitProblems(
+        "live",
+        { APP_URL: APP_SITE_URL, VITE_PAYFAST_NOTIFY_URL: `${APP_SITE_URL}/api/payfast-itn` },
+        APP_SITE_URL,
+      ),
+    ),
+  );
+  check(
+    "off phase ignores app-host settings until rollout is enabled",
+    "[]",
+    JSON.stringify(findDomainSplitProblems("off", { APP_URL: MARKETING_URL }, APP_SITE_URL)),
+  );
+  check(
+    "live environment guard blocks a wrong ITN path",
+    true,
+    findDomainSplitProblems("live", { ...correctLiveEnv, VITE_PAYFAST_NOTIFY_URL: `${APP_SITE_URL}/wrong` }, APP_SITE_URL)
+      .some((problem) => problem.startsWith("VITE_PAYFAST_NOTIFY_URL")),
+  );
+  check(
+    "live environment guard blocks a lookalike ITN hostname",
+    true,
+    findDomainSplitProblems(
+      "live",
+      { ...correctLiveEnv, VITE_PAYFAST_NOTIFY_URL: "https://app.guardiancheck.co.za.example.com/api/payfast-itn" },
+      APP_SITE_URL,
+    ).some((problem) => problem.startsWith("VITE_PAYFAST_NOTIFY_URL")),
+  );
+  check(
+    "live environment guard blocks a query string on the ITN endpoint",
+    true,
+    findDomainSplitProblems(
+      "live",
+      { ...correctLiveEnv, VITE_PAYFAST_NOTIFY_URL: `${APP_SITE_URL}/api/payfast-itn?redirect=elsewhere` },
+      APP_SITE_URL,
+    ).some((problem) => problem.startsWith("VITE_PAYFAST_NOTIFY_URL")),
+  );
+  check(
+    "live environment guard preserves an ITN trailing slash for validation",
+    true,
+    findDomainSplitProblems(
+      "live",
+      { ...correctLiveEnv, VITE_PAYFAST_NOTIFY_URL: `${APP_SITE_URL}/api/payfast-itn/` },
+      APP_SITE_URL,
+    ).some((problem) => problem.startsWith("VITE_PAYFAST_NOTIFY_URL")),
+  );
+  check(
+    "live environment guard blocks an incorrect app build origin",
+    true,
+    findDomainSplitProblems("live", { ...correctLiveEnv, VITE_APP_URL: MARKETING_URL }, APP_SITE_URL)
+      .some((problem) => problem.startsWith("VITE_APP_URL")),
+  );
+  check(
+    "live environment guard requires the server app origin",
+    true,
+    findDomainSplitProblems("live", { ...correctLiveEnv, APP_URL: "" }, APP_SITE_URL)
+      .some((problem) => problem.startsWith("APP_URL")),
+  );
 }
 
 console.log("edge redirects in vercel.json");

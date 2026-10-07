@@ -25,6 +25,7 @@
  */
 
 import { loadEnv } from "vite";
+import { pathToFileURL } from "node:url";
 import { APP_SITE_URL, DOMAIN_SPLIT_PHASE } from "../src/constants/site";
 import { isPayFastNotifyUrlForApp } from "../src/lib/payfastUrls";
 
@@ -33,7 +34,49 @@ import { isPayFastNotifyUrlForApp } from "../src/lib/payfastUrls";
 const env = loadEnv(process.env.NODE_ENV === "development" ? "development" : "production", ".", "");
 
 function resolved(name: string): string {
-  return (env[name] ?? "").trim().replace(/\/+$/, "");
+  return (env[name] ?? "").trim();
+}
+
+/** Returns build-blocking environment issues without exiting, so the guard itself can be regression-tested. */
+export function findDomainSplitProblems(
+  phase: "off" | "live",
+  values: Record<string, string | undefined>,
+  appSiteUrl: string,
+): string[] {
+  if (phase !== "live") return [];
+
+  const get = (name: string) => (values[name] ?? "").trim();
+  const resolvedOrigin = (name: string) => get(name).replace(/\/+$/, "");
+  const problems: string[] = [];
+
+  const appUrl = resolvedOrigin("APP_URL");
+  if (appUrl !== appSiteUrl) {
+    problems.push(
+      `APP_URL is ${appUrl || "unset"}, expected ${appSiteUrl}. ` +
+        `Verification and invitation emails would point at the wrong host.`,
+    );
+  }
+
+  // vite.config.ts falls back to APP_URL, so mirror that here rather than
+  // demanding a variable the build does not actually require.
+  const viteAppUrl = resolvedOrigin("VITE_APP_URL") || appUrl;
+  if (viteAppUrl !== appSiteUrl) {
+    problems.push(
+      `VITE_APP_URL is ${resolvedOrigin("VITE_APP_URL") || "unset"}, expected ${appSiteUrl}. ` +
+        `PayFast return_url, cancel_url and notify_url are built from it, and it is baked in at build time.`,
+    );
+  }
+
+  // Optional, but if it is set it overrides the derived notify_url entirely.
+  const notifyUrl = get("VITE_PAYFAST_NOTIFY_URL");
+  if (notifyUrl && !isPayFastNotifyUrlForApp(notifyUrl, appSiteUrl)) {
+    problems.push(
+      `VITE_PAYFAST_NOTIFY_URL is ${notifyUrl}, expected ${appSiteUrl}/api/payfast-itn. ` +
+        `Unset it to derive the notify_url from VITE_APP_URL, or set it to that exact endpoint.`,
+    );
+  }
+
+  return problems;
 }
 
 function main(): void {
@@ -42,35 +85,7 @@ function main(): void {
     return;
   }
 
-  const problems: string[] = [];
-
-  const appUrl = resolved("APP_URL");
-  if (appUrl !== APP_SITE_URL) {
-    problems.push(
-      `APP_URL is ${appUrl || "unset"}, expected ${APP_SITE_URL}. ` +
-        `Verification and invitation emails would point at the wrong host.`,
-    );
-  }
-
-  // vite.config.ts falls back to APP_URL, so mirror that here rather than
-  // demanding a variable the build does not actually require.
-  const viteAppUrl = resolved("VITE_APP_URL") || appUrl;
-  if (viteAppUrl !== APP_SITE_URL) {
-    problems.push(
-      `VITE_APP_URL is ${resolved("VITE_APP_URL") || "unset"}, expected ${APP_SITE_URL}. ` +
-        `PayFast return_url, cancel_url and notify_url are built from it, and it is baked in at build time.`,
-    );
-  }
-
-  // Optional, but if it is set it overrides the derived notify_url entirely.
-  const notifyUrl = resolved("VITE_PAYFAST_NOTIFY_URL");
-  if (notifyUrl && !isPayFastNotifyUrlForApp(notifyUrl, APP_SITE_URL)) {
-    problems.push(
-      `VITE_PAYFAST_NOTIFY_URL is ${notifyUrl}, expected ${APP_SITE_URL}/api/payfast-itn. ` +
-        `Unset it to derive the notify_url from VITE_APP_URL, or set it to that exact endpoint.`,
-    );
-  }
-
+  const problems = findDomainSplitProblems("live", env, APP_SITE_URL);
   if (problems.length > 0) {
     console.error(
       `\nDOMAIN_SPLIT_PHASE is "live" but the environment does not match:\n\n` +
@@ -84,4 +99,6 @@ function main(): void {
   console.log(`domain split: phase "live", APP_URL and VITE_APP_URL both ${APP_SITE_URL}`);
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
