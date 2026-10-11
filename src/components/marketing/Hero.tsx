@@ -1,10 +1,10 @@
-import { Link } from "react-router-dom";
+import { SiteLink } from "../SiteLink";
 import { ArrowRight } from "lucide-react";
 import { DEMO_MESSAGE } from "../../constants/marketing";
 import { COMPANY } from "../../constants/company";
 import { whatsappUrl } from "../../lib/whatsapp";
 import { TRIAL_MONTHS } from "../../constants/plans";
-import { BrowserFrame } from "./replicas/BrowserFrame";
+import { BrowserFrame, APP_FRAME_URL } from "./replicas/BrowserFrame";
 import { PhoneFrame } from "./replicas/PhoneFrame";
 import { VolunteerCheckIn } from "./replicas/VolunteerCheckIn";
 
@@ -31,13 +31,14 @@ export function Hero() {
               room, on volunteers' own phones.
             </p>
             <div className="flex flex-col sm:flex-row gap-3">
-              <Link
+              <SiteLink
+                host="app"
                 to="/register-church"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary text-white px-6 py-3.5 rounded-xl font-semibold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/10 dark:shadow-none"
               >
                 Start free trial
                 <ArrowRight className="h-4 w-4" />
-              </Link>
+              </SiteLink>
               <a
                 href={demoHref}
                 target="_blank"
@@ -68,7 +69,7 @@ export function Hero() {
             </div>
 
             <div className="hidden sm:block">
-              <BrowserFrame url="guardiancheck.co.za/app">
+              <BrowserFrame url={APP_FRAME_URL}>
                 <img
                   src="/marketing/hero-admin-dashboard.png"
                   alt="GuardianCheck admin dashboard"

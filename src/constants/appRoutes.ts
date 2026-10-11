@@ -85,6 +85,46 @@ export const RESERVED_SLUGS: readonly string[] = Array.from(
   ]),
 );
 
+/**
+ * The marketing site's pages. After the domain split (#14) these are the only
+ * page paths guardiancheck.co.za serves itself; everything else there is sent
+ * to the app host, and on the app host these are sent back to the apex.
+ */
+export const MARKETING_ROUTES = [
+  "/",
+  "/about",
+  "/contact",
+  "/privacy",
+  "/terms",
+  "/popia",
+  "/cookies",
+  "/security",
+] as const;
+
+/**
+ * Paths the marketing site may add later. They are not routes yet, so the
+ * router still treats them as possible church slugs (an existing church that
+ * already holds one keeps working), but no new church can be given one. Once a
+ * marketing page lands on one of these, it moves into MARKETING_ROUTES and so
+ * into EXACT_ROUTES.
+ */
+export const FUTURE_MARKETING_SLUGS = [
+  "pricing", "features", "blog", "resources", "guides", "faq", "demo", "churches",
+  "schools", "partners", "careers", "press", "help", "support", "docs", "status",
+  "legal", "start", "signup", "trial", "www", "mail",
+] as const;
+
+/** Slugs registration must never hand out: everything reserved now, plus room to grow. */
+export const UNCLAIMABLE_SLUGS: readonly string[] = Array.from(
+  new Set<string>([...RESERVED_SLUGS, ...FUTURE_MARKETING_SLUGS]),
+);
+
+/** True when `pathname` is one of the marketing site's own pages. Trailing slash tolerated. */
+export function isMarketingPath(pathname: string): boolean {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return (MARKETING_ROUTES as readonly string[]).includes(path);
+}
+
 function segments(pathname: string): string[] {
   return pathname.split("/").filter(Boolean);
 }

@@ -1,5 +1,5 @@
 import { Shield } from "lucide-react";
-import { Link } from "react-router-dom";
+import { SiteLink } from "./SiteLink";
 import { COMPANY } from "../constants/company";
 import { SITE_NAME } from "../constants/site";
 
@@ -13,6 +13,10 @@ import { SITE_NAME } from "../constants/site";
  * made it permanently dark to match Home.tsx's "Admin Section" accent, which
  * looked fine on the marketing page but clashed with the light theme on
  * every authenticated dashboard screen.
+ *
+ * For the same reason its links name the host each page belongs to (#14): on
+ * the app host the marketing and legal pages are on the apex, and on the
+ * marketing host church signup is on the app host.
  */
 export default function Footer() {
   const year = new Date().getFullYear();
@@ -36,34 +40,34 @@ export default function Footer() {
             </h3>
             <ul className="space-y-3 text-sm">
               <li>
-                <Link to="/" className={linkClass}>
+                <SiteLink host="marketing" to="/" className={linkClass}>
                   Home
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/#how-it-works" className={linkClass}>
+                <SiteLink host="marketing" to="/#how-it-works" className={linkClass}>
                   How it works
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/#safety" className={linkClass}>
+                <SiteLink host="marketing" to="/#safety" className={linkClass}>
                   Safety
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/#pricing" className={linkClass}>
+                <SiteLink host="marketing" to="/#pricing" className={linkClass}>
                   Pricing
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/#faq" className={linkClass}>
+                <SiteLink host="marketing" to="/#faq" className={linkClass}>
                   FAQ
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/register-church" className={linkClass}>
+                <SiteLink host="app" to="/register-church" className={linkClass}>
                   Register your church
-                </Link>
+                </SiteLink>
               </li>
             </ul>
           </div>
@@ -74,19 +78,19 @@ export default function Footer() {
             </h3>
             <ul className="space-y-3 text-sm">
               <li>
-                <Link to="/about" className={linkClass}>
+                <SiteLink host="marketing" to="/about" className={linkClass}>
                   About
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/contact" className={linkClass}>
+                <SiteLink host="marketing" to="/contact" className={linkClass}>
                   Contact
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/security" className={linkClass}>
+                <SiteLink host="marketing" to="/security" className={linkClass}>
                   Security
-                </Link>
+                </SiteLink>
               </li>
             </ul>
           </div>
@@ -97,24 +101,24 @@ export default function Footer() {
             </h3>
             <ul className="space-y-3 text-sm">
               <li>
-                <Link to="/privacy" className={linkClass}>
+                <SiteLink host="marketing" to="/privacy" className={linkClass}>
                   Privacy Policy
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/terms" className={linkClass}>
+                <SiteLink host="marketing" to="/terms" className={linkClass}>
                   Terms of Service
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/popia" className={linkClass}>
+                <SiteLink host="marketing" to="/popia" className={linkClass}>
                   POPIA Notice
-                </Link>
+                </SiteLink>
               </li>
               <li>
-                <Link to="/cookies" className={linkClass}>
+                <SiteLink host="marketing" to="/cookies" className={linkClass}>
                   Cookie Policy
-                </Link>
+                </SiteLink>
               </li>
             </ul>
           </div>

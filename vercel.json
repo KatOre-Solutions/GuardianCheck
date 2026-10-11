@@ -15,11 +15,47 @@
   ],
   "routes": [
     {
+      "src": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      },
+      "continue": true
+    },
+    {
+      "src": "^/robots\\.txt$",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "dest": "/robots-app.txt"
+    },
+    {
       "src": "/api/(.*)",
       "dest": "/server.ts"
     },
     {
       "handle": "filesystem"
+    },
+    {
+      "src": "^/(about|contact|privacy|terms|popia|cookies|security)/?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "status": 308,
+      "headers": {
+        "Location": "https://guardiancheck.co.za/$1"
+      }
     },
     {
       "src": "^/$",
