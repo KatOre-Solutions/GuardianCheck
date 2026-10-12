@@ -22,11 +22,12 @@
  * that.
  */
 
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, getDoc, getDocs, collection, query, where } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -51,7 +52,7 @@ const users = {
   parentA:    { uid: "parentA",    email: "p@x.com", role: "parent",    roles: ["parent"],    churchId: CHURCH_A, status: "approved" },
 };
 
-await env.clearFirestore();
+await clearFirestoreWithRetry(env);
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
 
@@ -88,19 +89,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
 const as = (uid) => env.authenticatedContext(uid, { email: users[uid]?.email }).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
-let pass = 0;
-let fail = 0;
-
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 
 console.log("\nMUST DENY - one church's admin must never reach another's children");
 
@@ -158,7 +148,7 @@ await check("admin A reads child_medical for their own church", "allow", () =>
 await check("volunteer keeps existing per-child read for check-in", "allow", () =>
   getDoc(doc(as("volunteerA"), "children", "childA")));
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
+reporter.report();
 
 await env.cleanup();
-process.exit(fail === 0 ? 0 : 1);
+process.exit(reporter.exitCode);

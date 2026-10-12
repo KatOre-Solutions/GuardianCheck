@@ -28,11 +28,12 @@
  * DENY block and quietly break check-in; the ALLOW block is what catches that.
  */
 
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, updateDoc, getDoc, getDocs, collection, query, where } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -78,19 +79,8 @@ const checkin = (over = {}) => ({
 // still be tearing down the previous suite's connection when this one starts,
 // which surfaces as a CANCELLED error rather than a real failure, so give it a
 // few attempts before treating it as one.
-async function clearFirestoreWithRetry(attempts = 5) {
-  for (let i = 1; i <= attempts; i++) {
-    try {
-      await env.clearFirestore();
-      return;
-    } catch (err) {
-      if (i === attempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 250 * i));
-    }
-  }
-}
 
-await clearFirestoreWithRetry();
+await clearFirestoreWithRetry(env);
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
 
@@ -124,19 +114,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
 const as = (uid) => env.authenticatedContext(uid, { email: users[uid]?.email }).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
-let pass = 0;
-let fail = 0;
-
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 
 console.log("\nAttendance and guardian rules\n");
 
@@ -238,7 +217,7 @@ await check("a parent reads their own guardian records", "allow", () =>
 await check("admin A reads a checkin in their own church", "allow", () =>
   getDoc(doc(as("adminA"), "checkins", "ciA")));
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
+reporter.report();
 
 await env.cleanup();
-process.exit(fail === 0 ? 0 : 1);
+process.exit(reporter.exitCode);
