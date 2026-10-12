@@ -15,11 +15,12 @@
  *     untouched, so a rule that denied everything cannot pass this suite.
  */
 
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, updateDoc, getDoc, getDocs, deleteDoc, collection, query, where, Timestamp } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -97,19 +98,8 @@ const acceptedBy = (uid) => ({
 
 // Chained after the other suites in `npm run test:rules`; see the note in
 // firestore-checkins.test.mjs.
-async function clearFirestoreWithRetry(attempts = 5) {
-  for (let i = 1; i <= attempts; i++) {
-    try {
-      await env.clearFirestore();
-      return;
-    } catch (err) {
-      if (i === attempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 250 * i));
-    }
-  }
-}
 
-await clearFirestoreWithRetry();
+await clearFirestoreWithRetry(env);
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
 
@@ -137,19 +127,8 @@ const as = (uid) => env.authenticatedContext(uid, { email: users[uid]?.email }).
 /** Signed in with an email but no user document, as an invitee is. */
 const asInvitee = (uid) => env.authenticatedContext(uid, { email: INVITEE_EMAIL }).firestore();
 
-let pass = 0;
-let fail = 0;
-
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 
 console.log("\nChurch access lock\n");
 
@@ -237,7 +216,7 @@ await check("open: invitee accepts an invitation", "allow", () =>
 await check("unmetered: admin creates a room", "allow", () =>
   setDoc(doc(as("adminU"), "rooms", "roomNewUnmetered"), room(UNMETERED)));
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
+reporter.report();
 
 await env.cleanup();
-process.exit(fail === 0 ? 0 : 1);
+process.exit(reporter.exitCode);

@@ -26,11 +26,12 @@
  * and quietly break the invite flow; the ALLOW block is what catches that.
  */
 
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, getDoc, getDocs, collection, query, where } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -68,19 +69,8 @@ const invitation = (over = {}) => ({
   ...over,
 });
 
-async function clearFirestoreWithRetry(attempts = 5) {
-  for (let i = 1; i <= attempts; i++) {
-    try {
-      await env.clearFirestore();
-      return;
-    } catch (err) {
-      if (i === attempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 250 * i));
-    }
-  }
-}
 
-await clearFirestoreWithRetry();
+await clearFirestoreWithRetry(env);
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
   for (const [id, data] of Object.entries(users)) {
@@ -96,19 +86,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
 const as = (uid) => env.authenticatedContext(uid, { email: users[uid]?.email }).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
-let pass = 0;
-let fail = 0;
-
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 
 console.log("\nInvitation tenant scoping\n");
 
@@ -156,7 +135,7 @@ await check("an admin creates an invitation for their own church", "allow", () =
     email: "another@a.com", churchId: CHURCH_A, token: "c".repeat(64),
   })));
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
+reporter.report();
 
 await env.cleanup();
-process.exit(fail === 0 ? 0 : 1);
+process.exit(reporter.exitCode);

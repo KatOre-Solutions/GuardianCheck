@@ -2,12 +2,13 @@
  * Exercises the production acceptance function against the Firestore rules.
  * Run with npm run test:rules. The emulator requires a JDK. See the README.
  */
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, getDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 import { acceptPolicyVersion } from "../src/lib/policyAcceptance.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -21,27 +22,8 @@ const users = {
   admin: { email: "admin@x.com", role: "admin", roles: ["admin"], churchId: CHURCH, status: "approved" },
   admin2: { email: "admin2@x.com", role: "admin", roles: ["admin"], churchId: CHURCH, status: "approved" },
 };
-async function clearFirestoreWithRetry(attempts = 5) {
-  for (let i = 1; i <= attempts; i++) {
-    try { await env.clearFirestore(); return; }
-    catch (err) {
-      if (i === attempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 250 * i));
-    }
-  }
-}
-let pass = 0;
-let fail = 0;
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 const as = (uid) => env.authenticatedContext(uid, { email: users[uid].email }).firestore();
 const summaryRef = (db, uid) => doc(db, "policy_acceptance", uid);
 const historyRef = (db, uid, version) => doc(summaryRef(db, uid), "history", version);
@@ -72,7 +54,7 @@ function assertSummary(summary, version, time) {
   assert.deepEqual(summary, { lastAcceptedVersion: version, lastAcceptedAt: time, status: "compliant" });
 }
 try {
-  await clearFirestoreWithRetry();
+  await clearFirestoreWithRetry(env);
   await env.withSecurityRulesDisabled(async (ctx) => {
     for (const [uid, data] of Object.entries(users)) {
       await setDoc(doc(ctx.firestore(), "users", uid), { uid, ...data });
@@ -158,8 +140,8 @@ try {
   });
   await check("direct church acceptance overwrite remains denied", "deny", () =>
     setDoc(churchRef(adminDb), { acceptedBy: "admin", acceptedAt: serverTimestamp(), policyVersion: "v2" }));
-  console.log(`\n${pass} passed, ${fail} failed\n`);
+  reporter.report();
 } finally {
   await env.cleanup();
 }
-process.exitCode = fail === 0 ? 0 : 1;
+process.exitCode = reporter.exitCode;

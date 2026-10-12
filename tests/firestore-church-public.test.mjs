@@ -29,11 +29,12 @@
  * lockdown.
  */
 
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, getDoc, getDocs, collection, query, where, limit } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -61,19 +62,8 @@ const users = {
   drifter:    { uid: "drifter",    email: "d@x.com",  role: "parent",    roles: ["parent"],    churchId: null,     status: "incomplete_profile" },
 };
 
-async function clearFirestoreWithRetry(attempts = 5) {
-  for (let i = 1; i <= attempts; i++) {
-    try {
-      await env.clearFirestore();
-      return;
-    } catch (err) {
-      if (i === attempts) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 250 * i));
-    }
-  }
-}
 
-await clearFirestoreWithRetry();
+await clearFirestoreWithRetry(env);
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
 
@@ -112,19 +102,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
 const as = (uid) => env.authenticatedContext(uid, { email: users[uid]?.email }).firestore();
 const anon = () => env.unauthenticatedContext().firestore();
 
-let pass = 0;
-let fail = 0;
-
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 
 console.log("\nPublic church projection and churches lockdown\n");
 
@@ -208,7 +187,7 @@ await check("a church A volunteer reads their own church document", "allow", () 
 await check("a church A parent reads their own church document", "allow", () =>
   getDoc(doc(as("parentA"), "churches", CHURCH_A)));
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
+reporter.report();
 
 await env.cleanup();
-process.exit(fail === 0 ? 0 : 1);
+process.exit(reporter.exitCode);

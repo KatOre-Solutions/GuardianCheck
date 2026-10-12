@@ -16,11 +16,12 @@
  * tested against both, because the original rules guarded only `role`.
  */
 
-import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { doc, setDoc, updateDoc } from "firebase/firestore";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { clearFirestoreWithRetry, createRulesReporter } from "./helpers/rules-env.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -44,7 +45,7 @@ const seed = {
   victim:   { uid: "victim",   email: "v@x.com", role: "volunteer", roles: ["volunteer"],          churchId: CHURCH, status: "approved" },
 };
 
-await env.clearFirestore();
+await clearFirestoreWithRetry(env);
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
   for (const [id, data] of Object.entries(seed)) await setDoc(doc(db, "users", id), data);
@@ -53,19 +54,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
 
 const as = (uid) => env.authenticatedContext(uid, { email: seed[uid]?.email }).firestore();
 
-let pass = 0;
-let fail = 0;
-
-async function check(label, mode, fn) {
-  try {
-    await (mode === "deny" ? assertFails(fn()) : assertSucceeds(fn()));
-    console.log(`  PASS  [${mode.toUpperCase()}] ${label}`);
-    pass++;
-  } catch (e) {
-    console.log(`  FAIL  [${mode.toUpperCase()}] ${label}\n        ${String(e.message).split("\n")[0]}`);
-    fail++;
-  }
-}
+const reporter = createRulesReporter();
+const { check } = reporter;
 
 console.log("\nMUST DENY - self-granted privilege (#68)");
 
@@ -161,7 +151,7 @@ await check("public signup creates own parent doc", "allow", () =>
 await check("admin approves member: sets churchId + role + approved", "allow", () =>
   updateDoc(doc(as("admin1"), "users", "victim"), { churchId: CHURCH, role: "volunteer", status: "approved" }));
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
+reporter.report();
 
 await env.cleanup();
-process.exit(fail === 0 ? 0 : 1);
+process.exit(reporter.exitCode);
