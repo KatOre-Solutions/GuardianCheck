@@ -58,7 +58,7 @@ export default function NetworkStatus() {
             </div>
             <div className="flex-1">
               <p className="font-bold text-sm">Connection restored</p>
-              <p className="text-xs text-green-100">You are back online and synced.</p>
+              <p className="text-xs text-green-100">You are back online.</p>
             </div>
             <button onClick={() => setShowRestored(false)} className="p-1 hover:bg-white/10 rounded-lg transition-colors">
               <X className="h-4 w-4" />
