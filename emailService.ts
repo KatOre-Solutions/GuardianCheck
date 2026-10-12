@@ -12,14 +12,14 @@ const logger = {
   debug: (...args: any[]) => isDev && console.debug(...args),
 };
 
-// Every outbound email signs off with the maker's domain so recipients can see
-// who is behind the app. It lives in one place so a new template cannot
-// quietly ship without it.
+// Keep the maker attribution, but link to the app's default sending domain
+// so transactional email links align with notifications@guardiancheck.co.za.
+// This shared footer keeps the link consistent across email templates.
 const BRAND_NAME = "KatOre Solutions";
-const BRAND_DOMAIN = "katoresolutions.co.za";
+const EMAIL_LINK_DOMAIN = "guardiancheck.co.za";
 const brandFooter = () =>
   `<p style="margin: 4px 0;">&copy; ${new Date().getFullYear()} GuardianCheck by ${BRAND_NAME}</p>` +
-  `<p style="margin: 4px 0;"><a href="https://${BRAND_DOMAIN}" style="color: #999; text-decoration: none;">${BRAND_DOMAIN}</a></p>`;
+  `<p style="margin: 4px 0;"><a href="https://${EMAIL_LINK_DOMAIN}" style="color: #999; text-decoration: none;">${EMAIL_LINK_DOMAIN}</a></p>`;
 
 interface NotificationData {
   childName: string;
