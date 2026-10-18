@@ -1,3 +1,4 @@
+import { PrivateImage } from "../components/PrivateImage";
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { auth } from "../lib/firebase";
@@ -701,7 +702,7 @@ export default function VolunteerDashboard() {
                         }}
                       >
                         {scannedChildren.length === 1 && scannedChildren[0].photoUrl ? (
-                          <img src={scannedChildren[0].photoUrl} alt={`${scannedChildren[0].firstName} ${scannedChildren[0].lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                          <PrivateImage src={scannedChildren[0].photoUrl} alt={`${scannedChildren[0].firstName} ${scannedChildren[0].lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           <Users className="h-8 w-8 text-primary dark:text-primary/80" />
                         )}
@@ -757,7 +758,7 @@ export default function VolunteerDashboard() {
                                   }}
                                 >
                                   {child.photoUrl ? (
-                                    <img src={child.photoUrl} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                                    <PrivateImage src={child.photoUrl} alt={`${child.firstName} ${child.lastName}`} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                                   ) : (
                                     <Users className="h-5 w-5 text-primary dark:text-primary/80" />
                                   )}
@@ -1018,7 +1019,7 @@ export default function VolunteerDashboard() {
                   >
                     <div className="h-12 w-12 sm:h-14 sm:w-14 bg-primary/10 dark:bg-primary/20 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0 group-hover:ring-2 group-hover:ring-primary transition-all">
                       {childPhoto(record.childId) ? (
-                        <img
+                        <PrivateImage
                           src={childPhoto(record.childId)}
                           alt={record.childName}
                           className="h-full w-full object-cover"

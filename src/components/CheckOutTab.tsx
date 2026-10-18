@@ -1,3 +1,4 @@
+import { PrivateImage } from "./PrivateImage";
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { format, isToday } from "date-fns";
@@ -426,7 +427,7 @@ export default function CheckOutTab({
                       >
                         <div className="h-14 w-14 rounded-2xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
                           {child?.photoUrl ? (
-                            <img
+                            <PrivateImage
                               src={child.photoUrl}
                               alt={record.childName}
                               className="h-full w-full object-cover"

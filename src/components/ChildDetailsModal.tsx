@@ -1,3 +1,4 @@
+import { PrivateImage } from "./PrivateImage";
 import React, { useState, useEffect } from "react";
 import { 
   X, 
@@ -134,7 +135,7 @@ export default function ChildDetailsModal({ childId, isOpen, onClose, overrideCh
               <div className="h-24 w-24 bg-white dark:bg-gray-800 rounded-3xl p-1 shadow-xl border-4 border-white dark:border-gray-900">
                 <div className="h-full w-full bg-gray-50 dark:bg-gray-800 rounded-2xl flex items-center justify-center overflow-hidden">
                   {child?.photoUrl || child?.photoURL ? (
-                    <img src={child.photoUrl || child.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                    <PrivateImage src={child.photoUrl || child.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <Baby className="h-10 w-10 text-primary/40" />
                   )}
@@ -210,7 +211,7 @@ export default function ChildDetailsModal({ childId, isOpen, onClose, overrideCh
                     <div key={guardian.id} className="p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 flex items-center space-x-3 shadow-sm">
                       <div className="h-10 w-10 bg-gray-50 dark:bg-gray-900 rounded-xl flex items-center justify-center overflow-hidden border border-gray-100 dark:border-gray-700">
                         {guardian.photoUrl || guardian.photoURL ? (
-                          <img src={guardian.photoUrl || guardian.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                          <PrivateImage src={guardian.photoUrl || guardian.photoURL} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
                         ) : (
                           <User className="h-5 w-5 text-gray-300" />
                         )}
