@@ -5,6 +5,7 @@ import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/useAuth";
 import { RESERVED_SLUGS } from "../constants/appRoutes";
 import { markOnce } from "../lib/perfMarks";
+import { SITE_MODE } from "../lib/siteMode";
 
 interface ChurchBranding {
   logoUrl?: string;
@@ -103,6 +104,15 @@ function applyBranding(branding: ChurchBranding | undefined) {
 }
 
 export function TenantProvider({ children }: { children: React.ReactNode }) {
+  if (SITE_MODE === "marketing") {
+    return <TenantContext.Provider value={MARKETING_TENANT_STATE}>{children}</TenantContext.Provider>;
+  }
+  return <ApplicationTenantProvider>{children}</ApplicationTenantProvider>;
+}
+
+const MARKETING_TENANT_STATE: TenantContextType = { church: null, loading: false, error: null };
+
+function ApplicationTenantProvider({ children }: { children: React.ReactNode }) {
   const match = useMatch("/:churchSlug/*");
   const urlChurchSlug = match?.params.churchSlug;
   const { userData, loading: authLoading } = useAuth();

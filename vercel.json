@@ -11,6 +11,10 @@
     {
       "src": "server.ts",
       "use": "@vercel/node"
+    },
+    {
+      "src": "domain-redirect.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
@@ -52,10 +56,7 @@
           "value": "app.guardiancheck.co.za"
         }
       ],
-      "status": 308,
-      "headers": {
-        "Location": "https://guardiancheck.co.za/$1"
-      }
+      "dest": "/domain-redirect.ts"
     },
     {
       "src": "^/$",

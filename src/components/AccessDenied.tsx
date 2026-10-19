@@ -18,9 +18,6 @@ import { ShieldAlert } from "lucide-react";
  * pattern for a whole-page dead end.
  */
 export function AccessDenied({ requirement }: { requirement: string }) {
-  /* /profile is itself behind ProtectedRoute, so an account holding no roles
-     is denied there too -- and a "Go to your profile" link on that page is a
-     dead end pointing at itself. Offer the way out that still works. */
   const location = useLocation();
   const onProfile = location.pathname === "/profile";
 

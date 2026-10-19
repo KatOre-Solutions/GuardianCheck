@@ -51,9 +51,9 @@ export const SITE_NAME = "GuardianCheck";
  *   4. Check the PayFast merchant console for a configured default ITN or
  *      return URL, and point it at the app host if one is set.
  *
- * Steps 3 and 4 are enforced: scripts/check-domain-split.ts fails the build
- * when the phase is "live" and the environment disagrees. Steps 1 and 2 are
- * outside the repository and cannot be, so they are the ones to check twice.
+ * scripts/check-domain-split.ts enforces the app origins and any configured
+ * VITE_PAYFAST_NOTIFY_URL override when live. Domain ownership, Firebase
+ * settings and PayFast merchant-console defaults require manual verification.
  *
  * Flipping the phase also changes generated output, so regenerate and commit:
  * `npm run generate:vercel-routes` writes the 308s that hand each host's

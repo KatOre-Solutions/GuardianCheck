@@ -35,6 +35,8 @@ import { APP_SITE_URL, MARKETING_URL, churchUrlHost, defaultAppOrigin } from "..
 import { isPayFastNotifyUrlForApp, payFastUrls } from "../src/lib/payfastUrls";
 import { buildRoutes } from "../scripts/generate-vercel-routes";
 import { findDomainSplitProblems } from "../scripts/check-domain-split";
+import { redirectResponse } from "../domain-redirect";
+import { resolveLandingPath } from "../src/lib/landing";
 
 let pass = 0;
 let fail = 0;
@@ -232,12 +234,17 @@ console.log("edge redirects in vercel.json");
    * none of them is a real file.
    */
   const resolve = (routes: Route[], host: string, path: string): string => {
+    const url = new URL(`https://${host}${path}`);
     for (const route of routes) {
       if (route.handle) continue;
       if (route.has && !route.has.every((c: Route) => c.type === "host" && c.value === host)) continue;
-      const match = new RegExp(route.src).exec(path);
+      const match = new RegExp(route.src).exec(url.pathname);
       if (!match) continue;
       if (route.continue) continue;
+      if (route.dest === "/domain-redirect.ts") {
+        const response = redirectResponse(new Request(url), routes === live ? "live" : "off");
+        return `${response.status} ${response.headers.get("Location")}`;
+      }
       if (route.status && route.headers?.Location) {
         const location = String(route.headers.Location).replace(/[$](\d)/g, (_m, n: string) => match[Number(n)] ?? "");
         return `${route.status} ${location}`;
@@ -271,6 +278,29 @@ console.log("edge redirects in vercel.json");
   check("the app host keeps a church page", "serve /index.html", resolve(live, APP, "/grace"));
   check("the app host keeps /register-church", "serve /index.html", resolve(live, APP, "/register-church"));
   check("the app host keeps /api", "serve /server.ts", resolve(live, APP, "/api/payfast-itn"));
+
+  for (const path of [
+    "/accept-invite?token=abc",
+    "/accept-invite?token=a%2Bb%2Fc%3D&next=%2Fgrace%2Fparent",
+    "/admin?payment=success&plan=growth",
+    "/admin?payment=cancelled&plan=growth",
+    "/register-church?plan=growth&tag=one&tag=two&empty=&name=Grace+Church",
+  ]) {
+    check(`live: preserves query in ${path}`, `308 ${APP_SITE_URL}${path}`, resolve(live, APEX, path));
+    check(`live: www preserves query in ${path}`, `308 ${MARKETING_URL}${path}`, resolve(live, WWW, path));
+    const firstHop = resolve(live, WWW, path).slice(4);
+    const secondHop = new URL(firstHop);
+    check(`live: www second hop preserves ${path}`, `308 ${APP_SITE_URL}${path}`, resolve(live, secondHop.hostname, secondHop.pathname + secondHop.search));
+  }
+  check("app marketing redirect preserves encoded query", `308 ${MARKETING_URL}/about?source=app&next=%2Flogin`, resolve(live, APP, "/about?source=app&next=%2Flogin"));
+  check("phase off: app marketing redirect preserves query", `308 ${MARKETING_URL}/about?source=app`, resolve(off, APP, "/about?source=app"));
+  check("live: apex API query is not redirected", "serve /server.ts", resolve(live, APEX, "/api/payfast-itn?token=abc"));
+  check("live: app API query is not redirected", "serve /server.ts", resolve(live, APP, "/api/payfast-itn?token=abc"));
+  check("live: www API query is not redirected", "serve /server.ts", resolve(live, WWW, "/api/payfast-itn?token=abc"));
+  check("phase off: apex query still serves the application", "serve /index.html", resolve(off, APEX, "/accept-invite?token=abc"));
+  check("redirect handler refuses preview hosts", 404, redirectResponse(new Request(`https://${PREVIEW}/login?next=test`), "live").status);
+  check("redirect handler refuses APIs", 404, redirectResponse(new Request(`${MARKETING_URL}/api/payfast-itn`), "live").status);
+  check("redirect handler leaves apex alone while off", 404, redirectResponse(new Request(`${MARKETING_URL}/login`), "off").status);
 
   // The failure that would take the whole site down: two hosts sending each
   // other's paths back and forth. Follow every redirect to its end and require
@@ -306,6 +336,13 @@ console.log("edge redirects in vercel.json");
   });
   check("the edge and siteMode.ts agree about the apex", true, agree);
 }
+
+console.log("role-less landing recovery");
+check("app: approved account without roles or a church can open profile", "/profile", resolveLandingPath({ roles: [], status: "approved" }, "", "app"));
+check("combined: existing fallback remains home", "/", resolveLandingPath({ roles: [], status: "approved" }, "", "combined"));
+check("app: recovery preserves payment outcome", "/profile?payment=success", resolveLandingPath({ roles: [], status: "approved" }, "?payment=success", "app"));
+check("app: incomplete profile still goes to onboarding", "/complete-profile", resolveLandingPath({ roles: [], status: "incomplete_profile" }, "", "app"));
+check("app: rejected account still goes to rejection", "/rejected", resolveLandingPath({ roles: [], status: "rejected" }, "", "app"));
 
 console.log("church slugs");
 check("slugify trims and collapses", "grace-community-church", slugify("  Grace -- Community Church! "));

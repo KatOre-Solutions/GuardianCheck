@@ -33,7 +33,6 @@ import { pathToFileURL } from "node:url";
 import { knownPathPatterns, MARKETING_ROUTES } from "../src/constants/appRoutes";
 import {
   APP_HOSTNAME,
-  APP_SITE_URL,
   DOMAIN_SPLIT_PHASE,
   MARKETING_HOSTNAMES,
   MARKETING_URL,
@@ -51,7 +50,7 @@ function marketingSegments(): string[] {
 /**
  * The app host hands its visitors back to the apex for the marketing pages.
  * Not `/`: someone opening app.guardiancheck.co.za wants the application, so
- * that one opens a dashboard. The capture drops any trailing slash, so
+ * that one opens a dashboard. The handler drops any trailing slash, so
  * `/about/` lands on `/about`.
  */
 function appHostRedirects(onAppHost: { type: string; value: string }[]) {
@@ -59,8 +58,7 @@ function appHostRedirects(onAppHost: { type: string; value: string }[]) {
     {
       src: `^/(${marketingSegments().join("|")})/?$`,
       has: onAppHost,
-      status: 308,
-      headers: { Location: `${MARKETING_URL}/$1` },
+      dest: "/domain-redirect.ts",
     },
   ];
 }
@@ -87,13 +85,13 @@ function marketingHostRedirects(phase: DomainSplitPhase) {
     const onHost = [{ type: "host", value: hostname }];
 
     if (hostname !== apex) {
-      return [{ src: "/(.*)", has: onHost, status: 308, headers: { Location: `${MARKETING_URL}/$1` } }];
+      return [{ src: "/(.*)", has: onHost, dest: "/domain-redirect.ts" }];
     }
 
     return [
       { src: "^/$", has: onHost, dest: "/index.html" },
       { src: `^/(?:${marketingSegments().join("|")})/?$`, has: onHost, dest: "/index.html" },
-      { src: "/(.*)", has: onHost, status: 308, headers: { Location: `${APP_SITE_URL}/$1` } },
+      { src: "/(.*)", has: onHost, dest: "/domain-redirect.ts" },
     ];
   });
 }

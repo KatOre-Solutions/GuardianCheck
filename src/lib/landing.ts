@@ -13,14 +13,7 @@
  * screen has no address bar to correct it with.
  */
 
-import { SITE_MODE } from "./siteMode";
-
-/**
- * Where an account with no dashboard of its own is sent. On the app host `/`
- * is a launch route itself, so sending it there would leave it waiting on a
- * redirect to itself; the profile screen is the one page every account has.
- */
-const NO_DASHBOARD_PATH = SITE_MODE === "app" ? "/profile" : "/";
+import { SITE_MODE, type SiteMode } from "./siteMode";
 
 /** Most-privileged first — the first match wins, mirroring the old if-chains. */
 const ROLE_PRIORITY = ["master_admin", "admin", "volunteer", "parent"] as const;
@@ -55,7 +48,7 @@ export function resolveRoles(userDoc: LandingUserDoc): string[] {
  * Onboarding states outrank roles: an incomplete profile has to be finished
  * before any dashboard is meaningful.
  */
-export function resolveLandingPath(userDoc: LandingUserDoc, search = ""): string {
+export function resolveLandingPath(userDoc: LandingUserDoc, search = "", mode: SiteMode = SITE_MODE): string {
   if (!userDoc) return `/login${search}`;
   if (userDoc.status === "incomplete_profile") return `/complete-profile${search}`;
   if (userDoc.status === "rejected") return `/rejected${search}`;
@@ -72,5 +65,5 @@ export function resolveLandingPath(userDoc: LandingUserDoc, search = ""): string
     break;
   }
 
-  return `${prefix || NO_DASHBOARD_PATH}${search}`;
+  return `${prefix || (mode === "app" ? "/profile" : "/")}${search}`;
 }
