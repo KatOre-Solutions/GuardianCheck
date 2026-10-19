@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { SiteLink } from "../SiteLink";
 import { CheckCircle2 } from "lucide-react";
 import { PLAN_LIMITS, TRIAL_MONTHS } from "../../constants/plans";
 
@@ -56,12 +56,13 @@ export function Pricing() {
                 {Number.isFinite(plan.children) ? `Up to ${plan.children} children` : "Unlimited children"}
               </li>
             </ul>
-            <Link
+            <SiteLink
+              host="app"
               to={`/register-church?plan=${tier}`}
               className="block w-full text-center py-3 rounded-xl font-bold bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 transition-opacity"
             >
               Start free trial
-            </Link>
+            </SiteLink>
           </div>
         ))}
       </div>

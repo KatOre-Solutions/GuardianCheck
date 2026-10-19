@@ -1,6 +1,7 @@
 import React from "react";
 import { X } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { SITE_MODE } from "../../lib/siteMode";
 import { useMarketingMobileMenuOpen } from "../../lib/marketingMobileMenu";
 import { DEMO_MESSAGE } from "../../constants/marketing";
 import { COMPANY } from "../../constants/company";
@@ -37,7 +38,10 @@ function readSnoozedUntil(): number {
  * and Escape only dismisses it when focus is already inside.
  */
 export function DemoInvite() {
-  const { user, loading } = useAuth();
+  const auth = useAuth();
+  // See MarketingHeader: sign-in state is not known on the marketing host.
+  const user = SITE_MODE === "marketing" ? null : auth.user;
+  const loading = SITE_MODE === "marketing" ? false : auth.loading;
   const mobileMenuOpen = useMarketingMobileMenuOpen();
   const demoHref = whatsappUrl(COMPANY.whatsapp, DEMO_MESSAGE);
 

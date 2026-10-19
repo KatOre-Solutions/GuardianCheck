@@ -11,15 +11,52 @@
     {
       "src": "server.ts",
       "use": "@vercel/node"
+    },
+    {
+      "src": "domain-redirect.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
+    {
+      "src": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      },
+      "continue": true
+    },
+    {
+      "src": "^/robots\\.txt$",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "dest": "/robots-app.txt"
+    },
     {
       "src": "/api/(.*)",
       "dest": "/server.ts"
     },
     {
       "handle": "filesystem"
+    },
+    {
+      "src": "^/(about|contact|privacy|terms|popia|cookies|security)/?$",
+      "has": [
+        {
+          "type": "host",
+          "value": "app.guardiancheck.co.za"
+        }
+      ],
+      "dest": "/domain-redirect.ts"
     },
     {
       "src": "^/$",

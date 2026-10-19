@@ -18,11 +18,17 @@
  * that changes either automatically gets a new cache name -- the existing
  * activate-time eviction in sw.js drops the old one. This replaces a
  * previously hand-maintained "v1" string nothing enforced.
+ *
+ * Two further placeholders carry the domain split (#14) into the worker, so it
+ * can retire itself on the marketing host once the split is live. They are
+ * injected rather than imported because a service worker is a plain script
+ * served from dist/, with no bundler and no module graph of its own.
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { DOMAIN_SPLIT_PHASE, MARKETING_HOSTNAMES } from "../src/constants/site";
 
 const ROOT = process.cwd();
 const INDEX_HTML_PATH = path.join(ROOT, "dist", "index.html");
@@ -82,15 +88,24 @@ function main(): void {
   if (!sw.includes("__CACHE_VERSION__")) {
     throw new Error(`__CACHE_VERSION__ placeholder not found in ${path.relative(ROOT, SW_PATH)} — has public/sw.js drifted from this script?`);
   }
-  if (!sw.includes("__PRECACHE_SHELL_URLS__")) {
-    throw new Error(`__PRECACHE_SHELL_URLS__ placeholder not found in ${path.relative(ROOT, SW_PATH)} — has public/sw.js drifted from this script?`);
+  for (const placeholder of ["__PRECACHE_SHELL_URLS__", "__DOMAIN_SPLIT_LIVE__", "__MARKETING_HOSTNAMES__"]) {
+    if (!sw.includes(placeholder)) {
+      throw new Error(`${placeholder} placeholder not found in ${path.relative(ROOT, SW_PATH)} — has public/sw.js drifted from this script?`);
+    }
   }
+
+  const splitLive = DOMAIN_SPLIT_PHASE === "live";
 
   sw = sw.replace(/__CACHE_VERSION__/g, cacheVersion);
   sw = sw.replace("__PRECACHE_SHELL_URLS__", JSON.stringify(shellUrls).slice(1, -1));
+  sw = sw.replace("__DOMAIN_SPLIT_LIVE__", JSON.stringify(splitLive));
+  sw = sw.replace("__MARKETING_HOSTNAMES__", JSON.stringify(MARKETING_HOSTNAMES));
 
   writeFileSync(SW_PATH, sw, "utf8");
-  console.log(`sw.js: CACHE_VERSION=${cacheVersion}, precaching ${shellUrls.length} shell URL(s) -> ${path.relative(ROOT, SW_PATH)}`);
+  console.log(
+    `sw.js: CACHE_VERSION=${cacheVersion}, precaching ${shellUrls.length} shell URL(s)` +
+      `${splitLive ? ", retiring itself on " + MARKETING_HOSTNAMES.join(", ") : ""} -> ${path.relative(ROOT, SW_PATH)}`,
+  );
 }
 
 main();

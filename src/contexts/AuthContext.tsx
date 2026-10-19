@@ -31,6 +31,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { subscribeToDocument } from "../lib/firestore";
 import { markOnce } from "../lib/perfMarks";
+import { SITE_MODE } from "../lib/siteMode";
 
 export type UserRole = "master_admin" | "admin" | "volunteer" | "parent" | null;
 export type UserStatus = "incomplete_profile" | "pending" | "approved" | "rejected" | null;
@@ -51,6 +52,24 @@ export interface AuthState {
 export const AuthContext = createContext<AuthState | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  if (SITE_MODE === "marketing") {
+    return <AuthContext.Provider value={MARKETING_AUTH_STATE}>{children}</AuthContext.Provider>;
+  }
+  return <ApplicationAuthProvider>{children}</ApplicationAuthProvider>;
+}
+
+const MARKETING_AUTH_STATE: AuthState = {
+  user: null,
+  userData: null,
+  role: null,
+  roles: [],
+  status: null,
+  darkMode: false,
+  loading: false,
+  token: null,
+};
+
+function ApplicationAuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<any>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
